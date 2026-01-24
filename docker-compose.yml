@@ -1,0 +1,71 @@
+services:
+  homeside-fetcher:
+    build: .
+    container_name: homeside-fetcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - dryckesmail_beer-network
+    depends_on:
+      - influxdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: homeside-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=homeside_admin_2026
+      - DOCKER_INFLUXDB_INIT_ORG=homeside
+      - DOCKER_INFLUXDB_INIT_BUCKET=heating
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=homeside_token_2026_secret
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    networks:
+      - dryckesmail_beer-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: homeside-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=homeside_grafana_2026
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - dryckesmail_beer-network
+    depends_on:
+      - influxdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  influxdb-data:
+  influxdb-config:
+  grafana-data:
+
+networks:
+  dryckesmail_beer-network:
+    external: true

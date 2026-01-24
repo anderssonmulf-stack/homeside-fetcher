@@ -1,0 +1,11 @@
+{
+  "weather": {
+    "forecast_interval_minutes": 120,
+    "observation_enabled": true,
+    "nearest_station_cache_hours": 24
+  },
+  "heating": {
+    "target_indoor_temp": 22.0,
+    "temp_margin": 0.5
+  }
+}

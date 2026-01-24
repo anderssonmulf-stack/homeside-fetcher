@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:opendata.smhi.se)",
+      "WebFetch(domain:opendata-download-metobs.smhi.se)",
+      "Bash(docker compose build:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker logs:*)",
+      "Bash(/opt/dev/github-publish.sh:*)"
+    ]
+  }
+}

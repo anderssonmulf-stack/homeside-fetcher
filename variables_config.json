@@ -1,0 +1,76 @@
+{
+  "variables": [
+    {
+      "api_name": "MEAN_GT_RUM_1_Output",
+      "field_name": "room_temperature",
+      "description": "Average room temperature",
+      "unit": "°C"
+    },
+    {
+      "api_name": "AI_GT_UTE_Output",
+      "field_name": "outdoor_temperature",
+      "description": "Outdoor temperature",
+      "unit": "°C"
+    },
+    {
+      "api_name": "MEDEL_GT_UTE_24h_Average",
+      "field_name": "outdoor_temp_24h_avg",
+      "description": "24-hour average outdoor temperature",
+      "unit": "°C"
+    },
+    {
+      "api_name": "AI_VS1_GT_TILL_1_Output",
+      "field_name": "supply_temp",
+      "description": "Heating system supply temperature",
+      "unit": "°C"
+    },
+    {
+      "api_name": "AI_VS1_GT_RETUR_1_Output",
+      "field_name": "return_temp",
+      "description": "Heating system return temperature",
+      "unit": "°C"
+    },
+    {
+      "api_name": "AI_VV1_TAPP_GT41_Output",
+      "field_name": "hot_water_temp",
+      "description": "Hot water temperature",
+      "unit": "°C"
+    },
+    {
+      "api_name": "AI_GP_EXP1_1_Output",
+      "field_name": "system_pressure",
+      "description": "System pressure",
+      "unit": "bar"
+    },
+    {
+      "api_name": "ELM1_AKTIV_Input",
+      "field_name": "electric_heater",
+      "description": "Electric heater status",
+      "unit": "boolean"
+    },
+    {
+      "api_name": "VMM1_AKTIV_Input",
+      "field_name": "heat_recovery",
+      "description": "Heat recovery system status",
+      "unit": "boolean"
+    },
+    {
+      "api_name": "FORC_BORTALAGE",
+      "field_name": "away_mode",
+      "description": "Away mode (forced absence)",
+      "unit": "boolean"
+    },
+    {
+      "api_name": "KU_VS1_GT_TILL_1_SetPoint",
+      "field_name": "target_temp_setpoint",
+      "description": "User's target temperature setpoint (normal mode)",
+      "unit": "°C"
+    },
+    {
+      "api_name": "KU_VS1_GT_TILL_1_BORTREST_SetPoint",
+      "field_name": "away_temp_setpoint",
+      "description": "Target temperature setpoint when away",
+      "unit": "°C"
+    }
+  ]
+}
