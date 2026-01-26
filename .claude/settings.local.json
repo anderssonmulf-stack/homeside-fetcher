@@ -7,7 +7,24 @@
       "Bash(docker compose build:*)",
       "Bash(docker compose:*)",
       "Bash(docker logs:*)",
-      "Bash(/opt/dev/github-publish.sh:*)"
+      "Bash(/opt/dev/github-publish.sh:*)",
+      "Bash(chmod:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker inspect:*)",
+      "Bash(curl:*)",
+      "Bash(docker exec:*)",
+      "Bash(ls:*)",
+      "Bash(docker restart:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh auth:*)",
+      "Bash(gh repo:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(grep:*)"
     ]
   }
 }
