@@ -3,3 +3,4 @@ seqlog>=0.3.29
 paho-mqtt>=1.6.1
 influxdb-client>=1.36.0
 astral>=3.2
+python-dotenv>=1.0.0

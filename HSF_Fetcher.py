@@ -3,13 +3,15 @@ import os
 import json
 import logging
 from datetime import datetime, timezone
-import seqlog
 
-from homeside_api import HomeSideAPI, send_to_seq_direct
+from homeside_api import HomeSideAPI
 from smhi_weather import SMHIWeather
 from influx_writer import InfluxDBWriter
 from thermal_analyzer import ThermalAnalyzer
 from heat_curve_controller import HeatCurveController
+from seq_logger import SeqLogger
+from customer_profile import CustomerProfile, find_profile_for_client_id
+from temperature_forecaster import TemperatureForecaster
 
 
 def load_settings(settings_path: str = 'settings.json') -> dict:
@@ -52,28 +54,143 @@ def load_settings(settings_path: str = 'settings.json') -> dict:
     return defaults
 
 
+def generate_forecast_points(
+    weather,
+    heat_curve,
+    thermal,
+    current_indoor: float,
+    current_outdoor: float,
+    logger
+) -> list:
+    """
+    Generate forecast points for visualization in Grafana.
+
+    Creates hourly forecast data for the next 12 hours:
+    - outdoor_temp: From SMHI weather forecast
+    - supply_temp_baseline: Expected supply temp from original heat curve
+    - supply_temp_ml: Expected supply temp from ML-adjusted curve
+    - indoor_temp: Predicted indoor temp using thermal analysis
+
+    Args:
+        weather: SMHIWeather instance
+        heat_curve: HeatCurveController instance (optional)
+        thermal: ThermalAnalyzer instance
+        current_indoor: Current indoor temperature
+        current_outdoor: Current outdoor temperature
+        logger: Logger instance
+
+    Returns:
+        List of forecast point dictionaries ready for InfluxDB
+    """
+    from datetime import datetime, timedelta, timezone
+
+    forecast_points = []
+
+    # Get hourly weather forecast
+    if not weather:
+        return forecast_points
+
+    hourly_forecasts = weather.get_forecast(hours_ahead=12)
+    if not hourly_forecasts:
+        logger.warning("No weather forecast available for forecast generation")
+        return forecast_points
+
+    # Track indoor temp prediction (cumulative from current)
+    predicted_indoor = current_indoor
+
+    for forecast in hourly_forecasts:
+        # Parse forecast time
+        forecast_time_str = forecast.get('time')
+        if not forecast_time_str:
+            continue
+
+        forecast_time = datetime.fromisoformat(
+            forecast_time_str.replace('Z', '+00:00')
+        )
+        forecast_outdoor = forecast.get('temp')
+
+        if forecast_outdoor is None:
+            continue
+
+        # 1. Outdoor temperature forecast
+        forecast_points.append({
+            'timestamp': forecast_time,
+            'forecast_type': 'outdoor_temp',
+            'value': forecast_outdoor
+        })
+
+        # 2. Supply temperature forecasts (from heat curve)
+        if heat_curve:
+            baseline_supply, current_supply = heat_curve.get_supply_temps_for_outdoor(
+                forecast_outdoor
+            )
+            if baseline_supply is not None:
+                forecast_points.append({
+                    'timestamp': forecast_time,
+                    'forecast_type': 'supply_temp_baseline',
+                    'value': baseline_supply
+                })
+            if current_supply is not None:
+                forecast_points.append({
+                    'timestamp': forecast_time,
+                    'forecast_type': 'supply_temp_ml',
+                    'value': current_supply
+                })
+
+        # 3. Indoor temperature forecast (using thermal prediction)
+        # Predict incrementally - each hour affects the next
+        hours_ahead = forecast.get('hour', 1)
+        if hours_ahead <= 1:
+            hours_step = hours_ahead
+        else:
+            hours_step = 1  # Predict in 1-hour steps
+
+        predicted_temp = thermal.predict_temperature_change(
+            current_indoor=predicted_indoor,
+            forecast_outdoor=forecast_outdoor,
+            hours_ahead=hours_step,
+            heating_active=True  # Assume heating is active
+        )
+
+        if predicted_temp is not None:
+            predicted_indoor = predicted_temp
+            forecast_points.append({
+                'timestamp': forecast_time,
+                'forecast_type': 'indoor_temp',
+                'value': predicted_indoor
+            })
+
+    if forecast_points:
+        logger.info(f"Generated {len(forecast_points)} forecast points for next 12h")
+
+    return forecast_points
+
+
 def monitor_heating_system(config):
     """Main monitoring function"""
 
-    # Setup logging
-    if config.get('seq_url'):
-        seqlog.log_to_seq(
-            server_url=config['seq_url'],
-            api_key=config.get('seq_api_key'),
-            level=config.get('log_level', 'INFO'),
-            batch_size=10,
-            auto_flush_timeout=2,
-            override_root_logger=True
-        )
+    # Setup standard Python logging
+    logging.basicConfig(
+        level=config.get('log_level', 'INFO'),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger()
+
+    # Setup Seq structured logging (separate from Python logging)
+    seq_logger = SeqLogger(
+        client_id=config.get('clientid'),
+        friendly_name=config.get('friendly_name'),
+        username=config.get('username'),
+        seq_url=config.get('seq_url'),
+        seq_api_key=config.get('seq_api_key'),
+        display_name_source=config.get('display_name_source', 'friendly_name')
+    )
+
+    if seq_logger.enabled:
         print(f"Seq logging enabled: {config['seq_url']}")
     else:
-        logging.basicConfig(
-            level=config.get('log_level', 'INFO'),
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
         print("Seq logging disabled (no SEQ_URL configured)")
 
-    logger = logging.getLogger()
     logger.info(f"HomeSide Fetcher starting (interval: {config['interval_minutes']} min)")
 
     # Get session token - try from config first, then Selenium
@@ -100,7 +217,8 @@ def monitor_heating_system(config):
         logger,
         username=config['username'],
         password=config['password'],
-        debug_mode=debug_mode
+        debug_mode=debug_mode,
+        seq_logger=seq_logger
     )
 
     # Load application settings
@@ -152,9 +270,29 @@ def monitor_heating_system(config):
     else:
         print("⚠ InfluxDB disabled (INFLUXDB_ENABLED=false)")
 
-    # Initialize thermal analyzer
-    thermal = ThermalAnalyzer(logger, min_samples=24)
-    print("✓ Thermal analyzer initialized")
+    # Initialize thermal analyzer (with InfluxDB for persistence if available)
+    thermal = ThermalAnalyzer(logger, min_samples=24, influx=influx)
+    if influx and thermal.historical_data:
+        print(f"✓ Thermal analyzer initialized ({len(thermal.historical_data)} historical points loaded)")
+    else:
+        print("✓ Thermal analyzer initialized")
+
+    # Load customer profile and initialize forecaster
+    customer_profile = None
+    forecaster = None
+    try:
+        customer_profile = find_profile_for_client_id(api.clientid, profiles_dir="profiles")
+        if customer_profile:
+            forecaster = TemperatureForecaster(customer_profile)
+            print(f"✓ Customer profile loaded: {customer_profile.friendly_name}")
+            status = customer_profile.get_status()
+            print(f"  - Target temp: {status['target_temp']}°C")
+            print(f"  - Learning: {status['learning_status']}")
+        else:
+            print("⚠ No customer profile found, using legacy forecaster")
+    except Exception as e:
+        logger.warning(f"Failed to load customer profile: {e}")
+        print(f"⚠ Customer profile error: {e}, using legacy forecaster")
 
     # Initialize heat curve controller
     heat_curve_enabled = config.get('heat_curve_enabled', False)
@@ -182,6 +320,9 @@ def monitor_heating_system(config):
     # Cache for forecast data between updates
     cached_forecast_trend = None
     cached_recommendation = None
+
+    # Track last prediction for accuracy measurement
+    last_indoor_prediction = None  # (timestamp, predicted_value, outdoor_temp)
 
     iteration = 0
     try:
@@ -229,8 +370,75 @@ def monitor_heating_system(config):
                     # Display data
                     api.display_data(extracted_data)
 
+                    # Track forecast accuracy (compare last prediction to actual)
+                    if forecaster and last_indoor_prediction is not None:
+                        pred_time, predicted, pred_outdoor = last_indoor_prediction
+                        actual = extracted_data.get('room_temperature')
+                        outdoor = extracted_data.get('outdoor_temperature', pred_outdoor)
+
+                        if actual is not None:
+                            error = actual - predicted
+                            hour = now.hour
+
+                            # Record for learning
+                            forecaster.record_accuracy(
+                                predicted=predicted,
+                                actual=actual,
+                                hour=hour,
+                                outdoor=outdoor
+                            )
+
+                            # Write to InfluxDB for visualization
+                            if influx:
+                                influx.write_forecast_accuracy(
+                                    predicted=predicted,
+                                    actual=actual,
+                                    error=error,
+                                    hour=hour,
+                                    outdoor=outdoor
+                                )
+
+                            logger.debug(
+                                f"Forecast accuracy: predicted={predicted:.1f}, "
+                                f"actual={actual:.1f}, error={error:+.2f}"
+                            )
+
+                    # Calculate expected supply temps from heat curve based on outdoor temp
+                    # - supply_temp_heat_curve: From baseline (original) curve
+                    # - supply_temp_heat_curve_ml: From current (possibly ML-adjusted) curve
+                    if heat_curve and 'outdoor_temperature' in extracted_data:
+                        baseline_supply, current_supply = heat_curve.get_supply_temps_for_outdoor(
+                            extracted_data['outdoor_temperature']
+                        )
+                        if baseline_supply is not None:
+                            extracted_data['supply_temp_heat_curve'] = round(baseline_supply, 2)
+                        if current_supply is not None:
+                            extracted_data['supply_temp_heat_curve_ml'] = round(current_supply, 2)
+
                     # Add data to thermal analyzer for learning
                     thermal.add_data_point(extracted_data)
+
+                    # Update forecaster with thermal coefficient from analyzer
+                    if forecaster and customer_profile:
+                        coeff = thermal.calculate_thermal_coefficient()
+                        if coeff:
+                            customer_profile.update_learned_params(
+                                thermal_coefficient=coeff['coefficient'],
+                                confidence=coeff['confidence']
+                            )
+
+                        # Check if it's time to update hourly bias
+                        if forecaster.should_update_learning():
+                            logger.info("Updating forecaster hourly bias...")
+                            new_bias = forecaster.update_hourly_bias()
+                            if new_bias and influx:
+                                # Write learned parameters to InfluxDB for tracking
+                                influx.write_learned_parameters({
+                                    'thermal_coefficient': customer_profile.learned.thermal_coefficient,
+                                    'thermal_coefficient_confidence': customer_profile.learned.thermal_coefficient_confidence,
+                                    'total_samples': customer_profile.learned.total_samples,
+                                    'hourly_bias': customer_profile.learned.hourly_bias
+                                })
 
                     # Write to InfluxDB
                     if influx:
@@ -275,9 +483,53 @@ def monitor_heating_system(config):
                             last_forecast_time = now
                             cached_forecast_trend = forecast_trend
 
-                            # Write forecast to InfluxDB
+                            # Write forecast summary to InfluxDB
                             if influx:
                                 influx.write_forecast_data(forecast_trend)
+
+                                # Generate and write detailed forecast points for Grafana
+                                influx.delete_old_forecasts()
+
+                                # Use new forecaster if available, otherwise legacy
+                                if forecaster:
+                                    # Get hourly weather forecast
+                                    hourly_forecast = weather.get_forecast(hours_ahead=12)
+                                    if hourly_forecast:
+                                        forecast_points = forecaster.generate_forecast(
+                                            current_indoor=extracted_data.get('room_temperature', 22.0),
+                                            current_outdoor=extracted_data.get('outdoor_temperature', 0.0),
+                                            weather_forecast=hourly_forecast,
+                                            heat_curve=heat_curve
+                                        )
+                                        if forecast_points:
+                                            # Convert to InfluxDB format
+                                            influx_points = [p.to_influx_dict() for p in forecast_points]
+                                            influx.write_forecast_points(influx_points)
+
+                                            # Store first indoor prediction for accuracy tracking
+                                            indoor_forecasts = [
+                                                p for p in forecast_points
+                                                if p.forecast_type == 'indoor_temp'
+                                            ]
+                                            if indoor_forecasts:
+                                                first_indoor = indoor_forecasts[0]
+                                                last_indoor_prediction = (
+                                                    first_indoor.timestamp,
+                                                    first_indoor.value,
+                                                    extracted_data.get('outdoor_temperature', 0.0)
+                                                )
+                                else:
+                                    # Legacy forecaster (fallback)
+                                    forecast_points = generate_forecast_points(
+                                        weather=weather,
+                                        heat_curve=heat_curve,
+                                        thermal=thermal,
+                                        current_indoor=extracted_data.get('room_temperature', 22.0),
+                                        current_outdoor=extracted_data.get('outdoor_temperature', 0.0),
+                                        logger=logger
+                                    )
+                                    if forecast_points:
+                                        influx.write_forecast_points(forecast_points)
 
                             # Get heating recommendation
                             if 'room_temperature' in extracted_data:
@@ -381,74 +633,20 @@ def monitor_heating_system(config):
                         elif debug_mode:
                             print(f"\n📉 Heat Curve: No reduction ({curve_recommendation['reason']})")
 
-                    # Send consolidated data to Seq with structured properties
-                    seq_properties = {
-                        'EventType': 'DataCollected',
-                        'Iteration': iteration,
-                        'VariableCount': len(extracted_data) - 1,  # Exclude timestamp
-                        'SessionTokenLast8': api.session_token[-8:] if api.session_token else 'N/A',
-                        'SessionTokenUpdatedAt': api.session_token_updated_at,
-                        'SessionTokenSource': api.session_token_source
-                    }
-
-                    # Add all heating values as properties (rounded to 2 decimals)
-                    for key, value in extracted_data.items():
-                        if key != 'timestamp':
-                            property_name = ''.join(word.capitalize() for word in key.split('_'))
-                            # Round numeric values to 2 decimals for Seq
-                            if isinstance(value, (int, float)):
-                                seq_properties[property_name] = round(float(value), 2)
-                            else:
-                                seq_properties[property_name] = value
-
-                    # Add weather forecast data (rounded to 2 decimals)
-                    if forecast_trend:
-                        seq_properties['ForecastTrend'] = forecast_trend['trend']
-                        seq_properties['ForecastTrendSymbol'] = forecast_trend['trend_symbol']
-                        seq_properties['ForecastChange'] = round(float(forecast_trend['change']), 2)
-                        seq_properties['ForecastCurrentTemp'] = round(float(forecast_trend['current_temp']), 2)
-                        seq_properties['ForecastAvgTemp'] = round(float(forecast_trend['avg_temp']), 2)
-                        seq_properties['ForecastCloudCondition'] = forecast_trend['cloud_condition']
-                        if forecast_trend.get('avg_cloud_cover') is not None:
-                            seq_properties['ForecastCloudCover'] = round(float(forecast_trend['avg_cloud_cover']), 2)
-
-                    # Add heating recommendation (rounded to 2 decimals)
-                    if recommendation:
-                        seq_properties['HeatingAction'] = 'reduce' if recommendation['reduce_heating'] else 'maintain'
-                        seq_properties['HeatingConfidence'] = round(float(recommendation['confidence']), 2)
-                        seq_properties['HeatingReason'] = recommendation['reason']
-                        seq_properties['SolarFactor'] = recommendation.get('solar_factor', 'unknown')
-
-                    # Add heat curve recommendation (rounded to 2 decimals)
-                    if curve_recommendation:
-                        seq_properties['CurveReduce'] = curve_recommendation['reduce']
-                        seq_properties['CurveDelta'] = round(float(curve_recommendation['delta']), 2)
-                        seq_properties['CurveDuration'] = round(float(curve_recommendation['duration_hours']), 1)
-                        seq_properties['CurveConfidence'] = round(float(curve_recommendation['confidence']), 2)
-                        seq_properties['CurveReason'] = curve_recommendation['reason']
-                        seq_properties['CurveAffectedPoints'] = ','.join(map(str, curve_recommendation['affected_indices']))
-                        seq_properties['CurveModeActive'] = heat_curve_enabled
-                        if heat_curve:
-                            seq_properties['CurveAdjustmentActive'] = heat_curve.adjustment_active
-
-                    # Create consolidated message
-                    msg_parts = [f"Iteration #{iteration}"]
-                    if forecast_trend:
-                        msg_parts.append(f"{forecast_trend['trend_symbol']} {forecast_trend['change']:+.2f}°C")
-                    if recommendation:
-                        if recommendation['reduce_heating']:
-                            # Only show confidence when recommending to reduce heating
-                            msg_parts.append(f"🔽 {recommendation['confidence']:.0%}")
-                        else:
-                            msg_parts.append("➡️")
-                    if curve_recommendation and curve_recommendation['reduce']:
-                        mode_icon = "📉" if heat_curve_enabled else "📊"
-                        msg_parts.append(f"{mode_icon} {curve_recommendation['delta']:+.1f}°C")
-
-                    send_to_seq_direct(
-                        f"🌡️ {' | '.join(msg_parts)}",
-                        level='Information',
-                        properties=seq_properties
+                    # Send consolidated data to Seq
+                    seq_logger.log_data_collection(
+                        iteration=iteration,
+                        heating_data=extracted_data,
+                        forecast=forecast_trend,
+                        recommendation=recommendation,
+                        curve_recommendation=curve_recommendation,
+                        heat_curve_enabled=heat_curve_enabled,
+                        curve_adjustment_active=heat_curve.adjustment_active if heat_curve else False,
+                        session_info={
+                            'last8': api.session_token[-8:] if api.session_token else 'N/A',
+                            'source': api.session_token_source,
+                            'updated_at': api.session_token_updated_at
+                        }
                     )
 
             # Wait for next interval
@@ -475,6 +673,8 @@ if __name__ == "__main__":
         'username': os.getenv('HOMESIDE_USERNAME'),
         'password': os.getenv('HOMESIDE_PASSWORD'),
         'clientid': os.getenv('HOMESIDE_CLIENTID'),
+        'friendly_name': os.getenv('FRIENDLY_NAME'),
+        'display_name_source': os.getenv('DISPLAY_NAME_SOURCE', 'friendly_name'),
         'interval_minutes': int(os.getenv('POLL_INTERVAL_MINUTES', '15')),
         'seq_url': os.getenv('SEQ_URL'),
         'seq_api_key': os.getenv('SEQ_API_KEY'),

@@ -11,54 +11,6 @@ import os
 from datetime import datetime, timezone
 
 
-def send_to_seq_direct(message, level='Information', properties=None):
-    """Send log event directly to Seq's raw events API with structured properties"""
-    import os
-
-    seq_url = os.getenv('SEQ_URL')
-    if not seq_url:
-        return
-
-    # Ensure properties dict exists
-    if properties is None:
-        properties = {}
-
-    # Add default properties
-    properties.setdefault('Application', 'HomeSide')
-    properties.setdefault('Component', 'Fetcher')
-
-    # Build Seq event payload
-    event = {
-        'Timestamp': datetime.now(timezone.utc).isoformat(),
-        'Level': level,
-        'MessageTemplate': message,
-        'Properties': properties
-    }
-
-    payload = {
-        'Events': [event]
-    }
-
-    # Send to Seq
-    try:
-        # Seq raw events endpoint
-        url = seq_url.replace('/api', '') if '/api' in seq_url else seq_url
-        if not url.endswith('/'):
-            url += '/'
-        url += 'api/events/raw'
-
-        response = requests.post(
-            url,
-            json=payload,
-            headers={'Content-Type': 'application/json'},
-            timeout=5
-        )
-        response.raise_for_status()
-    except Exception as e:
-        # Silently fail - don't want to break execution if Seq is unavailable
-        pass
-
-
 def load_variables_config(config_path='variables_config.json'):
     """
     Load variable configuration from JSON file
@@ -126,7 +78,7 @@ def load_variables_config(config_path='variables_config.json'):
 
 
 class HomeSideAPI:
-    def __init__(self, session_token, clientid, logger, username=None, password=None, debug_mode=False):
+    def __init__(self, session_token, clientid, logger, username=None, password=None, debug_mode=False, seq_logger=None):
         self.base_url = "https://homeside.systeminstallation.se"
         self.session_token = session_token
         self.clientid = clientid
@@ -134,6 +86,7 @@ class HomeSideAPI:
         self.username = username
         self.password = password
         self.debug_mode = debug_mode
+        self.seq_logger = seq_logger
 
         # BMS token data (obtained from getarrigobmstoken)
         self.bms_token = None
@@ -167,14 +120,6 @@ class HomeSideAPI:
             return False
 
         self.logger.info("Attempting to refresh session token via API...")
-        send_to_seq_direct(
-            "⚠️ Refreshing expired session token",
-            level='Warning',
-            properties={
-                'EventType': 'TokenRefresh',
-                'Username': self.username
-            }
-        )
 
         try:
             # Authenticate via API (discovered from browser network inspection)
@@ -201,17 +146,8 @@ class HomeSideAPI:
                     self.session_token_source = "api"
                     self.logger.info("Session token refreshed successfully via API")
 
-                    send_to_seq_direct(
-                        "✅ Session token refreshed successfully",
-                        level='Information',
-                        properties={
-                            'EventType': 'TokenRefreshed',
-                            'Username': self.username,
-                            'NewTokenLast8': new_token[-8:] if new_token else 'N/A',
-                            'TokenUpdatedAt': self.session_token_updated_at,
-                            'Method': 'API'
-                        }
-                    )
+                    if self.seq_logger:
+                        self.seq_logger.log_token_refresh(success=True, method='API', username=self.username)
 
                     # Auto-discover client ID if not set
                     if not self.clientid:
@@ -226,14 +162,8 @@ class HomeSideAPI:
         except Exception as e:
             self.logger.error(f"Failed to refresh session token: {str(e)}")
 
-        send_to_seq_direct(
-            "❌ Failed to refresh session token",
-            level='Error',
-            properties={
-                'EventType': 'TokenRefreshFailed',
-                'Username': self.username
-            }
-        )
+        if self.seq_logger:
+            self.seq_logger.log_token_refresh(success=False, username=self.username)
 
         return False
 
@@ -271,16 +201,18 @@ class HomeSideAPI:
                     self.logger.info(f"Auto-discovered client ID: {self.clientid}")
                     print(f"✓ Auto-discovered client ID for: {self.house_name}")
 
-                    send_to_seq_direct(
-                        "✅ Client ID auto-discovered",
-                        level='Information',
-                        properties={
-                            'EventType': 'ClientIdDiscovered',
-                            'HouseName': self.house_name,
-                            'ClientId': self.clientid,
-                            'HouseCount': len(self.houses)
-                        }
-                    )
+                    # Update seq_logger with discovered client_id
+                    if self.seq_logger:
+                        self.seq_logger.set_client_id(self.clientid)
+                        self.seq_logger.log(
+                            f"Client ID auto-discovered: {self.house_name}",
+                            level='Information',
+                            properties={
+                                'EventType': 'ClientIdDiscovered',
+                                'HouseName': self.house_name,
+                                'HouseCount': len(self.houses)
+                            }
+                        )
                     return True
 
             self.logger.warning("No houses found for this user")
@@ -495,7 +427,7 @@ class HomeSideAPI:
             print(f"📊 API returned {total_vars} variables")
 
         # Extract values using field mapping from config
-        extracted = {'timestamp': datetime.now().isoformat()}
+        extracted = {'timestamp': datetime.now(timezone.utc).isoformat()}
 
         for api_name, field_name in self.field_mapping.items():
             if api_name in variables:

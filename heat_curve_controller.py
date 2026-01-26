@@ -122,6 +122,144 @@ class HeatCurveController:
             self.logger.error(f"Error reading heat curve: {str(e)}")
             return None
 
+    def get_supply_temp_from_curve(
+        self,
+        outdoor_temp: float,
+        curve_values: Dict[int, float] = None
+    ) -> Optional[float]:
+        """
+        Calculate the expected supply temperature from the heat curve
+        for a given outdoor temperature using linear interpolation.
+
+        Args:
+            outdoor_temp: Current outdoor temperature (°C)
+            curve_values: Optional pre-fetched curve values. If None, reads from API.
+
+        Returns:
+            Interpolated supply temperature (°C), or None if curve unavailable
+
+        Example:
+            If outdoor temp is +2°C and:
+            - Y_70 (0°C) = 30
+            - Y_71 (+5°C) = 25
+            Then returns: 30 + (2-0)/(5-0) * (25-30) = 28°C
+        """
+        if curve_values is None:
+            curve_values = self.read_current_curve()
+
+        if not curve_values:
+            return None
+
+        # Build sorted list of (outdoor_temp, supply_temp) points
+        points = []
+        for index, supply_temp in curve_values.items():
+            if index in CURVE_Y_INDICES:
+                curve_outdoor = CURVE_Y_INDICES[index]
+                points.append((curve_outdoor, supply_temp))
+
+        if not points:
+            return None
+
+        points.sort(key=lambda x: x[0])
+
+        # Handle out-of-range temperatures
+        if outdoor_temp <= points[0][0]:
+            return points[0][1]
+        if outdoor_temp >= points[-1][0]:
+            return points[-1][1]
+
+        # Find bracketing points and interpolate
+        for i in range(len(points) - 1):
+            x1, y1 = points[i]
+            x2, y2 = points[i + 1]
+
+            if x1 <= outdoor_temp <= x2:
+                # Linear interpolation
+                if x2 == x1:
+                    return y1
+                ratio = (outdoor_temp - x1) / (x2 - x1)
+                return y1 + ratio * (y2 - y1)
+
+        return None
+
+    def get_supply_temps_for_outdoor(
+        self,
+        outdoor_temp: float
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Get both baseline and current supply temperatures for a given outdoor temp.
+
+        Returns:
+            Tuple of (baseline_supply_temp, current_supply_temp):
+            - baseline_supply_temp: From stored baseline (original curve)
+            - current_supply_temp: From currently active curve (may be ML-adjusted)
+
+        When not in reduction mode, both values are the same.
+        When in reduction mode, current will be lower than baseline.
+        """
+        # Get current curve from API
+        current_curve = self.read_current_curve()
+        if not current_curve:
+            return None, None
+
+        # Calculate current supply temp (what's active now)
+        current_supply = self._interpolate_curve(outdoor_temp, current_curve)
+
+        # Get baseline from InfluxDB (original curve before any adjustments)
+        baseline_curve = None
+        if self.influx:
+            baseline_curve = self.influx.read_heat_curve_baseline()
+
+        # If no baseline stored, or not in adjustment mode, baseline = current
+        if baseline_curve:
+            baseline_supply = self._interpolate_curve(outdoor_temp, baseline_curve)
+        else:
+            baseline_supply = current_supply
+
+        return baseline_supply, current_supply
+
+    def _interpolate_curve(
+        self,
+        outdoor_temp: float,
+        curve_values: Dict[int, float]
+    ) -> Optional[float]:
+        """
+        Internal helper to interpolate supply temp from curve values.
+        """
+        if not curve_values:
+            return None
+
+        # Build sorted list of (outdoor_temp, supply_temp) points
+        points = []
+        for index, supply_temp in curve_values.items():
+            if index in CURVE_Y_INDICES:
+                curve_outdoor = CURVE_Y_INDICES[index]
+                points.append((curve_outdoor, supply_temp))
+
+        if not points:
+            return None
+
+        points.sort(key=lambda x: x[0])
+
+        # Handle out-of-range temperatures
+        if outdoor_temp <= points[0][0]:
+            return points[0][1]
+        if outdoor_temp >= points[-1][0]:
+            return points[-1][1]
+
+        # Find bracketing points and interpolate
+        for i in range(len(points) - 1):
+            x1, y1 = points[i]
+            x2, y2 = points[i + 1]
+
+            if x1 <= outdoor_temp <= x2:
+                if x2 == x1:
+                    return y1
+                ratio = (outdoor_temp - x1) / (x2 - x1)
+                return y1 + ratio * (y2 - y1)
+
+        return None
+
     def get_affected_indices(
         self,
         current_outdoor: float,

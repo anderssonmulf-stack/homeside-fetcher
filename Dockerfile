@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py .
 COPY variables_config.json .
 COPY settings.json .
+COPY profiles/ ./profiles/
 
 # Run the fetcher
 CMD ["python", "-u", "HSF_Fetcher.py"]

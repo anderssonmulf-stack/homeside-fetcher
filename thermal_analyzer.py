@@ -11,8 +11,15 @@ For buildings with:
 """
 
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import statistics
+
+
+def _ensure_timezone_aware(dt: datetime) -> datetime:
+    """Ensure a datetime is timezone-aware (UTC if naive)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 class ThermalAnalyzer:
@@ -23,17 +30,47 @@ class ThermalAnalyzer:
     outdoor temperature changes and heating inputs over time.
     """
 
-    def __init__(self, logger, min_samples: int = 24):
+    def __init__(self, logger, min_samples: int = 24, influx=None):
         """
         Initialize thermal analyzer
 
         Args:
             logger: Logger instance
             min_samples: Minimum data points needed for analysis (default 24 = 6 hours at 15min intervals)
+            influx: Optional InfluxDBWriter instance for persistence
         """
         self.logger = logger
         self.min_samples = min_samples
+        self.influx = influx
         self.historical_data = []
+
+        # Load historical data from InfluxDB if available
+        if self.influx:
+            self._load_historical_data()
+
+    def _load_historical_data(self):
+        """Load historical thermal data from InfluxDB on startup."""
+        try:
+            history = self.influx.read_thermal_history(days=7)
+            if history:
+                for data in history:
+                    # Parse timestamp and add to historical data
+                    data_point = data.copy()
+                    if isinstance(data['timestamp'], str):
+                        dt = datetime.fromisoformat(
+                            data['timestamp'].replace('Z', '+00:00')
+                        )
+                    else:
+                        dt = data['timestamp']
+                    # Ensure timezone-aware
+                    data_point['timestamp_dt'] = _ensure_timezone_aware(dt)
+                    self.historical_data.append(data_point)
+
+                self.logger.info(
+                    f"Loaded {len(self.historical_data)} historical data points from InfluxDB"
+                )
+        except Exception as e:
+            self.logger.error(f"Failed to load thermal history: {str(e)}")
 
     def add_data_point(self, data: Dict):
         """
@@ -58,11 +95,17 @@ class ThermalAnalyzer:
             # Store with parsed timestamp for easier analysis
             data_point = data.copy()
             if isinstance(data['timestamp'], str):
-                data_point['timestamp_dt'] = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
             else:
-                data_point['timestamp_dt'] = data['timestamp']
+                dt = data['timestamp']
+            # Ensure timezone-aware
+            data_point['timestamp_dt'] = _ensure_timezone_aware(dt)
 
             self.historical_data.append(data_point)
+
+            # Persist to InfluxDB for restart recovery
+            if self.influx:
+                self.influx.write_thermal_data_point(data)
 
             # Keep last 7 days of data (672 points at 15min intervals)
             max_points = 672

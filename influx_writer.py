@@ -7,8 +7,9 @@ and visualization in Grafana
 
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
-from typing import Dict, Optional
-from datetime import datetime
+from influxdb_client.client.delete_api import DeleteApi
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta, timezone
 
 
 class InfluxDBWriter:
@@ -117,6 +118,10 @@ class InfluxDBWriter:
                 point.field("outdoor_temp_24h_avg", round(float(data['outdoor_temp_24h_avg']), 2))
             if 'supply_temp' in data:
                 point.field("supply_temp", round(float(data['supply_temp']), 2))
+            if 'supply_temp_heat_curve' in data:
+                point.field("supply_temp_heat_curve", round(float(data['supply_temp_heat_curve']), 2))
+            if 'supply_temp_heat_curve_ml' in data:
+                point.field("supply_temp_heat_curve_ml", round(float(data['supply_temp_heat_curve_ml']), 2))
             if 'return_temp' in data:
                 point.field("return_temp", round(float(data['return_temp']), 2))
             if 'hot_water_temp' in data:
@@ -433,6 +438,313 @@ class InfluxDBWriter:
         except Exception as e:
             self.logger.error(f"Failed to write heat curve adjustment: {str(e)}")
             return False
+
+    def write_thermal_data_point(self, data: Dict) -> bool:
+        """
+        Write a thermal data point to InfluxDB for persistence.
+
+        This allows the thermal analyzer to restore historical data on restart.
+
+        Args:
+            data: Dictionary with thermal data
+                {
+                    'timestamp': datetime or ISO string,
+                    'room_temperature': float,
+                    'outdoor_temperature': float,
+                    'supply_temp': float (optional),
+                    'electric_heater': bool (optional)
+                }
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not data:
+            return False
+
+        try:
+            timestamp = data.get('timestamp')
+            if isinstance(timestamp, str):
+                # Parse ISO string to datetime
+                if timestamp.endswith('Z'):
+                    timestamp = timestamp.replace('Z', '+00:00')
+                from datetime import datetime as dt
+                timestamp = dt.fromisoformat(timestamp)
+
+            point = Point("thermal_history") \
+                .tag("house_id", self.house_id) \
+                .field("room_temperature", round(float(data['room_temperature']), 2)) \
+                .field("outdoor_temperature", round(float(data['outdoor_temperature']), 2)) \
+                .time(timestamp, WritePrecision.S)
+
+            # Optional fields
+            if 'supply_temp' in data and data['supply_temp'] is not None:
+                point.field("supply_temp", round(float(data['supply_temp']), 2))
+            if 'electric_heater' in data and data['electric_heater'] is not None:
+                point.field("electric_heater", 1 if data['electric_heater'] else 0)
+            if 'return_temp' in data and data['return_temp'] is not None:
+                point.field("return_temp", round(float(data['return_temp']), 2))
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write thermal data point: {str(e)}")
+            return False
+
+    def delete_old_forecasts(self) -> bool:
+        """
+        Delete previous forecast points before writing new ones.
+
+        Prevents stale data accumulation by removing all temperature_forecast
+        data for this house_id before writing fresh forecasts.
+
+        Returns:
+            True if delete succeeded, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            delete_api = self.client.delete_api()
+
+            # Delete all forecasts from now until 24 hours in the future
+            # (covers our 12h forecast window with margin)
+            start = datetime.now(timezone.utc) - timedelta(hours=1)
+            stop = datetime.now(timezone.utc) + timedelta(hours=24)
+
+            # Delete predicate: measurement and house_id
+            predicate = f'_measurement="temperature_forecast" AND house_id="{self.house_id}"'
+
+            delete_api.delete(
+                start=start,
+                stop=stop,
+                predicate=predicate,
+                bucket=self.bucket,
+                org=self.org
+            )
+
+            self.logger.info("Deleted old forecast points")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to delete old forecasts: {str(e)}")
+            return False
+
+    def write_forecast_points(self, forecast_data: List[Dict]) -> bool:
+        """
+        Write hourly forecast points to InfluxDB with FUTURE timestamps.
+
+        Each forecast point contains temperature predictions at a future time.
+
+        Args:
+            forecast_data: List of forecast dictionaries:
+                [
+                    {
+                        'timestamp': datetime (future time),
+                        'forecast_type': str ('outdoor_temp', 'supply_temp_baseline',
+                                             'supply_temp_ml', 'indoor_temp'),
+                        'value': float (temperature in Celsius)
+                    },
+                    ...
+                ]
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not forecast_data:
+            return False
+
+        try:
+            # Use current time as the "forecast generation time" tag
+            forecast_time = datetime.now(timezone.utc).isoformat()
+
+            points = []
+            for data in forecast_data:
+                timestamp = data.get('timestamp')
+                forecast_type = data.get('forecast_type')
+                value = data.get('value')
+
+                if timestamp is None or forecast_type is None or value is None:
+                    continue
+
+                point = Point("temperature_forecast") \
+                    .tag("house_id", self.house_id) \
+                    .tag("forecast_type", forecast_type) \
+                    .tag("forecast_time", forecast_time) \
+                    .field("value", round(float(value), 2)) \
+                    .time(timestamp, WritePrecision.S)
+
+                points.append(point)
+
+            if points:
+                self.write_api.write(bucket=self.bucket, org=self.org, record=points)
+                self.logger.info(f"Wrote {len(points)} forecast points to InfluxDB")
+                return True
+
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Failed to write forecast points: {str(e)}")
+            return False
+
+    def write_learned_parameters(self, profile_data: Dict) -> bool:
+        """
+        Write learned parameters history to InfluxDB.
+
+        Tracks how the learning algorithm adapts over time.
+        Useful for debugging and visualizing algorithm behavior.
+
+        Args:
+            profile_data: Dictionary containing learned parameters:
+                - thermal_coefficient
+                - thermal_coefficient_confidence
+                - total_samples
+                - hourly_bias (dict of hour -> bias)
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            point = Point("learned_parameters") \
+                .tag("house_id", self.house_id) \
+                .field("thermal_coefficient", profile_data.get("thermal_coefficient") or 0.0) \
+                .field("confidence", profile_data.get("thermal_coefficient_confidence", 0.0)) \
+                .field("total_samples", profile_data.get("total_samples", 0)) \
+                .time(datetime.now(timezone.utc), WritePrecision.S)
+
+            # Add hourly bias values as fields
+            hourly_bias = profile_data.get("hourly_bias", {})
+            for hour, bias in hourly_bias.items():
+                point = point.field(f"bias_{hour}", bias)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self.logger.debug("Wrote learned parameters to InfluxDB")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write learned parameters: {str(e)}")
+            return False
+
+    def write_forecast_accuracy(
+        self,
+        predicted: float,
+        actual: float,
+        error: float,
+        hour: int,
+        outdoor: float
+    ) -> bool:
+        """
+        Write forecast accuracy measurement to InfluxDB.
+
+        Tracks how accurate our predictions are, enabling:
+        - Visualization of prediction quality over time
+        - Analysis of which hours have systematic bias
+        - Debugging of the forecasting algorithm
+
+        Args:
+            predicted: What we predicted the temp would be
+            actual: What the temp actually was
+            error: actual - predicted (positive = underestimate)
+            hour: Hour of day (0-23)
+            outdoor: Outdoor temperature at measurement time
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            point = Point("forecast_accuracy") \
+                .tag("house_id", self.house_id) \
+                .tag("hour", f"{hour:02d}") \
+                .field("predicted", round(predicted, 2)) \
+                .field("actual", round(actual, 2)) \
+                .field("error", round(error, 3)) \
+                .field("outdoor", round(outdoor, 1)) \
+                .time(datetime.now(timezone.utc), WritePrecision.S)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self.logger.debug(f"Wrote forecast accuracy: predicted={predicted:.1f}, actual={actual:.1f}, error={error:.2f}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write forecast accuracy: {str(e)}")
+            return False
+
+    def read_thermal_history(self, days: int = 7) -> list:
+        """
+        Read thermal history data from InfluxDB.
+
+        Used to restore thermal analyzer state on startup.
+
+        Args:
+            days: Number of days of history to read (default 7)
+
+        Returns:
+            List of dictionaries with thermal data, sorted by timestamp
+        """
+        if not self.enabled:
+            return []
+
+        try:
+            query_api = self.client.query_api()
+
+            # Query raw field data (pivot doesn't work well across different house_ids)
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "thermal_history")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            # Group data by timestamp
+            data_by_time = {}
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    field = record.get_field()
+                    value = record.get_value()
+
+                    if timestamp not in data_by_time:
+                        data_by_time[timestamp] = {'timestamp': timestamp.isoformat()}
+
+                    data_by_time[timestamp][field] = value
+
+            # Convert to list and filter valid entries
+            data_points = []
+            for timestamp in sorted(data_by_time.keys()):
+                data = data_by_time[timestamp]
+
+                # Only include if we have required fields
+                if 'room_temperature' in data and 'outdoor_temperature' in data:
+                    data_point = {
+                        'timestamp': data['timestamp'],
+                        'room_temperature': float(data['room_temperature']),
+                        'outdoor_temperature': float(data['outdoor_temperature']),
+                    }
+
+                    # Optional fields
+                    if data.get('supply_temp') is not None:
+                        data_point['supply_temp'] = float(data['supply_temp'])
+                    if data.get('electric_heater') is not None:
+                        data_point['electric_heater'] = bool(data['electric_heater'])
+                    if data.get('return_temp') is not None:
+                        data_point['return_temp'] = float(data['return_temp'])
+
+                    data_points.append(data_point)
+
+            self.logger.info(f"Read {len(data_points)} thermal history points from InfluxDB")
+            return data_points
+
+        except Exception as e:
+            self.logger.error(f"Failed to read thermal history: {str(e)}")
+            return []
 
     def close(self):
         """Close InfluxDB client connection"""
