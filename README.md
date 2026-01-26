@@ -156,14 +156,28 @@ homeside-fetcher/
 - [x] InfluxDB persistence
 - [x] Seq structured logging
 - [x] Multi-site support
+- [x] Web dashboard (Grafana)
+- [x] Public access with security (nginx, HTTPS, geo-blocking)
 
 ### Potential Future Features
 
 - [ ] MQTT publishing for home automation integration
 - [ ] Automatic token refresh
 - [ ] Home Assistant integration
-- [ ] Web dashboard
+- [ ] Settings GUI
 - [ ] Mobile notifications
+
+## Web Access
+
+The system is accessible at **grafana.svenskeb.se** with the following security:
+
+- **HTTPS** with Let's Encrypt certificate
+- **Basic authentication** (username/password)
+- **Geo-blocking** - Only Swedish IPs allowed
+- **Rate limiting** - 1 req/sec on login, 10 req/sec general
+- **Fail2ban** - Auto-ban after 3 failed login attempts
+
+See `nginx/` folder for configuration files and `CLAUDE.md` for detailed setup instructions.
 
 ## License
 

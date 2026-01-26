@@ -37,7 +37,8 @@
       "Bash(ss:*)",
       "Bash(openssl s_client:*)",
       "Bash(openssl x509:*)",
-      "Bash(fail2ban-client status:*)"
+      "Bash(fail2ban-client status:*)",
+      "Bash(apt list:*)"
     ]
   }
 }
