@@ -24,7 +24,20 @@
       "Bash(gh auth:*)",
       "Bash(gh repo:*)",
       "Bash(git remote set-url:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(/backup_scripts/backup_to_nas_host.sh:*)",
+      "Bash(/opt/dev/homeside-fetcher/backup_scripts/backup_to_nas_host.sh)",
+      "Bash(nginx:*)",
+      "Bash(apt-get update:*)",
+      "Bash(apt-get install:*)",
+      "Bash(systemctl is-active:*)",
+      "Bash(dig:*)",
+      "Bash(sudo ufw status:*)",
+      "Bash(iptables:*)",
+      "Bash(ss:*)",
+      "Bash(openssl s_client:*)",
+      "Bash(openssl x509:*)",
+      "Bash(fail2ban-client status:*)"
     ]
   }
 }
