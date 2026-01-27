@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}{{ profile.friendly_name or house_id }}{% endblock %}
+
+{% block content %}
+<div class="house-detail">
+    <div class="page-header">
+        <a href="{{ url_for('dashboard') }}" class="back-link">← Back to Dashboard</a>
+        <h1 class="friendly-name">{{ profile.friendly_name or house_id }}</h1>
+        <p class="subtitle">{{ profile.customer_id }}</p>
+    </div>
+
+    <!-- Current Status Card -->
+    <div class="status-card">
+        <h2>Current Status</h2>
+        {% if realtime %}
+        <div class="status-grid">
+            <div class="status-item">
+                <span class="status-label">Room Temperature</span>
+                <span class="status-value large">{{ "%.1f"|format(realtime.room_temperature) }}°C</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Target (HomeSide)</span>
+                <span class="status-value">{{ "%.1f"|format(realtime.target_temp_setpoint) if realtime.target_temp_setpoint else 'N/A' }}°C</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Outdoor</span>
+                <span class="status-value">{{ "%.1f"|format(realtime.outdoor_temperature) }}°C</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Supply</span>
+                <span class="status-value">{{ "%.1f"|format(realtime.supply_temp) if realtime.supply_temp else 'N/A' }}°C</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Return</span>
+                <span class="status-value">{{ "%.1f"|format(realtime.return_temp) if realtime.return_temp else 'N/A' }}°C</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Hot Water</span>
+                <span class="status-value">{{ "%.1f"|format(realtime.hot_water_temp) if realtime.hot_water_temp else 'N/A' }}°C</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Pressure</span>
+                <span class="status-value">{{ "%.2f"|format(realtime.system_pressure) if realtime.system_pressure else 'N/A' }} bar</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Away Mode</span>
+                <span class="status-value {{ 'active' if realtime.away_mode else '' }}">{{ 'ON' if realtime.away_mode else 'OFF' }}</span>
+            </div>
+        </div>
+        <p class="update-time {% if realtime.age_minutes and realtime.age_minutes <= 16 %}fresh{% else %}stale{% endif %}">
+            Last updated: {{ realtime.timestamp_friendly }}
+            {% if realtime.age_minutes %}({{ realtime.age_minutes|int }} min ago){% endif %}
+        </p>
+        {% else %}
+        <p class="muted">No real-time data available. The heating system may be offline.</p>
+        {% endif %}
+    </div>
+
+    {% if forecast %}
+    <!-- Forecast Card -->
+    <div class="card">
+        <h2>Weather Forecast</h2>
+        <div class="forecast-summary">
+            <div class="forecast-item">
+                <span class="label">Trend</span>
+                <span class="value trend-{{ forecast.trend|lower if forecast.trend else 'unknown' }}">
+                    {{ forecast.trend or 'Unknown' }}
+                    {% if forecast.temp_change %}
+                    ({{ "%.1f"|format(forecast.temp_change) }}°C)
+                    {% endif %}
+                </span>
+            </div>
+            <div class="forecast-item">
+                <span class="label">Expected Range</span>
+                <span class="value">
+                    {{ "%.1f"|format(forecast.min_temp) if forecast.min_temp else '?' }}°C
+                    to
+                    {{ "%.1f"|format(forecast.max_temp) if forecast.max_temp else '?' }}°C
+                </span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="detail-grid">
+        <!-- Comfort Settings Card -->
+        <div class="card">
+            <h2>Comfort Settings</h2>
+            <p class="card-description">These settings control the heating optimization algorithm.</p>
+
+            <form method="POST" action="{{ url_for('update_house_settings', house_id=house_id) }}">
+                <div class="form-group">
+                    <label for="target_indoor_temp">Target Indoor Temperature (°C)</label>
+                    <input type="number" id="target_indoor_temp" name="target_indoor_temp"
+                           value="{{ profile.comfort.target_indoor_temp }}"
+                           step="0.5" min="15" max="28"
+                           {% if not can_edit %}disabled{% endif %}>
+                    <small class="help-text">The temperature the system aims to maintain.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="acceptable_deviation">Acceptable Deviation (°C)</label>
+                    <input type="number" id="acceptable_deviation" name="acceptable_deviation"
+                           value="{{ profile.comfort.acceptable_deviation }}"
+                           step="0.1" min="0.5" max="3"
+                           {% if not can_edit %}disabled{% endif %}>
+                    <small class="help-text">How much the temperature can vary from target.</small>
+                </div>
+
+                {% if can_edit %}
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+                {% else %}
+                <p class="muted">You have view-only access to this house.</p>
+                {% endif %}
+            </form>
+        </div>
+
+        <!-- Building Info Card -->
+        <div class="card">
+            <h2>Building Information</h2>
+
+            <form method="POST" action="{{ url_for('update_house_settings', house_id=house_id) }}">
+                <div class="form-group">
+                    <label for="friendly_name">Friendly Name</label>
+                    <input type="text" id="friendly_name" name="friendly_name"
+                           value="{{ profile.friendly_name or '' }}"
+                           placeholder="e.g., Daggis8"
+                           {% if not can_edit %}disabled{% endif %}>
+                    <small class="help-text">This name appears in Grafana dashboards.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="building_description">Description</label>
+                    <input type="text" id="building_description" name="building_description"
+                           value="{{ profile.building.description or '' }}"
+                           placeholder="e.g., Well-insulated 1990s villa"
+                           {% if not can_edit %}disabled{% endif %}>
+                </div>
+
+                {% if can_edit %}
+                <button type="submit" class="btn btn-primary btn-small">Save Building Info</button>
+                {% endif %}
+            </form>
+
+            <dl class="info-list" style="margin-top: 20px;">
+                <dt>Customer ID</dt>
+                <dd>{{ profile.customer_id }}</dd>
+
+                <dt>Thermal Response</dt>
+                <dd>
+                    <span class="badge badge-{{ profile.building.thermal_response }}">
+                        {{ profile.building.thermal_response|capitalize or 'Unknown' }}
+                    </span>
+                </dd>
+
+                <dt>Max Supply Temperature</dt>
+                <dd>{{ profile.heating_system.max_supply_temp }}°C</dd>
+
+                <dt>Response Time</dt>
+                <dd>{{ profile.heating_system.response_time_minutes }} minutes</dd>
+            </dl>
+        </div>
+
+        <!-- Learned Parameters Card -->
+        <div class="card">
+            <h2>Learned Parameters</h2>
+            <p class="card-description">These values are automatically learned by the system.</p>
+
+            <dl class="info-list">
+                <dt>Thermal Coefficient</dt>
+                <dd>{% if profile.learned.thermal_coefficient %}{{ "%.6f"|format(profile.learned.thermal_coefficient) }}{% else %}Not yet learned{% endif %}</dd>
+
+                <dt>Confidence</dt>
+                <dd>
+                    <div class="confidence-bar">
+                        <div class="confidence-fill" style="width: {{ (profile.learned.thermal_coefficient_confidence or 0) * 100 }}%"></div>
+                    </div>
+                    <span>{% if profile.learned.thermal_coefficient_confidence %}{{ "%.0f"|format(profile.learned.thermal_coefficient_confidence * 100) }}%{% else %}0%{% endif %}</span>
+                </dd>
+
+                <dt>Total Samples</dt>
+                <dd>{{ profile.learned.total_samples }}</dd>
+
+                <dt>Last Updated</dt>
+                <dd>{{ profile.learned.updated_at or 'Never' }}</dd>
+            </dl>
+        </div>
+
+        <!-- Quick Links Card -->
+        <div class="card">
+            <h2>Quick Links</h2>
+            <div class="quick-links-list">
+                <a href="https://grafana.svenskeb.se/d/homeside-2/{{ profile.friendly_name|lower|replace(' ', '-') if profile.friendly_name else house_id }}?orgId=1"
+                   target="_blank" class="quick-link-item">
+                    <span class="icon">📊</span>
+                    <span>View in Grafana</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Change History Card -->
+        <div class="card full-width">
+            <h2>Change History</h2>
+
+            {% if changes %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>User</th>
+                        <th>Setting</th>
+                        <th>Old Value</th>
+                        <th>New Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for change in changes %}
+                    <tr>
+                        <td class="time">{{ change.timestamp }}</td>
+                        <td>{{ change.user_id }}</td>
+                        <td>{{ change.setting }}</td>
+                        <td>{{ change.old_value }}</td>
+                        <td>{{ change.new_value }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No changes recorded for this house.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

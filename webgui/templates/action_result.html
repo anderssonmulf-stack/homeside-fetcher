@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Action Result{% endblock %}
+
+{% block content %}
+<div class="action-result">
+    <div class="result-box {% if success %}success{% else %}error{% endif %}">
+        {% if success %}
+        <div class="result-icon">✓</div>
+        <h1>Action Completed</h1>
+        <p>Your response has been recorded.</p>
+
+        {% if action == 'approve' %}
+        <p>You <strong>approved</strong> the {{ action_type|replace('_', ' ') }}.</p>
+        {% else %}
+        <p>You <strong>declined</strong> the {{ action_type|replace('_', ' ') }}.</p>
+        {% endif %}
+
+        {% else %}
+        <div class="result-icon">✗</div>
+        <h1>Action Failed</h1>
+        <p>This link has expired or is no longer valid.</p>
+        <p>Please contact us if you need assistance.</p>
+        {% endif %}
+
+        <p class="result-footer">
+            <a href="{{ url_for('login') }}">Go to Svenskeb →</a>
+        </p>
+    </div>
+</div>
+{% endblock %}

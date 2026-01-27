@@ -20,13 +20,15 @@ cp "$SCRIPT_DIR/rate-limiting.conf" /etc/nginx/conf.d/rate-limiting.conf
 echo "3. Installing GeoIP config (Sweden only)..."
 cp "$SCRIPT_DIR/geoip-sweden-only.conf" /etc/nginx/conf.d/geoip-sweden-only.conf
 
-# Copy site config
-echo "4. Installing site config..."
+# Copy site configs
+echo "4. Installing site configs..."
 cp "$SCRIPT_DIR/grafana.svenskeb.se.conf" /etc/nginx/sites-available/grafana.svenskeb.se
+cp "$SCRIPT_DIR/svenskeb.se.conf" /etc/nginx/sites-available/svenskeb.se
 
-# Enable site
-echo "5. Enabling site..."
+# Enable sites
+echo "5. Enabling sites..."
 ln -sf /etc/nginx/sites-available/grafana.svenskeb.se /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/svenskeb.se /etc/nginx/sites-enabled/
 
 # Copy fail2ban config
 echo "6. Installing fail2ban config..."

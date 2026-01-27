@@ -1,0 +1,1007 @@
+/* Svenskeb Settings GUI - Stylesheet */
+
+/* =============================================================================
+   Base Styles
+   ============================================================================= */
+
+:root {
+    --primary: #3498db;
+    --primary-dark: #2980b9;
+    --success: #27ae60;
+    --warning: #f39c12;
+    --danger: #e74c3c;
+    --dark: #2c3e50;
+    --muted: #7f8c8d;
+    --light: #ecf0f1;
+    --white: #ffffff;
+    --border: #ddd;
+    --shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    line-height: 1.6;
+    color: var(--dark);
+    background-color: #f5f6fa;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+a {
+    color: var(--primary);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* =============================================================================
+   Navigation
+   ============================================================================= */
+
+.navbar {
+    background: var(--dark);
+    color: var(--white);
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    height: 60px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.nav-brand a {
+    color: var(--white);
+    font-size: 1.4rem;
+    font-weight: bold;
+}
+
+.nav-links {
+    margin-left: 40px;
+    display: flex;
+    gap: 20px;
+}
+
+.nav-links a {
+    color: var(--light);
+}
+
+.nav-links a:hover {
+    color: var(--white);
+}
+
+.nav-links .nav-badge {
+    background: #e74c3c;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: bold;
+    padding: 3px 8px;
+    border-radius: 12px;
+    margin-left: 6px;
+    animation: pulse-badge 2s infinite;
+    display: inline-block;
+    min-width: 20px;
+    text-align: center;
+}
+
+@keyframes pulse-badge {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); }
+    50% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(231, 76, 60, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+}
+
+.nav-user {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.user-role {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+/* =============================================================================
+   Container & Layout
+   ============================================================================= */
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 30px 20px;
+    flex: 1;
+}
+
+.section {
+    margin-bottom: 40px;
+}
+
+.section h2 {
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--light);
+}
+
+/* =============================================================================
+   Cards
+   ============================================================================= */
+
+.card {
+    background: var(--white);
+    border-radius: 8px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    margin-bottom: 20px;
+}
+
+.card h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 1.2rem;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.full-width {
+    grid-column: 1 / -1;
+}
+
+/* =============================================================================
+   Forms
+   ============================================================================= */
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2);
+}
+
+.form-group input:disabled {
+    background: var(--light);
+    cursor: not-allowed;
+}
+
+.help-text {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 6px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 24px;
+}
+
+.form-section-title {
+    font-size: 1rem;
+    color: var(--dark);
+    margin-top: 24px;
+    margin-bottom: 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.form-section-title:first-of-type {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.form-section-description {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 16px;
+}
+
+.homeside-info {
+    background: var(--light);
+    padding: 12px;
+    border-radius: 4px;
+    margin-top: 10px;
+}
+
+.homeside-info code {
+    background: var(--white);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+.approve-form {
+    margin-bottom: 16px;
+}
+
+.approve-form .form-group {
+    margin-bottom: 12px;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.reject-form {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.reject-form input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.form-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.form-row .form-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.role-select, .house-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.credential-status {
+    display: inline-block;
+    margin-left: 10px;
+    font-weight: 500;
+}
+
+.credential-status.status-success {
+    color: var(--success);
+}
+
+.credential-status.status-error {
+    color: var(--danger);
+}
+
+.test-credentials-btn {
+    margin-top: 10px;
+}
+
+/* =============================================================================
+   Buttons
+   ============================================================================= */
+
+.btn {
+    display: inline-block;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    cursor: pointer;
+    text-align: center;
+    background: var(--light);
+    color: var(--dark);
+    transition: all 0.2s;
+}
+
+.btn:hover {
+    text-decoration: none;
+    filter: brightness(0.95);
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: var(--white);
+}
+
+.btn-success {
+    background: var(--success);
+    color: var(--white);
+}
+
+.btn-danger {
+    background: var(--danger);
+    color: var(--white);
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+}
+
+.btn-full {
+    width: 100%;
+}
+
+/* =============================================================================
+   Alerts
+   ============================================================================= */
+
+.alert {
+    padding: 14px 20px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.alert-success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.alert-error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.alert-warning {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+}
+
+.alert-info {
+    background: #d1ecf1;
+    color: #0c5460;
+    border: 1px solid #bee5eb;
+}
+
+.alert-close {
+    background: none;
+    border: none;
+    font-size: 1.4rem;
+    cursor: pointer;
+    opacity: 0.5;
+}
+
+.alert-close:hover {
+    opacity: 1;
+}
+
+/* =============================================================================
+   Tables
+   ============================================================================= */
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th,
+.table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.table th {
+    background: var(--light);
+    font-weight: 600;
+}
+
+.table tr:hover {
+    background: #fafafa;
+}
+
+.time {
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+/* =============================================================================
+   Badges
+   ============================================================================= */
+
+.badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.badge-default {
+    background: var(--light);
+    color: var(--dark);
+}
+
+.badge-admin {
+    background: var(--danger);
+    color: var(--white);
+}
+
+.badge-info {
+    background: var(--primary);
+    color: var(--white);
+}
+
+.badge-warning {
+    background: var(--warning);
+    color: var(--white);
+}
+
+/* =============================================================================
+   Info Lists
+   ============================================================================= */
+
+.info-list {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px 20px;
+}
+
+.info-list dt {
+    font-weight: 500;
+    color: var(--muted);
+}
+
+.info-list dd {
+    margin: 0;
+}
+
+/* =============================================================================
+   House Grid
+   ============================================================================= */
+
+.house-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+.house-card {
+    display: block;
+    background: var(--white);
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    box-shadow: var(--shadow);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.house-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    text-decoration: none;
+}
+
+.house-icon {
+    font-size: 3rem;
+    margin-bottom: 10px;
+}
+
+.house-name {
+    font-weight: 600;
+    color: var(--dark);
+}
+
+.house-action {
+    color: var(--primary);
+    font-size: 0.9rem;
+    margin-top: 10px;
+}
+
+/* =============================================================================
+   Auth Pages (Login/Register)
+   ============================================================================= */
+
+.auth-container {
+    min-height: 80vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+}
+
+.auth-box {
+    background: var(--white);
+    border-radius: 8px;
+    padding: 40px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: var(--shadow);
+}
+
+.auth-box h1 {
+    text-align: center;
+    margin-bottom: 8px;
+    color: var(--dark);
+}
+
+.auth-box .subtitle {
+    text-align: center;
+    color: var(--muted);
+    margin-bottom: 30px;
+}
+
+.auth-footer {
+    text-align: center;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+}
+
+.info-box {
+    background: var(--light);
+    padding: 16px;
+    border-radius: 4px;
+    margin-top: 20px;
+    font-size: 0.9rem;
+}
+
+/* =============================================================================
+   User Cards (Admin)
+   ============================================================================= */
+
+.user-cards {
+    display: grid;
+    gap: 20px;
+}
+
+.user-card {
+    background: var(--white);
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+}
+
+.user-card.pending {
+    border-left: 4px solid var(--warning);
+}
+
+.user-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.user-header .user-name {
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.user-details p {
+    margin: 6px 0;
+    font-size: 0.9rem;
+}
+
+.user-actions {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.inline-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.house-select {
+    max-width: 200px;
+}
+
+/* =============================================================================
+   Action Result Page
+   ============================================================================= */
+
+.action-result {
+    min-height: 70vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.result-box {
+    text-align: center;
+    padding: 60px;
+    max-width: 500px;
+}
+
+.result-box.success .result-icon {
+    color: var(--success);
+}
+
+.result-box.error .result-icon {
+    color: var(--danger);
+}
+
+.result-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+}
+
+.result-footer {
+    margin-top: 40px;
+}
+
+/* =============================================================================
+   Error Page
+   ============================================================================= */
+
+.error-page {
+    min-height: 70vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.error-box {
+    text-align: center;
+}
+
+.error-code {
+    font-size: 6rem;
+    font-weight: bold;
+    color: var(--muted);
+}
+
+/* =============================================================================
+   Quick Links
+   ============================================================================= */
+
+.quick-links {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.quick-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 24px;
+    background: var(--white);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+.quick-link:hover {
+    text-decoration: none;
+    background: var(--light);
+}
+
+.quick-link .icon {
+    font-size: 1.5rem;
+}
+
+/* =============================================================================
+   Status Card (Real-time data)
+   ============================================================================= */
+
+.status-card {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: var(--white);
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.status-card h2 {
+    color: var(--white);
+    margin-bottom: 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    padding-bottom: 10px;
+}
+
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 20px;
+}
+
+.status-item {
+    text-align: center;
+    padding: 12px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 8px;
+}
+
+.status-label {
+    display: block;
+    font-size: 0.8rem;
+    opacity: 0.9;
+    margin-bottom: 6px;
+}
+
+.status-value {
+    display: block;
+    font-size: 1.4rem;
+    font-weight: bold;
+}
+
+.status-value.large {
+    font-size: 2rem;
+}
+
+.status-value.active {
+    color: var(--warning);
+}
+
+.update-time {
+    text-align: right;
+    margin-top: 16px;
+    font-size: 0.85rem;
+    padding: 6px 12px;
+    border-radius: 4px;
+    display: inline-block;
+    float: right;
+}
+
+.update-time.fresh {
+    background: rgba(39, 174, 96, 0.3);
+    color: #fff;
+}
+
+.update-time.stale {
+    background: rgba(231, 76, 60, 0.3);
+    color: #fff;
+}
+
+/* =============================================================================
+   Friendly Name Header
+   ============================================================================= */
+
+.friendly-name {
+    font-size: 2.2rem;
+    color: var(--dark);
+}
+
+/* =============================================================================
+   Card Descriptions
+   ============================================================================= */
+
+.card-description {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+}
+
+/* =============================================================================
+   Confidence Bar
+   ============================================================================= */
+
+.confidence-bar {
+    display: inline-block;
+    width: 100px;
+    height: 8px;
+    background: var(--light);
+    border-radius: 4px;
+    overflow: hidden;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+.confidence-fill {
+    height: 100%;
+    background: var(--success);
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+
+/* =============================================================================
+   Badges for Thermal Response
+   ============================================================================= */
+
+.badge-slow {
+    background: #3498db;
+    color: white;
+}
+
+.badge-medium {
+    background: #f39c12;
+    color: white;
+}
+
+.badge-fast {
+    background: #e74c3c;
+    color: white;
+}
+
+/* =============================================================================
+   Forecast Styling
+   ============================================================================= */
+
+.forecast-summary {
+    display: flex;
+    gap: 30px;
+    flex-wrap: wrap;
+}
+
+.forecast-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.forecast-item .label {
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.forecast-item .value {
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+.trend-rising {
+    color: var(--danger);
+}
+
+.trend-falling {
+    color: var(--primary);
+}
+
+.trend-stable {
+    color: var(--success);
+}
+
+/* =============================================================================
+   Quick Links List
+   ============================================================================= */
+
+.quick-links-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.quick-link-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--light);
+    border-radius: 6px;
+    color: var(--dark);
+}
+
+.quick-link-item:hover {
+    text-decoration: none;
+    background: var(--border);
+}
+
+.quick-link-item .icon {
+    font-size: 1.2rem;
+}
+
+/* =============================================================================
+   Highlight Text
+   ============================================================================= */
+
+.highlight {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 1.1rem;
+}
+
+/* =============================================================================
+   Utilities
+   ============================================================================= */
+
+.muted {
+    color: var(--muted);
+}
+
+.small {
+    font-size: 0.85rem;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 40px;
+    color: var(--muted);
+}
+
+.back-link {
+    display: inline-block;
+    margin-bottom: 10px;
+    color: var(--muted);
+}
+
+.page-header {
+    margin-bottom: 30px;
+}
+
+.page-header h1 {
+    margin-bottom: 8px;
+}
+
+.page-header .subtitle {
+    color: var(--muted);
+}
+
+/* =============================================================================
+   Footer
+   ============================================================================= */
+
+.footer {
+    background: var(--dark);
+    color: var(--muted);
+    text-align: center;
+    padding: 20px;
+    margin-top: auto;
+}
+
+/* =============================================================================
+   Responsive
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    .navbar {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 10px 15px;
+    }
+
+    .nav-links {
+        order: 3;
+        width: 100%;
+        margin: 10px 0 0 0;
+        justify-content: center;
+    }
+
+    .nav-user {
+        font-size: 0.9rem;
+    }
+
+    .detail-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .inline-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .house-select {
+        max-width: 100%;
+    }
+}

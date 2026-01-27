@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <h1>Welcome, {{ session.user_name }}</h1>
+
+    <section class="section">
+        <h2>Your Houses</h2>
+
+        {% if houses %}
+        <div class="house-grid">
+            {% for house_id in houses %}
+            <a href="{{ url_for('house_detail', house_id=house_id) }}" class="house-card">
+                <div class="house-icon">🏠</div>
+                <div class="house-name">{{ house_id }}</div>
+                <div class="house-action">View Settings →</div>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <p>No houses assigned to your account yet.</p>
+            <p>Contact an administrator to get access.</p>
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="section">
+        <h2>Quick Links</h2>
+        <div class="quick-links">
+            <a href="https://grafana.svenskeb.se" target="_blank" class="quick-link">
+                <span class="icon">📊</span>
+                <span class="label">View Grafana Dashboards</span>
+            </a>
+        </div>
+    </section>
+
+    <section class="section">
+        <h2>Recent Activity</h2>
+
+        {% if recent_changes %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>User</th>
+                    <th>Change</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for change in recent_changes %}
+                <tr>
+                    <td class="time">{{ change.timestamp }}</td>
+                    <td>{{ change.user_id }}</td>
+                    <td>{{ change.details }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No recent changes.</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

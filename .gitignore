@@ -23,3 +23,6 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# WebGUI
+webgui/users.json

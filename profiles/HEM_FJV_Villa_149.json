@@ -2,22 +2,18 @@
   "schema_version": 1,
   "customer_id": "HEM_FJV_Villa_149",
   "friendly_name": "Daggis8",
-
   "building": {
-    "description": "Well-insulated 1990s villa",
+    "description": "Gavelradhus byggt 2022. 152kvm i 3 plan.",
     "thermal_response": "medium"
   },
-
   "comfort": {
     "target_indoor_temp": 22.0,
     "acceptable_deviation": 1.0
   },
-
   "heating_system": {
     "response_time_minutes": 30,
     "max_supply_temp": 55
   },
-
   "learned": {
     "thermal_coefficient": null,
     "thermal_coefficient_confidence": 0.0,

@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}User Management{% endblock %}
+
+{% block content %}
+<div class="admin-users">
+    <h1>User Management</h1>
+
+    {% if pending_count > 0 %}
+    <section class="section">
+        <h2>Pending Approvals ({{ pending_count }})</h2>
+
+        <div class="user-cards">
+            {% for username, user in users.items() if user.role == 'pending' %}
+            <div class="user-card pending">
+                <div class="user-header">
+                    <span class="user-name">{{ user.name }}</span>
+                    <span class="badge badge-warning">Pending</span>
+                </div>
+                <div class="user-details">
+                    <p><strong>Username:</strong> {{ username }}</p>
+                    <p><strong>Email:</strong> {{ user.email }}</p>
+                    <p><strong>Registered:</strong> {{ user.created_at[:16] if user.created_at else 'Unknown' }}</p>
+                    {% if user.registration_note %}
+                    <p><strong>Note:</strong> {{ user.registration_note }}</p>
+                    {% endif %}
+
+                    {% if user.homeside_username %}
+                    <div class="homeside-info">
+                        <p><strong>HomeSide Username:</strong> {{ user.homeside_username }}</p>
+                        <p><strong>HomeSide Password:</strong> <code>{{ user.homeside_password }}</code></p>
+                        {% if user.house_friendly_name %}
+                        <p><strong>House Name:</strong> {{ user.house_friendly_name }}</p>
+                        {% endif %}
+                        <button type="button" class="btn btn-small test-credentials-btn"
+                                data-username="{{ user.homeside_username }}"
+                                data-password="{{ user.homeside_password }}">
+                            Test Credentials
+                        </button>
+                        <span class="credential-status" id="status-{{ username }}"></span>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="user-actions">
+                    <form method="POST" action="{{ url_for('admin_approve_user', username=username) }}"
+                          class="approve-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Role:</label>
+                                <select name="role" class="role-select">
+                                    <option value="user" selected>User (can edit own houses)</option>
+                                    <option value="viewer">Viewer (read-only)</option>
+                                    <option value="admin">Admin (full access)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Assign house:</label>
+                                <select name="houses" class="house-select">
+                                    <option value="">-- Select house --</option>
+                                    {% for house in all_houses %}
+                                    <option value="{{ house.id }}">{{ house.friendly_name }}</option>
+                                    {% endfor %}
+                                    <option value="*">All houses</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="action-buttons">
+                            <button type="submit" class="btn btn-success">Approve</button>
+                        </div>
+                    </form>
+                    <form method="POST" action="{{ url_for('admin_reject_user', username=username) }}"
+                          class="reject-form">
+                        <input type="text" name="reason" placeholder="Reason (optional)">
+                        <button type="submit" class="btn btn-danger">Reject</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="section">
+        <h2>Active Users</h2>
+
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Houses</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for username, user in users.items() if user.role != 'pending' %}
+                <tr>
+                    <td>{{ username }}</td>
+                    <td>{{ user.name }}</td>
+                    <td>{{ user.email }}</td>
+                    <td>
+                        <span class="badge badge-{{ 'admin' if user.role == 'admin' else 'info' if user.role == 'viewer' else 'default' }}">
+                            {{ user.role }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if '*' in user.houses %}
+                            <em>All houses</em>
+                        {% else %}
+                            {% set house_names = [] %}
+                            {% for house_id in user.houses %}
+                                {% set found = false %}
+                                {% for h in all_houses if h.id == house_id %}
+                                    {% set _ = house_names.append(h.friendly_name) %}
+                                    {% set found = true %}
+                                {% endfor %}
+                                {% if not found %}
+                                    {% set _ = house_names.append(house_id) %}
+                                {% endif %}
+                            {% endfor %}
+                            {{ house_names|join(', ') or 'None' }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ url_for('admin_edit_user', username=username) }}"
+                           class="btn btn-small">Edit</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.querySelectorAll('.test-credentials-btn').forEach(btn => {
+    btn.addEventListener('click', async function() {
+        const username = this.dataset.username;
+        const password = this.dataset.password;
+        const statusEl = this.nextElementSibling;
+
+        this.disabled = true;
+        this.textContent = 'Testing...';
+        statusEl.textContent = '';
+        statusEl.className = 'credential-status';
+
+        try {
+            const response = await fetch('/api/test-homeside-credentials', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, password})
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                statusEl.textContent = ' Valid - ' + (result.client_id || 'Connected');
+                statusEl.classList.add('status-success');
+            } else {
+                statusEl.textContent = ' ' + (result.error || 'Invalid credentials');
+                statusEl.classList.add('status-error');
+            }
+        } catch (e) {
+            statusEl.textContent = ' Error testing credentials';
+            statusEl.classList.add('status-error');
+        }
+
+        this.disabled = false;
+        this.textContent = 'Test Credentials';
+    });
+});
+</script>
+{% endblock %}

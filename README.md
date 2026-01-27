@@ -138,11 +138,23 @@ homeside-fetcher/
 ├── smhi_weather.py          # SMHI weather integration
 ├── influx_writer.py         # InfluxDB client
 ├── seq_logger.py            # Seq logging
+├── customer_profile.py      # Customer settings management
+├── temperature_forecaster.py # Indoor temperature forecaster
+├── profiles/                # Customer JSON profiles
 ├── settings.json            # Application settings
 ├── variables_config.json    # Variable name mappings
 ├── Dockerfile               # Docker image
 ├── docker-compose.yml       # Docker Compose config
 ├── .env.example             # Configuration template
+├── webgui/                  # Settings GUI (Flask)
+│   ├── app.py               # Flask application
+│   ├── auth.py              # User authentication
+│   ├── email_service.py     # Email notifications
+│   ├── influx_reader.py     # InfluxDB queries
+│   └── templates/           # HTML templates
+├── grafana/                 # Grafana dashboards
+│   └── dashboards/          # JSON dashboard files
+├── nginx/                   # nginx configuration
 └── README.md                # This file
 ```
 
@@ -158,18 +170,20 @@ homeside-fetcher/
 - [x] Multi-site support
 - [x] Web dashboard (Grafana)
 - [x] Public access with security (nginx, HTTPS, geo-blocking)
+- [x] Settings GUI with user management (svenskeb.se)
 
 ### Potential Future Features
 
 - [ ] MQTT publishing for home automation integration
 - [ ] Automatic token refresh
 - [ ] Home Assistant integration
-- [ ] Settings GUI
 - [ ] Mobile notifications
 
 ## Web Access
 
-The system is accessible at **grafana.svenskeb.se** with the following security:
+### Grafana Dashboards
+
+Accessible at **grafana.svenskeb.se** with the following security:
 
 - **HTTPS** with Let's Encrypt certificate
 - **Basic authentication** (username/password)
@@ -177,7 +191,17 @@ The system is accessible at **grafana.svenskeb.se** with the following security:
 - **Rate limiting** - 1 req/sec on login, 10 req/sec general
 - **Fail2ban** - Auto-ban after 3 failed login attempts
 
-See `nginx/` folder for configuration files and `CLAUDE.md` for detailed setup instructions.
+### Settings GUI
+
+A Flask-based customer portal at **svenskeb.se** for:
+
+- **User self-registration** - new users can register with their HomeSide credentials
+- **Admin approval workflow** - admins receive email notifications and can test credentials
+- **Real-time dashboard** - live heating data from InfluxDB
+- **Settings management** - edit friendly names, descriptions, comfort settings
+- **Role-based access** - admin, user, viewer roles
+
+See `webgui/` folder for application code and `CLAUDE.md` for detailed setup instructions.
 
 ## License
 

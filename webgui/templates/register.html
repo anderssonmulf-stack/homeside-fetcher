@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-box" style="max-width: 500px;">
+        <h1>Create Account</h1>
+        <p class="subtitle">Register for Svenskeb Heating System</p>
+
+        <form method="POST" class="auth-form">
+            <h3 class="form-section-title">Account Information</h3>
+
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required
+                       value="{{ username or '' }}" placeholder="Choose a username"
+                       pattern="[a-z0-9_]+" minlength="3"
+                       title="Lowercase letters, numbers, and underscores only">
+            </div>
+
+            <div class="form-group">
+                <label for="name">Full Name</label>
+                <input type="text" id="name" name="name" required
+                       value="{{ name or '' }}" placeholder="Your full name">
+            </div>
+
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" required
+                       value="{{ email or '' }}" placeholder="your@email.com">
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required
+                       minlength="8" placeholder="At least 8 characters">
+            </div>
+
+            <div class="form-group">
+                <label for="confirm_password">Confirm Password</label>
+                <input type="password" id="confirm_password" name="confirm_password" required
+                       minlength="8" placeholder="Repeat password">
+            </div>
+
+            <h3 class="form-section-title">HomeSide Information</h3>
+            <p class="form-section-description">Enter your HomeSide heating system credentials so we can connect to your system.</p>
+
+            <div class="form-group">
+                <label for="homeside_username">HomeSide Username</label>
+                <input type="text" id="homeside_username" name="homeside_username" required
+                       value="{{ homeside_username or '' }}" placeholder="e.g., FC 2000123456">
+                <small class="help-text">Found in your HomeSide contract or app</small>
+            </div>
+
+            <div class="form-group">
+                <label for="homeside_password">HomeSide Password</label>
+                <input type="text" id="homeside_password" name="homeside_password" required
+                       value="{{ homeside_password or '' }}" placeholder="Your HomeSide password">
+            </div>
+
+            <div class="form-group">
+                <label for="house_friendly_name">House Name</label>
+                <input type="text" id="house_friendly_name" name="house_friendly_name" required
+                       value="{{ house_friendly_name or '' }}" placeholder="e.g., Villa Solsidan">
+                <small class="help-text">A friendly name for your house (shown in dashboards)</small>
+            </div>
+
+            <h3 class="form-section-title">Additional Information</h3>
+
+            <div class="form-group">
+                <label for="note">Comments (optional)</label>
+                <textarea id="note" name="note" rows="3"
+                          placeholder="E.g., your address or any other information">{{ note or '' }}</textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-full">Submit Registration</button>
+        </form>
+
+        <div class="auth-footer">
+            <p>Already have an account? <a href="{{ url_for('login') }}">Log in here</a></p>
+        </div>
+
+        <div class="info-box">
+            <strong>Note:</strong> After registration, an administrator will review your
+            application and set up your heating system connection. You will receive an email when your account is approved.
+        </div>
+    </div>
+</div>
+{% endblock %}

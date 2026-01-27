@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Edit User - {{ username }}{% endblock %}
+
+{% block content %}
+<div class="admin-edit-user">
+    <div class="page-header">
+        <a href="{{ url_for('admin_users') }}" class="back-link">← Back to Users</a>
+        <h1>Edit User: {{ username }}</h1>
+    </div>
+
+    <div class="card">
+        <form method="POST">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" value="{{ username }}" disabled>
+            </div>
+
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" value="{{ user.name }}" disabled>
+            </div>
+
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" value="{{ user.email }}" disabled>
+            </div>
+
+            <div class="form-group">
+                <label for="role">Role</label>
+                <select id="role" name="role">
+                    <option value="user" {% if user.role == 'user' %}selected{% endif %}>User (can edit own houses)</option>
+                    <option value="viewer" {% if user.role == 'viewer' %}selected{% endif %}>Viewer (read-only access)</option>
+                    <option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Admin (full access)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="houses">Houses</label>
+                <select id="houses" name="houses" multiple size="6">
+                    <option value="*" {% if '*' in user.houses %}selected{% endif %}>All Houses (*)</option>
+                    {% for house in all_houses %}
+                    <option value="{{ house.id }}" {% if house.id in user.houses %}selected{% endif %}>{{ house.friendly_name }}</option>
+                    {% endfor %}
+                </select>
+                <p class="help-text">Hold Ctrl/Cmd to select multiple houses.</p>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <a href="{{ url_for('admin_users') }}" class="btn">Cancel</a>
+            </div>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>User Info</h2>
+        <dl class="info-list">
+            <dt>Created</dt>
+            <dd>{{ user.created_at[:16] if user.created_at else 'Unknown' }}</dd>
+
+            {% if user.approved_by %}
+            <dt>Approved By</dt>
+            <dd>{{ user.approved_by }}</dd>
+
+            <dt>Approved At</dt>
+            <dd>{{ user.approved_at[:16] if user.approved_at else 'Unknown' }}</dd>
+            {% endif %}
+
+            {% if user.homeside_username %}
+            <dt>HomeSide Username</dt>
+            <dd>{{ user.homeside_username }}</dd>
+
+            <dt>House Name</dt>
+            <dd>{{ user.house_friendly_name or 'Not set' }}</dd>
+            {% endif %}
+        </dl>
+    </div>
+</div>
+{% endblock %}

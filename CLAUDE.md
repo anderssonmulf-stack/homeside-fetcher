@@ -44,6 +44,8 @@ Located in `grafana/dashboards/`:
 |------|---------|
 | `homeside-mobile.json` | Mobile-friendly dashboard with stat panels and forecast graphs |
 | `homeside-admin.json` | Admin dashboard with multi-user support (house_id variable) and detailed analytics |
+| `homeside-2.0.json` | Improved admin dashboard with split temperature graphs and clean legends |
+| `homeside-3.0.json` | Latest dashboard with **friendly names** in house selector (e.g., "Daggis8" instead of technical ID) |
 
 Provisioning configs in `grafana/provisioning/`:
 - `dashboards/default.yaml` - Auto-loads dashboards from `/var/lib/grafana/dashboards`
@@ -488,4 +490,148 @@ Let's Encrypt certificates auto-renew via certbot's systemd timer. Check status:
 ```bash
 sudo certbot certificates
 sudo systemctl status certbot.timer
+```
+
+## Settings GUI (webgui/)
+
+A Flask-based web application at **svenskeb.se** for customer self-service and admin management.
+
+### Architecture
+
+```
+Internet → nginx (svenskeb.se) → Gunicorn → Flask App
+                                    ↓
+                              InfluxDB (real-time data)
+                              profiles/*.json (settings)
+                              users.json (authentication)
+```
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `app.py` | Flask application with routes for dashboard, house settings, user management |
+| `auth.py` | User authentication, bcrypt password hashing, role-based access control |
+| `audit.py` | Audit logging for tracking changes |
+| `email_service.py` | SMTP email notifications via one.com (send.one.com:587) |
+| `influx_reader.py` | Queries real-time heating data from InfluxDB |
+| `create_admin.py` | CLI tool to create initial admin user |
+| `svenskeb-gui.service` | systemd service file for production deployment |
+
+### Templates
+
+| Template | Purpose |
+|----------|---------|
+| `base.html` | Base layout with navigation and flash messages |
+| `login.html` | Login form |
+| `register.html` | User registration with HomeSide credentials |
+| `dashboard.html` | User's house list |
+| `house_detail.html` | Real-time data, settings, profile editing |
+| `admin_users.html` | Admin: user approval, credential testing |
+| `admin_edit_user.html` | Admin: edit user details |
+
+### User Roles
+
+| Role | Capabilities |
+|------|--------------|
+| `admin` | Full access, approve users, manage all houses |
+| `user` | View and edit assigned houses |
+| `viewer` | View-only access to assigned houses |
+| `pending` | Awaiting admin approval |
+
+### Features
+
+**User Registration & Onboarding:**
+- Self-registration with HomeSide credentials
+- Admin receives email notification
+- Admin can test HomeSide credentials before approval
+- Role selection (user/viewer/admin) during approval
+- House assignment with friendly names
+
+**Real-Time Dashboard:**
+- Live data from InfluxDB (room temp, supply temp, etc.)
+- Freshness indicator (green if < 16 minutes old)
+- Swedish timezone display
+- Editable friendly name and description
+
+**Admin Panel:**
+- Pulsing red badge shows pending user count
+- Approve/reject pending registrations
+- Test HomeSide API credentials
+- Assign houses with friendly names
+- Edit user roles and permissions
+
+### Deployment
+
+**systemd service** (`svenskeb-gui.service`):
+```ini
+[Unit]
+Description=Svenskeb Settings GUI
+After=network.target
+
+[Service]
+Type=simple
+User=ulf
+WorkingDirectory=/opt/dev/homeside-fetcher/webgui
+EnvironmentFile=/opt/dev/homeside-fetcher/webgui/.env
+Environment="PATH=/opt/dev/homeside-fetcher/webgui/venv/bin"
+ExecStart=/opt/dev/homeside-fetcher/webgui/venv/bin/gunicorn -b 127.0.0.1:5000 -w 2 app:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Commands:**
+```bash
+# Install/update service
+sudo cp webgui/svenskeb-gui.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable svenskeb-gui
+sudo systemctl restart svenskeb-gui
+
+# View logs
+sudo journalctl -u svenskeb-gui -f
+
+# Create admin user
+cd /opt/dev/homeside-fetcher/webgui
+source venv/bin/activate
+python create_admin.py
+```
+
+**Environment variables** (`.env`):
+```bash
+SECRET_KEY=your-secret-key
+SMTP_HOST=send.one.com
+SMTP_PORT=587
+SMTP_USER=info@svenskeb.se
+SMTP_PASSWORD=your-password
+ADMIN_EMAIL=admin@svenskeb.se
+INFLUXDB_URL=http://localhost:8086
+INFLUXDB_TOKEN=your-token
+INFLUXDB_ORG=homeside
+INFLUXDB_BUCKET=heating
+```
+
+### nginx Configuration
+
+Site config at `/etc/nginx/sites-available/svenskeb.se`:
+```nginx
+server {
+    listen 443 ssl;
+    server_name svenskeb.se www.svenskeb.se;
+
+    # SSL via Let's Encrypt
+    ssl_certificate /etc/letsencrypt/live/svenskeb.se/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/svenskeb.se/privkey.pem;
+
+    # GeoIP Sweden-only
+    if ($allowed_country = 0) { return 444; }
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
 ```

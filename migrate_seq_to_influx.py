@@ -125,20 +125,40 @@ def parse_seq_event(event: dict) -> dict:
         if room_temp is None or outdoor_temp is None:
             return None
 
-        # Build thermal data point
+        # Build data point with all available fields
         data = {
             'timestamp': timestamp,
             'room_temperature': float(room_temp),
             'outdoor_temperature': float(outdoor_temp),
         }
 
-        # Optional fields
+        # Temperature fields
+        if props.get('OutdoorTemp24hAvg') is not None:
+            data['outdoor_temp_24h_avg'] = float(props['OutdoorTemp24hAvg'])
         if props.get('SupplyTemp') is not None:
             data['supply_temp'] = float(props['SupplyTemp'])
-        if props.get('ElectricHeater') is not None:
-            data['electric_heater'] = bool(props['ElectricHeater'])
+        if props.get('SupplyTempHeatCurve') is not None:
+            data['supply_temp_heat_curve'] = float(props['SupplyTempHeatCurve'])
+        if props.get('SupplyTempHeatCurveMl') is not None:
+            data['supply_temp_heat_curve_ml'] = float(props['SupplyTempHeatCurveMl'])
         if props.get('ReturnTemp') is not None:
             data['return_temp'] = float(props['ReturnTemp'])
+        if props.get('HotWaterTemp') is not None:
+            data['hot_water_temp'] = float(props['HotWaterTemp'])
+        if props.get('SystemPressure') is not None:
+            data['system_pressure'] = float(props['SystemPressure'])
+        if props.get('TargetTempSetpoint') is not None:
+            data['target_temp_setpoint'] = float(props['TargetTempSetpoint'])
+        if props.get('AwayTempSetpoint') is not None:
+            data['away_temp_setpoint'] = float(props['AwayTempSetpoint'])
+
+        # Boolean fields (stored as 0.0/1.0 in Seq)
+        if props.get('ElectricHeater') is not None:
+            data['electric_heater'] = bool(props['ElectricHeater'])
+        if props.get('HeatRecovery') is not None:
+            data['heat_recovery'] = bool(props['HeatRecovery'])
+        if props.get('AwayMode') is not None:
+            data['away_mode'] = bool(props['AwayMode'])
 
         return data
 
@@ -156,7 +176,7 @@ def write_to_influx(
     dry_run: bool = False
 ) -> int:
     """
-    Write thermal data points to InfluxDB.
+    Write data points to InfluxDB (both heating_system and thermal_history).
 
     Args:
         influx_url: InfluxDB URL
@@ -164,7 +184,7 @@ def write_to_influx(
         influx_org: InfluxDB organization
         influx_bucket: InfluxDB bucket
         house_id: House identifier tag
-        data_points: List of thermal data dictionaries
+        data_points: List of data dictionaries
         dry_run: If True, don't actually write
 
     Returns:
@@ -172,10 +192,19 @@ def write_to_influx(
     """
     if dry_run:
         print(f"\n[DRY RUN] Would write {len(data_points)} points to InfluxDB")
+        # Show sample with more fields
         for i, dp in enumerate(data_points[:5]):
-            print(f"  {i+1}. {dp['timestamp']}: room={dp['room_temperature']:.1f}, outdoor={dp['outdoor_temperature']:.1f}")
+            supply = dp.get('supply_temp', 0)
+            print(f"  {i+1}. {dp['timestamp']}: room={dp['room_temperature']:.1f}, "
+                  f"outdoor={dp['outdoor_temperature']:.1f}, supply={supply:.1f}")
         if len(data_points) > 5:
             print(f"  ... and {len(data_points) - 5} more")
+        # Show field coverage
+        all_fields = set()
+        for dp in data_points:
+            all_fields.update(dp.keys())
+        all_fields.discard('timestamp')
+        print(f"\nFields available: {', '.join(sorted(all_fields))}")
         return 0
 
     try:
@@ -184,20 +213,59 @@ def write_to_influx(
 
         written = 0
         for dp in data_points:
-            point = Point("thermal_history") \
+            # Write to heating_system measurement (main dashboard data)
+            hs_point = Point("heating_system") \
                 .tag("house_id", house_id) \
-                .field("room_temperature", dp['room_temperature']) \
-                .field("outdoor_temperature", dp['outdoor_temperature']) \
+                .time(dp['timestamp'], WritePrecision.S)
+
+            # Temperature fields
+            hs_point.field("room_temperature", round(float(dp['room_temperature']), 2))
+            hs_point.field("outdoor_temperature", round(float(dp['outdoor_temperature']), 2))
+            if 'outdoor_temp_24h_avg' in dp:
+                hs_point.field("outdoor_temp_24h_avg", round(float(dp['outdoor_temp_24h_avg']), 2))
+            if 'supply_temp' in dp:
+                hs_point.field("supply_temp", round(float(dp['supply_temp']), 2))
+            if 'supply_temp_heat_curve' in dp:
+                hs_point.field("supply_temp_heat_curve", round(float(dp['supply_temp_heat_curve']), 2))
+            if 'supply_temp_heat_curve_ml' in dp:
+                hs_point.field("supply_temp_heat_curve_ml", round(float(dp['supply_temp_heat_curve_ml']), 2))
+            if 'return_temp' in dp:
+                hs_point.field("return_temp", round(float(dp['return_temp']), 2))
+            if 'hot_water_temp' in dp:
+                hs_point.field("hot_water_temp", round(float(dp['hot_water_temp']), 2))
+            if 'system_pressure' in dp:
+                hs_point.field("system_pressure", round(float(dp['system_pressure']), 2))
+            if 'target_temp_setpoint' in dp:
+                hs_point.field("target_temp_setpoint", round(float(dp['target_temp_setpoint']), 2))
+            if 'away_temp_setpoint' in dp:
+                hs_point.field("away_temp_setpoint", round(float(dp['away_temp_setpoint']), 2))
+
+            # Boolean fields (as int for graphing)
+            if 'electric_heater' in dp:
+                hs_point.field("electric_heater", 1 if dp['electric_heater'] else 0)
+            if 'heat_recovery' in dp:
+                hs_point.field("heat_recovery", 1 if dp['heat_recovery'] else 0)
+            if 'away_mode' in dp:
+                hs_point.field("away_mode", 1 if dp['away_mode'] else 0)
+
+            write_api.write(bucket=influx_bucket, org=influx_org, record=hs_point)
+
+            # Also write to thermal_history (for thermal analyzer)
+            th_point = Point("thermal_history") \
+                .tag("house_id", house_id) \
+                .field("room_temperature", round(float(dp['room_temperature']), 2)) \
+                .field("outdoor_temperature", round(float(dp['outdoor_temperature']), 2)) \
                 .time(dp['timestamp'], WritePrecision.S)
 
             if 'supply_temp' in dp:
-                point.field("supply_temp", dp['supply_temp'])
+                th_point.field("supply_temp", round(float(dp['supply_temp']), 2))
             if 'electric_heater' in dp:
-                point.field("electric_heater", 1 if dp['electric_heater'] else 0)
+                th_point.field("electric_heater", 1 if dp['electric_heater'] else 0)
             if 'return_temp' in dp:
-                point.field("return_temp", dp['return_temp'])
+                th_point.field("return_temp", round(float(dp['return_temp']), 2))
 
-            write_api.write(bucket=influx_bucket, org=influx_org, record=point)
+            write_api.write(bucket=influx_bucket, org=influx_org, record=th_point)
+
             written += 1
 
             if written % 100 == 0:
