@@ -8,7 +8,7 @@
 set -e  # Exit on error
 
 # Configuration
-BACKUP_BASE_DIR="/tmp/homeside_docker_backup"
+BACKUP_BASE_DIR="$HOME/homeside_docker_backup"
 NAS_IP="192.168.86.5"
 NAS_SHARE="Backup"
 NAS_USER="AutoBackup"

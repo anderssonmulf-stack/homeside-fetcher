@@ -11,7 +11,7 @@ NAS_IP="192.168.86.5"
 NAS_SHARE="Backup"
 NAS_USER="AutoBackup"
 NAS_PASSWORD="vU2In!?=k45"
-BACKUP_BASE_DIR="/tmp/homeside_backup"
+BACKUP_BASE_DIR="$HOME/homeside_backup"
 MOUNT_POINT="/mnt/nas_backup"
 RETENTION_DAYS=30
 PROJECT_DIR="/opt/dev/homeside-fetcher"
