@@ -1,10 +1,9 @@
 {
   "schema_version": 1,
-  "customer_id": "HEM_FJV_Villa_149",
-  "friendly_name": "Daggis8",
-  "meter_ids": ["METER001"],
+  "customer_id": "HEM_FJV_Villa_34",
+  "friendly_name": "Glance",
   "building": {
-    "description": "Daggstigen 8, 152 kvm p\u00e5 3 plan. Bygg\u00e5r 2022",
+    "description": "",
     "thermal_response": "medium"
   },
   "comfort": {

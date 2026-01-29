@@ -31,18 +31,26 @@
                         {% if user.house_friendly_name %}
                         <p><strong>House Name:</strong> {{ user.house_friendly_name }}</p>
                         {% endif %}
+                        {% if user.verified_customer_id %}
+                        <p><strong>Customer ID:</strong> <code>{{ user.verified_customer_id }}</code>
+                            <span class="badge badge-success">Verified</span>
+                        </p>
+                        {% else %}
                         <button type="button" class="btn btn-small test-credentials-btn"
                                 data-username="{{ user.homeside_username }}"
-                                data-password="{{ user.homeside_password }}">
+                                data-password="{{ user.homeside_password }}"
+                                data-gui-username="{{ username }}">
                             Test Credentials
                         </button>
                         <span class="credential-status" id="status-{{ username }}"></span>
+                        {% endif %}
                     </div>
                     {% endif %}
                 </div>
                 <div class="user-actions">
                     <form method="POST" action="{{ url_for('admin_approve_user', username=username) }}"
-                          class="approve-form">
+                          class="approve-form" id="approve-form-{{ username }}">
+                        <input type="hidden" name="customer_id" id="customer-id-{{ username }}" value="">
                         <div class="form-row">
                             <div class="form-group">
                                 <label>Role:</label>
@@ -55,7 +63,7 @@
                             <div class="form-group">
                                 <label>Assign house:</label>
                                 <select name="houses" class="house-select">
-                                    <option value="">-- Select house --</option>
+                                    <option value="">-- Auto-create from HomeSide --</option>
                                     {% for house in all_houses %}
                                     <option value="{{ house.id }}">{{ house.friendly_name }}</option>
                                     {% endfor %}
@@ -64,7 +72,7 @@
                             </div>
                         </div>
                         <div class="action-buttons">
-                            <button type="submit" class="btn btn-success">Approve</button>
+                            <button type="submit" class="btn btn-success">Approve & Deploy Fetcher</button>
                         </div>
                     </form>
                     <form method="POST" action="{{ url_for('admin_reject_user', username=username) }}"
@@ -94,7 +102,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for username, user in users.items() if user.role != 'pending' %}
+                {% for username, user in users.items() if user.role not in ['pending', 'deleted'] %}
                 <tr>
                     <td>{{ username }}</td>
                     <td>{{ user.name }}</td>
@@ -131,6 +139,52 @@
             </tbody>
         </table>
     </section>
+
+    {% if deleted_users %}
+    <section class="section deleted-users-section">
+        <h2>Deleted Users ({{ deleted_users|length }})</h2>
+        {% if pending_purge_count > 0 %}
+        <form method="POST" action="{{ url_for('admin_purge_deleted') }}" class="purge-form">
+            <button type="submit" class="btn btn-danger btn-small"
+                    onclick="return confirm('Permanently delete {{ pending_purge_count }} user(s) past their purge date? This cannot be undone.');">
+                Purge {{ pending_purge_count }} Expired
+            </button>
+        </form>
+        {% endif %}
+
+        <table class="table table-deleted">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Name</th>
+                    <th>Deleted</th>
+                    <th>Purge Date</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in deleted_users %}
+                <tr class="{% if user.days_left <= 0 %}row-expired{% endif %}">
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.name }}</td>
+                    <td>{{ user.deleted_at[:10] if user.deleted_at else 'Unknown' }}</td>
+                    <td>{{ user.scheduled_purge_at[:10] if user.scheduled_purge_at else 'Unknown' }}</td>
+                    <td>
+                        <span class="badge badge-{% if user.days_left <= 0 %}danger{% elif user.days_left <= 7 %}warning{% else %}info{% endif %}">
+                            {% if user.days_left <= 0 %}Expired{% elif user.days_left == 1 %}1 day left{% else %}{{ user.days_left }} days left{% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        <a href="{{ url_for('admin_edit_user', username=user.username) }}"
+                           class="btn btn-small btn-success">Restore/Delete</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% endif %}
 </div>
 {% endblock %}
 
@@ -138,8 +192,9 @@
 <script>
 document.querySelectorAll('.test-credentials-btn').forEach(btn => {
     btn.addEventListener('click', async function() {
-        const username = this.dataset.username;
-        const password = this.dataset.password;
+        const homesideUsername = this.dataset.username;
+        const homesidePassword = this.dataset.password;
+        const guiUsername = this.dataset.guiUsername;
         const statusEl = this.nextElementSibling;
 
         this.disabled = true;
@@ -151,13 +206,22 @@ document.querySelectorAll('.test-credentials-btn').forEach(btn => {
             const response = await fetch('/api/test-homeside-credentials', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({username, password})
+                body: JSON.stringify({username: homesideUsername, password: homesidePassword})
             });
             const result = await response.json();
 
             if (result.success) {
                 statusEl.textContent = ' Valid - ' + (result.client_id || 'Connected');
                 statusEl.classList.add('status-success');
+
+                // Store discovered customer_id in the hidden field
+                if (result.customer_id && guiUsername) {
+                    const hiddenField = document.getElementById('customer-id-' + guiUsername);
+                    if (hiddenField) {
+                        hiddenField.value = result.customer_id;
+                        statusEl.textContent += ' (' + result.customer_id + ')';
+                    }
+                }
             } else {
                 statusEl.textContent = ' ' + (result.error || 'Invalid credentials');
                 statusEl.classList.add('status-error');

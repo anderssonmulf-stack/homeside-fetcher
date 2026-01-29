@@ -63,6 +63,13 @@ a:hover {
     color: var(--white);
     font-size: 1.4rem;
     font-weight: bold;
+    display: flex;
+    align-items: center;
+}
+
+.nav-logo {
+    height: 40px;
+    width: auto;
 }
 
 .nav-links {
@@ -971,6 +978,204 @@ a:hover {
 }
 
 /* =============================================================================
+   Checkbox Groups
+   ============================================================================= */
+
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background: var(--light);
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.checkbox-label:hover {
+    background: var(--white);
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+/* =============================================================================
+   Danger Zone (Offboarding)
+   ============================================================================= */
+
+.danger-zone {
+    border: 2px solid var(--danger);
+    border-radius: 8px;
+}
+
+.danger-zone h2 {
+    color: var(--danger);
+}
+
+.danger-action {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.danger-action:last-child {
+    border-bottom: none;
+}
+
+.danger-action.restore-action {
+    background: rgba(39, 174, 96, 0.05);
+    border-left: 4px solid var(--success);
+}
+
+.danger-info {
+    margin-bottom: 16px;
+}
+
+.danger-info h3 {
+    font-size: 1rem;
+    margin-bottom: 6px;
+}
+
+.danger-info p {
+    font-size: 0.9rem;
+    color: var(--muted);
+    margin: 0;
+}
+
+.hard-delete-form .confirm-group {
+    margin-bottom: 12px;
+}
+
+.hard-delete-form .confirm-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.9rem;
+}
+
+.hard-delete-form .confirm-group input {
+    width: 100%;
+    max-width: 300px;
+    padding: 8px 12px;
+    border: 1px solid var(--danger);
+    border-radius: 4px;
+}
+
+.btn-warning {
+    background: var(--warning);
+    color: var(--white);
+}
+
+/* =============================================================================
+   Deleted Users Section
+   ============================================================================= */
+
+.deleted-users-section {
+    border-left: 4px solid var(--danger);
+    padding-left: 16px;
+}
+
+.deleted-users-section h2 {
+    color: var(--danger);
+}
+
+.purge-form {
+    margin-bottom: 16px;
+}
+
+.table-deleted .row-expired {
+    background: rgba(231, 76, 60, 0.1);
+}
+
+.badge-danger {
+    background: var(--danger);
+    color: var(--white);
+}
+
+.badge-success {
+    background: var(--success);
+    color: var(--white);
+}
+
+/* =============================================================================
+   Grafana Embedded Dashboard
+   ============================================================================= */
+
+.grafana-dashboard-container {
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+/* Override parent container width for dashboard page */
+.container:has(.grafana-dashboard-container) {
+    max-width: 100%;
+    padding: 20px 40px;
+}
+
+.dashboard-actions {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.house-selector {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.house-selector .btn {
+    padding: 8px 16px;
+    font-size: 0.9rem;
+}
+
+.btn-secondary {
+    background: var(--light);
+    color: var(--dark);
+}
+
+.grafana-panels {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.panel-row {
+    display: flex;
+    gap: 12px;
+}
+
+.panel-row.stats-row {
+    flex-wrap: wrap;
+}
+
+.panel-stat {
+    width: 200px;
+    height: 110px;
+    border-radius: 8px;
+    background: #1a1a2e;
+    flex-shrink: 0;
+}
+
+.panel-graph {
+    width: 100%;
+    height: 500px;
+    border-radius: 8px;
+    background: #1a1a2e;
+}
+
+/* =============================================================================
    Responsive
    ============================================================================= */
 
@@ -1003,5 +1208,30 @@ a:hover {
 
     .house-select {
         max-width: 100%;
+    }
+
+    /* Grafana dashboard responsive */
+    .panel-stat {
+        width: calc(50% - 6px);
+        height: 100px;
+    }
+
+    .panel-graph {
+        height: 280px;
+    }
+
+    .house-selector .btn {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .panel-stat {
+        width: 100%;
+    }
+
+    .panel-graph {
+        height: 250px;
     }
 }

@@ -11,14 +11,15 @@
     {% if session.user_id %}
     <nav class="navbar">
         <div class="nav-brand">
-            <a href="{{ url_for('dashboard') }}">Svenskeb</a>
+            <a href="{{ url_for('dashboard') }}">
+                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Svensk EnergiBesparing" class="nav-logo">
+            </a>
         </div>
         <div class="nav-links">
             <a href="{{ url_for('dashboard') }}">Dashboard</a>
             {% if session.user_role == 'admin' %}
             <a href="{{ url_for('admin_users') }}">Users{% if pending_count %} <span class="nav-badge">{{ pending_count }}</span>{% endif %}</a>
             {% endif %}
-            <a href="https://grafana.svenskeb.se" target="_blank">Grafana</a>
         </div>
         <div class="nav-user">
             <span class="user-name">{{ session.user_name }}</span>

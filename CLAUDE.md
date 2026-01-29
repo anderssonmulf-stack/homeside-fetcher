@@ -14,7 +14,7 @@ A Python application that fetches heating system data from HomeSide district hea
 | `heat_curve_controller.py` | Manages dynamic heat curve adjustments based on weather forecasts. Can reduce supply temperatures when outdoor temps are rising. |
 | `smhi_weather.py` | Unified SMHI weather client for observations (nearest station) and forecasts (PMP3G API). Used for heating decisions. |
 | `weather_forecast.py` | Legacy weather forecast module (replaced by smhi_weather.py but kept for reference). |
-| `influx_writer.py` | InfluxDB client for storing time-series data (heating metrics, forecasts, thermal coefficients, heat curve baselines). |
+| `influx_writer.py` | InfluxDB client for storing time-series data (heating metrics, forecasts, thermal coefficients, heat curve baselines). Logs write failures to Seq. |
 | `seq_logger.py` | Centralized Seq structured logging with automatic client_id tagging for multi-site deployments. |
 | `customer_profile.py` | Manages customer-specific settings and learned parameters. Each customer has a JSON profile in `profiles/`. |
 | `temperature_forecaster.py` | Model C hybrid forecaster: combines physics-based prediction with historical learning for accurate temperature forecasts. |
@@ -34,7 +34,7 @@ A Python application that fetches heating system data from HomeSide district hea
 | File | Purpose |
 |------|---------|
 | `Dockerfile` | Container image definition |
-| `docker-compose.yml` | Container orchestration config |
+| `docker-compose.yml` | Container orchestration config. Defines one fetcher service per customer (multi-house support). |
 
 ### Grafana Dashboards
 
@@ -58,6 +58,13 @@ Provisioning configs in `grafana/provisioning/`:
 | `debug_variables.py` | Debug tool for inspecting API variables |
 | `dump_variables.py` | Dumps all variables from the API |
 | `find_all_variables.py` | Discovers available variables in the system |
+
+### Admin Scripts
+
+| File | Purpose |
+|------|---------|
+| `add_customer.py` | Interactive script to add new customers (creates profile, updates docker-compose, deploys) |
+| `migrate_seq_to_influx.py` | Migrates historical data from Seq logs to InfluxDB (for data recovery) |
 
 ### Migration Scripts
 
@@ -83,6 +90,166 @@ Located in `/backup_scripts`:
 4. `heat_curve_controller.py` evaluates if heating should be reduced
 5. All data is written to InfluxDB via `influx_writer.py`
 6. Logs are sent to Seq for monitoring
+
+## Adding New Customers
+
+### Quick Method (Recommended)
+
+Use the automated script:
+
+```bash
+cd /opt/dev/homeside-fetcher
+python3 add_customer.py
+```
+
+The script will:
+1. Prompt for customer details (username, password, name, location)
+2. Create the customer profile JSON
+3. Add the fetcher service to docker-compose.yml
+4. Build and deploy the container
+
+For non-interactive use:
+```bash
+python3 add_customer.py --non-interactive \
+    --username FC2000233091 \
+    --password "password" \
+    --name "House Name" \
+    --lat 56.67 \
+    --lon 12.86
+```
+
+### Manual Method
+
+To add a new customer/house manually, follow these steps:
+
+### Step 1: Get Customer Information
+
+Collect the following from the customer:
+- **HomeSide username** (e.g., `FC2000233091`)
+- **HomeSide password**
+- **Friendly name** for the house (e.g., `Glansen`, `Daggis8`)
+- **Location coordinates** (latitude/longitude for weather forecasts)
+
+You can find the coordinates using Google Maps (right-click on location).
+
+### Step 2: Create Customer Profile
+
+Create a new profile file in `profiles/` named `HEM_FJV_Villa_XX.json`:
+
+```json
+{
+  "schema_version": 1,
+  "customer_id": "HEM_FJV_Villa_XX",
+  "friendly_name": "CustomerName",
+  "building": {
+    "description": "Description of the building",
+    "thermal_response": "medium"
+  },
+  "comfort": {
+    "target_indoor_temp": 22.0,
+    "acceptable_deviation": 1.0
+  },
+  "heating_system": {
+    "response_time_minutes": 30,
+    "max_supply_temp": 55
+  },
+  "learned": {
+    "thermal_coefficient": null,
+    "thermal_coefficient_confidence": 0.0,
+    "hourly_bias": {},
+    "samples_since_last_update": 0,
+    "total_samples": 0,
+    "next_update_at_samples": 24,
+    "updated_at": null
+  }
+}
+```
+
+**Note:** The `customer_id` must match the last segment of the HomeSide client ID (auto-discovered on first run).
+
+### Step 3: Add Fetcher Service to docker-compose.yml
+
+Add a new service for the customer in `docker-compose.yml`:
+
+```yaml
+  # New customer: FriendlyName
+  homeside-fetcher-customername:
+    build: .
+    container_name: homeside-fetcher-HEM_FJV_Villa_XX
+    restart: unless-stopped
+    environment:
+      - HOMESIDE_USERNAME=FCXXXXXXXXX
+      - HOMESIDE_PASSWORD=password
+      - HOMESIDE_CLIENTID=
+      - FRIENDLY_NAME=CustomerName
+      - DISPLAY_NAME_SOURCE=friendly_name
+      - POLL_INTERVAL_MINUTES=15
+      - SEQ_URL=http://seq:5341
+      - SEQ_API_KEY=your-seq-api-key
+      - LOG_LEVEL=INFO
+      - DEBUG_MODE=false
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=homeside_token_2026_secret
+      - INFLUXDB_ORG=homeside
+      - INFLUXDB_BUCKET=heating
+      - INFLUXDB_ENABLED=true
+      - LATITUDE=XX.XX
+      - LONGITUDE=XX.XX
+    volumes:
+      - ./profiles:/app/profiles
+    networks:
+      - dryckesmail_beer-network
+    depends_on:
+      - influxdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+**Important:** The `volumes` section mounts the profiles directory so the fetcher can access customer profiles.
+
+### Step 4: Build and Deploy
+
+```bash
+cd /opt/dev/homeside-fetcher
+
+# Rebuild the fetcher image
+docker compose build
+
+# Start all services (including the new fetcher)
+docker compose up -d
+
+# Check the logs to verify it started correctly
+docker logs -f homeside-fetcher-HEM_FJV_Villa_XX
+```
+
+### Step 5: Verify Setup
+
+Check the startup logs for:
+```
+✓ Customer profile loaded: CustomerName
+```
+
+If you see `⚠ No customer profile found`, verify:
+1. The profile filename matches `HEM_FJV_Villa_XX.json`
+2. The `customer_id` in the profile matches the auto-discovered client ID
+3. The profiles volume is mounted correctly
+
+### Step 6: Add User to Web GUI (svenskeb.se)
+
+1. Have the customer register at `https://svenskeb.se/register`
+2. Admin receives email notification
+3. Admin logs in and approves the user at `/admin/users`
+4. Assign the customer's house(s) during approval
+
+### Finding the Client ID
+
+If you need to find the exact client ID format:
+1. Start the fetcher with `HOMESIDE_CLIENTID=` (empty)
+2. Check the logs for: `✓ Using client ID: 38/xxx/HEM_FJV_XX/HEM_FJV_Villa_XX`
+3. The last segment (`HEM_FJV_Villa_XX`) is what the profile filename should match
 
 ## Key Variables Tracked
 
@@ -311,16 +478,26 @@ Each indoor forecast includes an explanation:
 
 | Measurement | Purpose |
 |-------------|---------|
-| `temperature_forecast` | Future temperature predictions (12h ahead) |
+| `temperature_forecast` | Future temperature predictions (24h ahead) with lead_time tracking |
 | `forecast_accuracy` | Predicted vs actual comparisons for learning |
 | `learned_parameters` | History of learned params (for tracking adaptation) |
+
+### Lead-Time Accuracy Tracking
+
+Each forecast point includes a `lead_time_hours` field indicating how far ahead the prediction was made. This enables comparing forecast accuracy at different horizons (24h vs 12h vs 3h) to find the optimal prediction window.
+
+**How it works:**
+- Forecasts are generated every 2 hours for the next 24 hours
+- Each forecast point is tagged with `lead_time_hours` (hours from generation to target time)
+- Multiple predictions for the same future time accumulate (not deleted)
+- When the target time arrives, compare all predictions to find which lead time was most accurate
 
 ### Querying Forecasts
 
 ```flux
-// Get indoor temperature forecasts for next 12h
+// Get indoor temperature forecasts for next 24h
 from(bucket: "heating")
-  |> range(start: now(), stop: now() + 12h)
+  |> range(start: now(), stop: now() + 24h)
   |> filter(fn: (r) => r._measurement == "temperature_forecast")
   |> filter(fn: (r) => r.forecast_type == "indoor_temp")
 
@@ -329,6 +506,12 @@ from(bucket: "heating")
   |> range(start: -24h)
   |> filter(fn: (r) => r._measurement == "forecast_accuracy")
   |> filter(fn: (r) => r._field == "error")
+
+// Compare accuracy by lead time (e.g., 24h vs 12h vs 3h predictions)
+from(bucket: "heating")
+  |> range(start: -7d)
+  |> filter(fn: (r) => r._measurement == "temperature_forecast")
+  |> filter(fn: (r) => r._field == "lead_time_hours")
 ```
 
 ## Grafana Dashboards

@@ -44,13 +44,15 @@ class ForecastPoint:
     timestamp: datetime
     forecast_type: str  # indoor_temp, outdoor_temp, supply_temp_baseline, supply_temp_ml
     value: float
+    lead_time_hours: float = 0.0  # Hours from generation time to forecast time
     explanation: Optional[ForecastExplanation] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
             "timestamp": self.timestamp.isoformat(),
             "forecast_type": self.forecast_type,
-            "value": round(self.value, 2)
+            "value": round(self.value, 2),
+            "lead_time_hours": round(self.lead_time_hours, 1)
         }
         if self.explanation:
             result["explanation"] = self.explanation.to_dict()
@@ -61,7 +63,8 @@ class ForecastPoint:
         return {
             "timestamp": self.timestamp,
             "forecast_type": self.forecast_type,
-            "value": self.value
+            "value": self.value,
+            "lead_time_hours": self.lead_time_hours
         }
 
 
@@ -125,7 +128,7 @@ class TemperatureForecaster:
         heat_curve=None
     ) -> List[ForecastPoint]:
         """
-        Generate temperature forecasts for the next 12 hours.
+        Generate temperature forecasts for the next 24 hours.
 
         Args:
             current_indoor: Current indoor temperature
@@ -138,6 +141,7 @@ class TemperatureForecaster:
         """
         forecast_points = []
         predicted_indoor = current_indoor
+        generation_time = datetime.now(timezone.utc)
 
         for forecast in weather_forecast:
             # Parse forecast time
@@ -153,11 +157,15 @@ class TemperatureForecaster:
             if forecast_outdoor is None:
                 continue
 
+            # Calculate lead time (hours from now to forecast time)
+            lead_time_hours = (forecast_time - generation_time).total_seconds() / 3600
+
             # 1. Outdoor temperature (direct from weather)
             forecast_points.append(ForecastPoint(
                 timestamp=forecast_time,
                 forecast_type='outdoor_temp',
-                value=forecast_outdoor
+                value=forecast_outdoor,
+                lead_time_hours=round(lead_time_hours, 1)
             ))
 
             # 2. Supply temperature forecasts (from heat curve)
@@ -169,13 +177,15 @@ class TemperatureForecaster:
                     forecast_points.append(ForecastPoint(
                         timestamp=forecast_time,
                         forecast_type='supply_temp_baseline',
-                        value=baseline_supply
+                        value=baseline_supply,
+                        lead_time_hours=round(lead_time_hours, 1)
                     ))
                 if ml_supply is not None:
                     forecast_points.append(ForecastPoint(
                         timestamp=forecast_time,
                         forecast_type='supply_temp_ml',
-                        value=ml_supply
+                        value=ml_supply,
+                        lead_time_hours=round(lead_time_hours, 1)
                     ))
 
             # 3. Indoor temperature forecast (Model C)
@@ -184,6 +194,7 @@ class TemperatureForecaster:
                 outdoor_temp=forecast_outdoor,
                 forecast_time=forecast_time
             )
+            indoor_forecast.lead_time_hours = round(lead_time_hours, 1)
 
             forecast_points.append(indoor_forecast)
 

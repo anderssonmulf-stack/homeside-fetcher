@@ -11,10 +11,10 @@
         {% if houses %}
         <div class="house-grid">
             {% for house_id in houses %}
-            <a href="{{ url_for('house_detail', house_id=house_id) }}" class="house-card">
+            <a href="{{ url_for('house_dashboard', customer_id=house_id) }}" class="house-card">
                 <div class="house-icon">🏠</div>
                 <div class="house-name">{{ house_id }}</div>
-                <div class="house-action">View Settings →</div>
+                <div class="house-action">View Dashboard →</div>
             </a>
             {% endfor %}
         </div>
@@ -26,15 +26,6 @@
         {% endif %}
     </section>
 
-    <section class="section">
-        <h2>Quick Links</h2>
-        <div class="quick-links">
-            <a href="https://grafana.svenskeb.se" target="_blank" class="quick-link">
-                <span class="icon">📊</span>
-                <span class="label">View Grafana Dashboards</span>
-            </a>
-        </div>
-    </section>
 
     <section class="section">
         <h2>Recent Activity</h2>

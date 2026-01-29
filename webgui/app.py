@@ -21,6 +21,8 @@ load_dotenv()
 from auth import UserManager, require_login, require_role
 from audit import AuditLogger
 from email_service import EmailService
+from fetcher_deployer import FetcherDeployer, create_htpasswd_entry, delete_htpasswd_entry, extract_customer_id_from_client_path
+from grafana_helper import update_dashboard_house_variable
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -111,6 +113,66 @@ def logout():
     return redirect(url_for('login'))
 
 
+def _verify_homeside_credentials(homeside_username: str, homeside_password: str) -> dict:
+    """
+    Verify HomeSide credentials and return result.
+    Returns dict with 'valid' bool and optional 'customer_id', 'house_name', 'error'.
+    """
+    import requests
+
+    try:
+        # Remove spaces from username (HomeSide quirk)
+        username_clean = homeside_username.replace(' ', '')
+
+        auth_url = "https://homeside.systeminstallation.se/api/v2/authorize/account"
+        payload = {
+            "user": {
+                "Account": "homeside",
+                "UserName": username_clean,
+                "Password": homeside_password
+            },
+            "lang": "sv"
+        }
+
+        response = requests.post(auth_url, json=payload, timeout=15)
+        if response.status_code != 200:
+            return {'valid': False, 'error': f'HomeSide API error (HTTP {response.status_code})'}
+
+        result = response.json()
+        session_token = result.get('querykey')
+
+        if not session_token:
+            return {'valid': False, 'error': 'Invalid HomeSide username or password'}
+
+        # Get house list to extract customer_id
+        house_response = requests.post(
+            "https://homeside.systeminstallation.se/api/v2/housefidlist",
+            json={},
+            headers={'Authorization': session_token},
+            timeout=15
+        )
+
+        if house_response.status_code == 200:
+            houses = house_response.json()
+            if houses:
+                house = houses[0]
+                client_path = house.get('restapiurl', '')
+                customer_id = extract_customer_id_from_client_path(client_path)
+                return {
+                    'valid': True,
+                    'customer_id': customer_id,
+                    'house_name': house.get('name', ''),
+                    'client_path': client_path
+                }
+
+        return {'valid': True, 'customer_id': '', 'house_name': ''}
+
+    except requests.Timeout:
+        return {'valid': False, 'error': 'HomeSide API timeout - please try again'}
+    except Exception as e:
+        return {'valid': False, 'error': f'Could not verify HomeSide credentials: {str(e)}'}
+
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     """Self-registration for new users"""
@@ -150,6 +212,13 @@ def register():
         if user_manager.email_exists(email):
             errors.append('Email already registered.')
 
+        # Verify HomeSide credentials before allowing registration
+        homeside_verified = None
+        if homeside_username and homeside_password and not errors:
+            homeside_verified = _verify_homeside_credentials(homeside_username, homeside_password)
+            if not homeside_verified['valid']:
+                errors.append(homeside_verified.get('error', 'Invalid HomeSide credentials'))
+
         if errors:
             for error in errors:
                 flash(error, 'error')
@@ -159,7 +228,11 @@ def register():
                                    homeside_password=homeside_password,
                                    house_friendly_name=house_friendly_name)
 
-        # Create pending user
+        # Create pending user with verified customer_id
+        verified_customer_id = ''
+        if homeside_verified and homeside_verified.get('valid'):
+            verified_customer_id = homeside_verified.get('customer_id', '')
+
         user_manager.create_user(
             username=username,
             password=password,
@@ -170,10 +243,16 @@ def register():
             registration_note=note,
             homeside_username=homeside_username,
             homeside_password=homeside_password,
-            house_friendly_name=house_friendly_name
+            house_friendly_name=house_friendly_name,
+            verified_customer_id=verified_customer_id
         )
 
         audit_logger.log('UserRegistered', username, {'email': email, 'house_name': house_friendly_name})
+
+        # Create htpasswd entry for Grafana access (same credentials as webgui)
+        htpasswd_created = create_htpasswd_entry(username, password)
+        if htpasswd_created:
+            audit_logger.log('HtpasswdCreated', username, {'for_grafana': True})
 
         # Notify admins
         email_service.notify_admins_new_registration(username, name, email, note)
@@ -244,6 +323,58 @@ def house_detail(house_id):
                            changes=changes,
                            realtime=realtime_data,
                            forecast=forecast_data)
+
+
+@app.route('/house/<customer_id>/dashboard')
+@require_login
+def house_dashboard(customer_id):
+    """Display embedded Grafana dashboard for a house."""
+    if not user_manager.can_access_house(session.get('user_id'), customer_id):
+        flash('Access denied.', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Get house info from profile
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    try:
+        profile = CustomerProfile.load(customer_id, profiles_dir)
+        friendly_name = profile.friendly_name or customer_id
+    except FileNotFoundError:
+        friendly_name = customer_id
+
+    # Get all houses for this user (for house selector)
+    user = user_manager.get_user(session.get('user_id'))
+    user_houses = []
+    if user:
+        house_ids = user.get('houses', [])
+        # Admin or wildcard user gets all houses
+        if user.get('role') == 'admin' or '*' in house_ids:
+            house_ids = user_manager.get_all_houses()
+
+        for house_id in house_ids:
+            if house_id != '*':
+                try:
+                    p = CustomerProfile.load(house_id, profiles_dir)
+                    user_houses.append({
+                        'id': house_id,
+                        'name': p.friendly_name or house_id
+                    })
+                except FileNotFoundError:
+                    user_houses.append({
+                        'id': house_id,
+                        'name': house_id
+                    })
+
+    # Sort by name for consistent display
+    user_houses.sort(key=lambda x: x['name'].lower())
+
+    return render_template('house_dashboard.html',
+        customer_id=customer_id,
+        friendly_name=friendly_name,
+        user_houses=user_houses,
+        grafana_base='/grafana',
+        dashboard_uid='homeside-v3'
+    )
 
 
 @app.route('/house/<house_id>/settings', methods=['POST'])
@@ -330,38 +461,154 @@ def admin_users():
     """Admin: User management page"""
     users = user_manager.get_all_users()
     pending_count = sum(1 for u in users.values() if u['role'] == 'pending')
+    deleted_users = user_manager.get_deleted_users()
+    pending_purge = user_manager.get_users_pending_purge()
     all_houses = get_houses_with_names()
-    return render_template('admin_users.html', users=users, pending_count=pending_count, all_houses=all_houses)
+    return render_template('admin_users.html',
+                           users=users,
+                           pending_count=pending_count,
+                           deleted_users=deleted_users,
+                           pending_purge_count=len(pending_purge),
+                           all_houses=all_houses)
 
 
 @app.route('/admin/users/<username>/approve', methods=['POST'])
 @require_role('admin')
 def admin_approve_user(username):
-    """Admin: Approve a pending user"""
+    """Admin: Approve a pending user and deploy their fetcher"""
     houses = request.form.getlist('houses')
+    # Filter out empty strings
+    houses = [h for h in houses if h]
     role = request.form.get('role', 'user')
+    customer_id = request.form.get('customer_id', '')
 
     # Validate role
     if role not in ['user', 'viewer', 'admin']:
         role = 'user'
 
+    # Get user before approval to access HomeSide credentials
+    user = user_manager.get_user(username)
+    if not user:
+        flash(f'User {username} not found.', 'error')
+        return redirect(url_for('admin_users'))
+
+    # Use verified_customer_id from registration, or try to discover it
+    if not customer_id:
+        customer_id = user.get('verified_customer_id', '')
+
+    if not customer_id and user.get('homeside_username') and user.get('homeside_password'):
+        discovered = _discover_customer_id(
+            user.get('homeside_username'),
+            user.get('homeside_password')
+        )
+        if discovered:
+            customer_id = discovered.get('customer_id', '')
+
+    # Add discovered customer_id to houses list (even before deploy attempt)
+    if customer_id and customer_id not in houses:
+        houses.append(customer_id)
+
     if user_manager.approve_user(username, houses, role=role, approved_by=session.get('user_id')):
+        # Refresh user data after approval
         user = user_manager.get_user(username)
 
         audit_logger.log('UserApproved', session.get('user_id'), {
             'approved_user': username,
             'role': role,
-            'houses': houses
+            'houses': houses,
+            'customer_id': customer_id
         })
+
+        # Deploy fetcher container if we have HomeSide credentials and customer_id
+        deploy_result = None
+        if customer_id and user.get('homeside_username') and user.get('homeside_password'):
+            deployer = FetcherDeployer()
+            deploy_result = deployer.deploy_fetcher(
+                customer_id=customer_id,
+                friendly_name=user.get('house_friendly_name', customer_id),
+                homeside_username=user.get('homeside_username'),
+                homeside_password=user.get('homeside_password')
+            )
+
+            if deploy_result.get('success'):
+                audit_logger.log('FetcherDeployed', session.get('user_id'), {
+                    'customer_id': customer_id,
+                    'container_name': deploy_result.get('container_name'),
+                    'for_user': username
+                })
+                # Update Grafana dashboard to include new house
+                update_dashboard_house_variable()
+            else:
+                audit_logger.log('FetcherDeployFailed', session.get('user_id'), {
+                    'customer_id': customer_id,
+                    'error': deploy_result.get('error', 'Unknown'),
+                    'for_user': username
+                })
 
         # Send welcome email
         email_service.send_welcome_email(user)
 
-        flash(f'User {username} has been approved as {role}.', 'success')
+        if deploy_result and deploy_result.get('success'):
+            flash(f'User {username} approved and fetcher deployed for {customer_id}.', 'success')
+        elif customer_id:
+            flash(f'User {username} approved but fetcher deployment failed. Check logs.', 'warning')
+        else:
+            flash(f'User {username} approved. No HomeSide credentials for auto-deployment.', 'info')
     else:
         flash(f'Failed to approve user {username}.', 'error')
 
     return redirect(url_for('admin_users'))
+
+
+def _discover_customer_id(homeside_username: str, homeside_password: str) -> dict:
+    """Discover customer_id by authenticating with HomeSide API."""
+    import requests
+
+    try:
+        # Remove spaces from username (HomeSide quirk)
+        username = homeside_username.replace(' ', '')
+
+        auth_url = "https://homeside.systeminstallation.se/api/v2/authorize/account"
+        payload = {
+            "user": {
+                "Account": "homeside",
+                "UserName": username,
+                "Password": homeside_password
+            },
+            "lang": "sv"
+        }
+
+        response = requests.post(auth_url, json=payload, timeout=15)
+        if response.status_code != 200:
+            return {}
+
+        result = response.json()
+        session_token = result.get('querykey')
+        if not session_token:
+            return {}
+
+        # Get house list
+        house_response = requests.post(
+            "https://homeside.systeminstallation.se/api/v2/housefidlist",
+            json={},
+            headers={'Authorization': session_token},
+            timeout=15
+        )
+
+        if house_response.status_code == 200:
+            houses = house_response.json()
+            if houses:
+                house = houses[0]
+                client_path = house.get('restapiurl', '')
+                return {
+                    'customer_id': extract_customer_id_from_client_path(client_path),
+                    'client_path': client_path,
+                    'house_name': house.get('name', '')
+                }
+    except Exception:
+        pass
+
+    return {}
 
 
 @app.route('/admin/users/<username>/reject', methods=['POST'])
@@ -400,6 +647,8 @@ def admin_edit_user(username):
     if request.method == 'POST':
         new_role = request.form.get('role')
         new_houses = request.form.getlist('houses')
+        # Filter out empty strings
+        new_houses = [h for h in new_houses if h]
 
         changes = {}
         if new_role != user['role']:
@@ -421,6 +670,143 @@ def admin_edit_user(username):
 
     all_houses = get_houses_with_names()
     return render_template('admin_edit_user.html', user=user, username=username, all_houses=all_houses)
+
+
+@app.route('/admin/users/<username>/soft-delete', methods=['POST'])
+@require_role('admin')
+def admin_soft_delete_user(username):
+    """Admin: Soft delete - disable account, stop data collection"""
+    user = user_manager.get_user(username)
+    if not user:
+        flash('User not found.', 'error')
+        return redirect(url_for('admin_users'))
+
+    # Prevent deleting yourself
+    if username == session.get('user_id'):
+        flash('You cannot delete your own account.', 'error')
+        return redirect(url_for('admin_users'))
+
+    # Stop fetcher container(s)
+    deployer = FetcherDeployer()
+    customer_ids = [h for h in user.get('houses', []) if h != '*']
+    for customer_id in customer_ids:
+        deployer.soft_offboard(customer_id)
+
+    # Mark user as deleted
+    user_manager.soft_delete_user(username)
+
+    audit_logger.log('UserSoftDeleted', session.get('user_id'), {
+        'deleted_user': username,
+        'customer_ids': customer_ids,
+        'scheduled_purge': '30 days'
+    })
+
+    flash(f'User {username} disabled. Data will be permanently deleted in 30 days.', 'warning')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/<username>/restore', methods=['POST'])
+@require_role('admin')
+def admin_restore_user(username):
+    """Admin: Restore a soft-deleted user"""
+    user = user_manager.get_user(username)
+    if not user or user.get('role') != 'deleted':
+        flash('User not found or not deleted.', 'error')
+        return redirect(url_for('admin_users'))
+
+    # Restore user
+    user_manager.restore_user(username, role='user')
+
+    # Restart fetcher container(s)
+    deployer = FetcherDeployer()
+    customer_ids = [h for h in user.get('houses', []) if h != '*']
+    for customer_id in customer_ids:
+        # Re-deploy using stored credentials
+        deployer.deploy_fetcher(
+            customer_id=customer_id,
+            friendly_name=user.get('house_friendly_name', customer_id),
+            homeside_username=user.get('homeside_username', ''),
+            homeside_password=user.get('homeside_password', '')
+        )
+
+    audit_logger.log('UserRestored', session.get('user_id'), {
+        'restored_user': username,
+        'customer_ids': customer_ids
+    })
+
+    flash(f'User {username} has been restored.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/<username>/hard-delete', methods=['POST'])
+@require_role('admin')
+def admin_hard_delete_user(username):
+    """Admin: Permanent deletion - remove all data"""
+    confirm = request.form.get('confirm_delete', '')
+
+    if confirm != username:
+        flash('Please confirm by typing the username exactly.', 'error')
+        return redirect(url_for('admin_edit_user', username=username))
+
+    user = user_manager.get_user(username)
+    if not user:
+        flash('User not found.', 'error')
+        return redirect(url_for('admin_users'))
+
+    # Prevent deleting yourself
+    if username == session.get('user_id'):
+        flash('You cannot delete your own account.', 'error')
+        return redirect(url_for('admin_users'))
+
+    deployer = FetcherDeployer()
+    customer_ids = [h for h in user.get('houses', []) if h != '*']
+
+    for customer_id in customer_ids:
+        deployer.hard_offboard(customer_id, username)
+
+    # Delete user account
+    user_manager.delete_user(username)
+
+    # Remove htpasswd entry
+    delete_htpasswd_entry(username)
+
+    audit_logger.log('UserHardDeleted', session.get('user_id'), {
+        'deleted_user': username,
+        'customer_ids': customer_ids
+    })
+
+    flash(f'User {username} and all data permanently deleted.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/purge-deleted', methods=['POST'])
+@require_role('admin')
+def admin_purge_deleted():
+    """Admin: Purge all users past their scheduled deletion date"""
+    pending = user_manager.get_users_pending_purge()
+    deployer = FetcherDeployer()
+    purged = []
+
+    for user in pending:
+        username = user['username']
+        customer_ids = [h for h in user.get('houses', []) if h != '*']
+
+        for customer_id in customer_ids:
+            deployer.hard_offboard(customer_id, username)
+
+        user_manager.delete_user(username)
+        delete_htpasswd_entry(username)
+        purged.append(username)
+
+    if purged:
+        audit_logger.log('BulkPurge', session.get('user_id'), {
+            'purged_users': purged
+        })
+        flash(f'Purged {len(purged)} users: {", ".join(purged)}', 'success')
+    else:
+        flash('No users pending purge.', 'info')
+
+    return redirect(url_for('admin_users'))
 
 
 # =============================================================================
@@ -458,6 +844,39 @@ def handle_action(token, action):
 # =============================================================================
 # API Routes (for AJAX)
 # =============================================================================
+
+@app.route('/api/grafana/houses')
+def api_grafana_houses():
+    """
+    Public API endpoint for Grafana to get house list with friendly names.
+    Returns format compatible with Grafana Infinity plugin.
+    No authentication required - only returns public mapping data.
+    """
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    houses = []
+
+    if os.path.exists(profiles_dir):
+        for filename in os.listdir(profiles_dir):
+            if filename.endswith('.json'):
+                customer_id = filename[:-5]
+                try:
+                    profile = CustomerProfile.load(customer_id, profiles_dir)
+                    houses.append({
+                        'text': profile.friendly_name or customer_id,
+                        'value': customer_id
+                    })
+                except Exception:
+                    houses.append({
+                        'text': customer_id,
+                        'value': customer_id
+                    })
+
+    # Sort by friendly name
+    houses.sort(key=lambda x: x['text'].lower())
+
+    return jsonify(houses)
+
 
 @app.route('/api/activity')
 @require_login
@@ -515,9 +934,17 @@ def test_homeside_credentials():
                 if house_response.status_code == 200:
                     houses = house_response.json()
                     if houses:
-                        house_name = houses[0].get('Housename', 'Unknown')
-                        return jsonify({'success': True, 'client_id': house_name})
-                return jsonify({'success': True, 'client_id': 'Connected'})
+                        house = houses[0]
+                        house_name = house.get('name', 'Unknown')
+                        client_path = house.get('restapiurl', '')
+                        customer_id = extract_customer_id_from_client_path(client_path)
+                        return jsonify({
+                            'success': True,
+                            'client_id': house_name,
+                            'client_path': client_path,
+                            'customer_id': customer_id
+                        })
+                return jsonify({'success': True, 'client_id': 'Connected', 'client_path': '', 'customer_id': ''})
             else:
                 return jsonify({'success': False, 'error': 'Invalid response'})
         elif response.status_code == 401:

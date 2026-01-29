@@ -5,6 +5,43 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    volumes:
+      - ./profiles:/app/profiles
+    networks:
+      - dryckesmail_beer-network
+    depends_on:
+      - influxdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Second house: Glance (Villa_34)
+  homeside-fetcher-glance:
+    build: .
+    container_name: homeside-fetcher-HEM_FJV_Villa_34
+    restart: unless-stopped
+    environment:
+      - HOMESIDE_USERNAME=FC2000233091
+      - HOMESIDE_PASSWORD=cdK5pB
+      - HOMESIDE_CLIENTID=
+      - FRIENDLY_NAME=Glance
+      - DISPLAY_NAME_SOURCE=friendly_name
+      - POLL_INTERVAL_MINUTES=15
+      - SEQ_URL=http://seq:5341
+      - SEQ_API_KEY=hllDhc79UDrWDEJ0HPY2
+      - LOG_LEVEL=INFO
+      - DEBUG_MODE=false
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=homeside_token_2026_secret
+      - INFLUXDB_ORG=homeside
+      - INFLUXDB_BUCKET=heating
+      - INFLUXDB_ENABLED=true
+      - LATITUDE=56.67
+      - LONGITUDE=12.86
+    volumes:
+      - ./profiles:/app/profiles
     networks:
       - dryckesmail_beer-network
     depends_on:
@@ -48,7 +85,18 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=homeside_grafana_2026
-      - GF_INSTALL_PLUGINS=
+      - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource
+      - GF_SERVER_ROOT_URL=https://svenskeb.se/grafana/
+      - GF_SERVER_DOMAIN=svenskeb.se
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      # Allow anonymous access since nginx handles authentication
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ID=1
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Editor
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_AUTH_BASIC_ENABLED=false
+      # Allow embedding in iframes (for webgui dashboard)
+      - GF_SECURITY_ALLOW_EMBEDDING=true
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning

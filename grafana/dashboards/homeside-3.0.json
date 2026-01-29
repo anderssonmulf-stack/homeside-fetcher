@@ -80,7 +80,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"room_temperature\")\n  |> last()",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"room_temperature\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -143,7 +143,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"target_temp_setpoint\")\n  |> last()",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"target_temp_setpoint\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -209,7 +209,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"outdoor_temperature\")\n  |> last()",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"outdoor_temperature\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -275,7 +275,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"supply_temp\")\n  |> last()",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"supply_temp\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -341,7 +341,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"hot_water_temp\")\n  |> last()",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"hot_water_temp\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -408,7 +408,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"system_pressure\")\n  |> last()",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"system_pressure\")\n  |> last()",
           "refId": "A"
         }
       ],
@@ -508,7 +508,10 @@
                 "id": "custom.lineStyle",
                 "value": {
                   "fill": "dash",
-                  "dash": [10, 10]
+                  "dash": [
+                    10,
+                    10
+                  ]
                 }
               },
               {
@@ -542,11 +545,11 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\")\n  |> filter(fn: (r) => r._field == \"room_temperature\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Room\"}))\n  |> group(columns: [\"_field\"])",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\")\n  |> filter(fn: (r) => r._field == \"room_temperature\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Room\"}))\n  |> group(columns: [\"_field\"])",
           "refId": "A"
         },
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"temperature_forecast\")\n  |> filter(fn: (r) => r.forecast_type == \"indoor_temp\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Room (Forecast)\"}))\n  |> group(columns: [\"_field\"])",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"temperature_forecast\")\n  |> filter(fn: (r) => r.forecast_type == \"indoor_temp\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Room (Forecast)\"}))\n  |> group(columns: [\"_field\"])",
           "refId": "B"
         }
       ],
@@ -667,7 +670,10 @@
                 "id": "custom.lineStyle",
                 "value": {
                   "fill": "dash",
-                  "dash": [10, 10]
+                  "dash": [
+                    10,
+                    10
+                  ]
                 }
               },
               {
@@ -701,11 +707,11 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\")\n  |> filter(fn: (r) => r._field == \"outdoor_temperature\" or r._field == \"outdoor_temp_24h_avg\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: if r._field == \"outdoor_temperature\" then \"Outdoor\" else \"Outdoor 24h avg\"}))\n  |> group(columns: [\"_field\"])",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\")\n  |> filter(fn: (r) => r._field == \"outdoor_temperature\" or r._field == \"outdoor_temp_24h_avg\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: if r._field == \"outdoor_temperature\" then \"Outdoor\" else \"Outdoor 24h avg\"}))\n  |> group(columns: [\"_field\"])",
           "refId": "A"
         },
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"temperature_forecast\")\n  |> filter(fn: (r) => r.forecast_type == \"outdoor_temp\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Outdoor (Forecast)\"}))\n  |> group(columns: [\"_field\"])",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"temperature_forecast\")\n  |> filter(fn: (r) => r.forecast_type == \"outdoor_temp\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Outdoor (Forecast)\"}))\n  |> group(columns: [\"_field\"])",
           "refId": "B"
         }
       ],
@@ -862,7 +868,10 @@
                 "id": "custom.lineStyle",
                 "value": {
                   "fill": "dash",
-                  "dash": [10, 10]
+                  "dash": [
+                    10,
+                    10
+                  ]
                 }
               },
               {
@@ -888,7 +897,10 @@
                 "id": "custom.lineStyle",
                 "value": {
                   "fill": "dash",
-                  "dash": [10, 10]
+                  "dash": [
+                    10,
+                    10
+                  ]
                 }
               },
               {
@@ -922,11 +934,11 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\")\n  |> filter(fn: (r) => r._field == \"supply_temp\" or r._field == \"return_temp\" or r._field == \"supply_temp_heat_curve\" or r._field == \"supply_temp_heat_curve_ml\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: if r._field == \"supply_temp\" then \"Supply\" else if r._field == \"return_temp\" then \"Return\" else if r._field == \"supply_temp_heat_curve\" then \"Heat Curve\" else \"Heat Curve (ML)\"}))\n  |> group(columns: [\"_field\"])",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\")\n  |> filter(fn: (r) => r._field == \"supply_temp\" or r._field == \"return_temp\" or r._field == \"supply_temp_heat_curve\" or r._field == \"supply_temp_heat_curve_ml\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: if r._field == \"supply_temp\" then \"Supply\" else if r._field == \"return_temp\" then \"Return\" else if r._field == \"supply_temp_heat_curve\" then \"Heat Curve\" else \"Heat Curve (ML)\"}))\n  |> group(columns: [\"_field\"])",
           "refId": "A"
         },
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"temperature_forecast\")\n  |> filter(fn: (r) => r.forecast_type == \"supply_temp_baseline\" or r.forecast_type == \"supply_temp_ml\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: if r.forecast_type == \"supply_temp_baseline\" then \"Forecast (Baseline)\" else \"Forecast (ML)\"}))\n  |> group(columns: [\"_field\"])",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"temperature_forecast\")\n  |> filter(fn: (r) => r.forecast_type == \"supply_temp_baseline\" or r.forecast_type == \"supply_temp_ml\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: if r.forecast_type == \"supply_temp_baseline\" then \"Forecast (Baseline)\" else \"Forecast (ML)\"}))\n  |> group(columns: [\"_field\"])",
           "refId": "B"
         }
       ],
@@ -938,7 +950,7 @@
         "type": "influxdb",
         "uid": "dfb5s9mkiv5kwf"
       },
-      "description": "Difference between actual supply temp and expected heat curve. Red = too hot, Blue = too cold (>0.5° below)",
+      "description": "Difference between actual supply temp and expected heat curve. Red = too hot, Blue = too cold (>0.5\u00b0 below)",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1031,7 +1043,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "supply = from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"supply_temp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n\nheat_curve = from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"supply_temp_heat_curve\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n\njoin(tables: {supply: supply, heat_curve: heat_curve}, on: [\"_time\"])\n  |> map(fn: (r) => ({_time: r._time, _value: r._value_supply - r._value_heat_curve, _field: \"Deviation\"}))",
+          "query": "supply = from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"supply_temp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n\nheat_curve = from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"supply_temp_heat_curve\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n\njoin(tables: {supply: supply, heat_curve: heat_curve}, on: [\"_time\"])\n  |> map(fn: (r) => ({_time: r._time, _value: r._value_supply - r._value_heat_curve, _field: \"Deviation\"}))",
           "refId": "A"
         }
       ],
@@ -1125,7 +1137,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "supply = from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"supply_temp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n\nreturn_t = from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"return_temp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n\njoin(tables: {supply: supply, return_t: return_t}, on: [\"_time\"])\n  |> map(fn: (r) => ({_time: r._time, _value: r._value_supply - r._value_return_t, _field: \"Delta\"}))",
+          "query": "supply = from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"supply_temp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n\nreturn_t = from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"return_temp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n\njoin(tables: {supply: supply, return_t: return_t}, on: [\"_time\"])\n  |> map(fn: (r) => ({_time: r._time, _value: r._value_supply - r._value_return_t, _field: \"Delta\"}))",
           "refId": "A"
         }
       ],
@@ -1218,7 +1230,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"hot_water_temp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Hot Water\"}))\n  |> group(columns: [\"_field\"])",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"hot_water_temp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Hot Water\"}))\n  |> group(columns: [\"_field\"])",
           "refId": "A"
         }
       ],
@@ -1316,7 +1328,7 @@
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] == \"${house_id}\")\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"system_pressure\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Pressure\"}))\n  |> group(columns: [\"_field\"])",
+          "query": "from(bucket: \"heating\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"house_id\"] =~ /${house_id}$/)\n  |> filter(fn: (r) => r._measurement == \"heating_system\" and r._field == \"system_pressure\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: \"Pressure\"}))\n  |> group(columns: [\"_field\"])",
           "refId": "A"
         }
       ],
@@ -1337,8 +1349,8 @@
       {
         "current": {
           "selected": true,
-          "text": "",
-          "value": ""
+          "text": "Daggis8",
+          "value": "HEM_FJV_Villa_149"
         },
         "description": "Select which house to view",
         "hide": 0,
@@ -1350,10 +1362,15 @@
           {
             "selected": true,
             "text": "Daggis8",
-            "value": "38/xxxxxxx/HEM_FJV_149/HEM_FJV_Villa_149"
+            "value": "HEM_FJV_Villa_149"
+          },
+          {
+            "selected": false,
+            "text": "Glance",
+            "value": "HEM_FJV_Villa_34"
           }
         ],
-        "query": "Daggis8 : 38/xxxxxxx/HEM_FJV_149/HEM_FJV_Villa_149",
+        "query": "Daggis8 : HEM_FJV_Villa_149, Glance : HEM_FJV_Villa_34",
         "skipUrlSync": false,
         "type": "custom"
       }

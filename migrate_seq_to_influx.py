@@ -87,7 +87,7 @@ def parse_seq_event(event: dict) -> dict:
         event: Seq event dictionary
 
     Returns:
-        Dictionary with thermal data or None if invalid
+        Dictionary with thermal data (including house_id) or None if invalid
     """
     try:
         # Get timestamp
@@ -118,6 +118,11 @@ def parse_seq_event(event: dict) -> dict:
             # Also check top-level for structured logging
             props = {k: v for k, v in event.items() if not k.startswith('@') and k != 'Timestamp'}
 
+        # Extract house_id from ClientId property
+        client_id = props.get('ClientId', '')
+        if not client_id:
+            return None
+
         # Extract required fields (PascalCase from Seq)
         room_temp = props.get('RoomTemperature')
         outdoor_temp = props.get('OutdoorTemperature')
@@ -128,6 +133,7 @@ def parse_seq_event(event: dict) -> dict:
         # Build data point with all available fields
         data = {
             'timestamp': timestamp,
+            'house_id': client_id,  # Include house_id from event
             'room_temperature': float(room_temp),
             'outdoor_temperature': float(outdoor_temp),
         }
@@ -171,39 +177,56 @@ def write_to_influx(
     influx_token: str,
     influx_org: str,
     influx_bucket: str,
-    house_id: str,
     data_points: list,
     dry_run: bool = False
 ) -> int:
     """
     Write data points to InfluxDB (both heating_system and thermal_history).
+    Handles multiple houses by extracting house_id from each data point.
 
     Args:
         influx_url: InfluxDB URL
         influx_token: InfluxDB token
         influx_org: InfluxDB organization
         influx_bucket: InfluxDB bucket
-        house_id: House identifier tag
-        data_points: List of data dictionaries
+        data_points: List of data dictionaries (each must include 'house_id')
         dry_run: If True, don't actually write
 
     Returns:
         Number of points written
     """
+    # Group by house_id for summary
+    by_house = {}
+    for dp in data_points:
+        hid = dp.get('house_id', 'unknown')
+        if hid not in by_house:
+            by_house[hid] = []
+        by_house[hid].append(dp)
+
+    print(f"\nFound {len(by_house)} house(s):")
+    for hid, points in by_house.items():
+        # Extract short name from path
+        short_name = hid.split('/')[-1] if '/' in hid else hid
+        print(f"  - {short_name}: {len(points)} points")
+
     if dry_run:
-        print(f"\n[DRY RUN] Would write {len(data_points)} points to InfluxDB")
-        # Show sample with more fields
-        for i, dp in enumerate(data_points[:5]):
-            supply = dp.get('supply_temp', 0)
-            print(f"  {i+1}. {dp['timestamp']}: room={dp['room_temperature']:.1f}, "
-                  f"outdoor={dp['outdoor_temperature']:.1f}, supply={supply:.1f}")
-        if len(data_points) > 5:
-            print(f"  ... and {len(data_points) - 5} more")
+        print(f"\n[DRY RUN] Would write {len(data_points)} total points to InfluxDB")
+        # Show sample from each house
+        for hid, points in by_house.items():
+            short_name = hid.split('/')[-1] if '/' in hid else hid
+            print(f"\n  {short_name} samples:")
+            for i, dp in enumerate(points[:3]):
+                supply = dp.get('supply_temp', 0)
+                print(f"    {i+1}. {dp['timestamp']}: room={dp['room_temperature']:.1f}, "
+                      f"outdoor={dp['outdoor_temperature']:.1f}, supply={supply:.1f}")
+            if len(points) > 3:
+                print(f"    ... and {len(points) - 3} more")
         # Show field coverage
         all_fields = set()
         for dp in data_points:
             all_fields.update(dp.keys())
         all_fields.discard('timestamp')
+        all_fields.discard('house_id')
         print(f"\nFields available: {', '.join(sorted(all_fields))}")
         return 0
 
@@ -213,6 +236,8 @@ def write_to_influx(
 
         written = 0
         for dp in data_points:
+            house_id = dp.get('house_id', 'unknown')
+
             # Write to heating_system measurement (main dashboard data)
             hs_point = Point("heating_system") \
                 .tag("house_id", house_id) \
@@ -303,11 +328,10 @@ def main():
     # Get configuration
     seq_url = args.seq_url or os.getenv('SEQ_URL')
     seq_api_key = os.getenv('SEQ_API_KEY')
-    influx_url = os.getenv('INFLUXDB_URL')
+    influx_url = os.getenv('INFLUXDB_URL', 'http://localhost:8086')
     influx_token = os.getenv('INFLUXDB_TOKEN')
     influx_org = os.getenv('INFLUXDB_ORG')
     influx_bucket = os.getenv('INFLUXDB_BUCKET')
-    house_id = os.getenv('HOMESIDE_CLIENTID', 'unknown')
 
     # Validate configuration
     if not seq_url:
@@ -361,7 +385,6 @@ def main():
         influx_token=influx_token,
         influx_org=influx_org,
         influx_bucket=influx_bucket,
-        house_id=house_id,
         data_points=data_points,
         dry_run=args.dry_run
     )

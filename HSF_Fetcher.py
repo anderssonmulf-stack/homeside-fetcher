@@ -2,7 +2,7 @@ import time
 import os
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from homeside_api import HomeSideAPI
 from smhi_weather import SMHIWeather
@@ -65,7 +65,7 @@ def generate_forecast_points(
     """
     Generate forecast points for visualization in Grafana.
 
-    Creates hourly forecast data for the next 12 hours:
+    Creates hourly forecast data for the next 24 hours:
     - outdoor_temp: From SMHI weather forecast
     - supply_temp_baseline: Expected supply temp from original heat curve
     - supply_temp_ml: Expected supply temp from ML-adjusted curve
@@ -90,7 +90,7 @@ def generate_forecast_points(
     if not weather:
         return forecast_points
 
-    hourly_forecasts = weather.get_forecast(hours_ahead=12)
+    hourly_forecasts = weather.get_forecast(hours_ahead=24)
     if not hourly_forecasts:
         logger.warning("No weather forecast available for forecast generation")
         return forecast_points
@@ -161,7 +161,7 @@ def generate_forecast_points(
             })
 
     if forecast_points:
-        logger.info(f"Generated {len(forecast_points)} forecast points for next 12h")
+        logger.info(f"Generated {len(forecast_points)} forecast points for next 24h")
 
     return forecast_points
 
@@ -264,7 +264,8 @@ def monitor_heating_system(config):
             bucket=config.get('influxdb_bucket'),
             house_id=api.clientid,  # Use auto-discovered client ID
             logger=logger,
-            enabled=True
+            enabled=True,
+            seq_logger=seq_logger
         )
         print(f"✓ InfluxDB enabled: {config.get('influxdb_url')}")
     else:
@@ -478,7 +479,7 @@ def monitor_heating_system(config):
                     )
 
                     if should_fetch_forecast:
-                        forecast_trend = weather.get_temp_trend(hours_ahead=12)
+                        forecast_trend = weather.get_temp_trend(hours_ahead=24)
                         if forecast_trend:
                             last_forecast_time = now
                             cached_forecast_trend = forecast_trend
@@ -492,8 +493,8 @@ def monitor_heating_system(config):
 
                                 # Use new forecaster if available, otherwise legacy
                                 if forecaster:
-                                    # Get hourly weather forecast
-                                    hourly_forecast = weather.get_forecast(hours_ahead=12)
+                                    # Get hourly weather forecast (24h for lead-time accuracy tracking)
+                                    hourly_forecast = weather.get_forecast(hours_ahead=24)
                                     if hourly_forecast:
                                         forecast_points = forecaster.generate_forecast(
                                             current_indoor=extracted_data.get('room_temperature', 22.0),
@@ -548,7 +549,7 @@ def monitor_heating_system(config):
 
                     # Consolidated weather & heating display
                     if forecast_trend:
-                        print(f"\n📊 Weather Forecast (12h):")
+                        print(f"\n📊 Weather Forecast (24h):")
                         print(f"  Temperature: {forecast_trend['current_temp']:.2f}°C {forecast_trend['trend_symbol']} {forecast_trend['change']:+.2f}°C")
                         print(f"  Range: {forecast_trend['min_temp']:.2f}°C - {forecast_trend['max_temp']:.2f}°C")
                         print(f"  Sky: {forecast_trend['cloud_condition']}", end="")
@@ -649,11 +650,22 @@ def monitor_heating_system(config):
                         }
                     )
 
-            # Wait for next interval
-            print(f"Next collection in {interval_minutes} minutes...")
+            # Wait until next scheduled interval (fixed schedule, not relative)
+            now = datetime.now(timezone.utc)
+            # Calculate seconds until next interval boundary
+            minutes_past = now.minute % interval_minutes
+            seconds_past = minutes_past * 60 + now.second + now.microsecond / 1_000_000
+            sleep_seconds = (interval_minutes * 60) - seconds_past
+
+            # If we're very close to the boundary, wait for the next one
+            if sleep_seconds < 10:
+                sleep_seconds += interval_minutes * 60
+
+            next_run = now + timedelta(seconds=sleep_seconds)
+            print(f"Next collection at {next_run.strftime('%H:%M:%S')} UTC ({sleep_seconds/60:.1f} min)...")
             if debug_mode:
-                logger.info(f"Waiting {interval_minutes} minutes for next collection")
-            time.sleep(interval_minutes * 60)
+                logger.info(f"Sleeping {sleep_seconds:.0f}s until next scheduled collection")
+            time.sleep(sleep_seconds)
 
     except KeyboardInterrupt:
         logger.info("Monitoring stopped by user")

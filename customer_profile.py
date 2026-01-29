@@ -70,6 +70,7 @@ class CustomerProfile:
     schema_version: int = 1
     customer_id: str = ""
     friendly_name: str = ""
+    meter_ids: list = field(default_factory=list)  # Energy meter IDs mapped to this house
     building: BuildingConfig = field(default_factory=BuildingConfig)
     comfort: ComfortConfig = field(default_factory=ComfortConfig)
     heating_system: HeatingSystemConfig = field(default_factory=HeatingSystemConfig)
@@ -135,6 +136,7 @@ class CustomerProfile:
             schema_version=data.get("schema_version", 1),
             customer_id=data.get("customer_id", ""),
             friendly_name=data.get("friendly_name", ""),
+            meter_ids=data.get("meter_ids", []),
             building=BuildingConfig(**data.get("building", {})),
             comfort=ComfortConfig(**data.get("comfort", {})),
             heating_system=HeatingSystemConfig(**data.get("heating_system", {})),
@@ -149,6 +151,7 @@ class CustomerProfile:
             "schema_version": self.schema_version,
             "customer_id": self.customer_id,
             "friendly_name": self.friendly_name,
+            "meter_ids": self.meter_ids,
             "building": asdict(self.building),
             "comfort": asdict(self.comfort),
             "heating_system": asdict(self.heating_system),
@@ -166,6 +169,7 @@ class CustomerProfile:
             "schema_version": self.schema_version,
             "customer_id": self.customer_id,
             "friendly_name": self.friendly_name,
+            "meter_ids": self.meter_ids,
             "building": asdict(self.building),
             "comfort": asdict(self.comfort),
             "heating_system": asdict(self.heating_system),
@@ -285,3 +289,69 @@ def find_profile_for_client_id(client_id: str, profiles_dir: str = "profiles") -
 
     logger.warning(f"No profile found for client_id: {client_id}")
     return None
+
+
+def build_meter_mapping(profiles_dir: str = "profiles") -> Dict[str, str]:
+    """
+    Build a mapping of meter_id -> customer_id from all profiles.
+
+    Used by the energy importer to look up which house a meter belongs to.
+
+    Args:
+        profiles_dir: Directory containing profile JSON files
+
+    Returns:
+        Dictionary mapping meter_id to customer_id
+    """
+    logger = logging.getLogger(__name__)
+    mapping = {}
+
+    if not os.path.exists(profiles_dir):
+        logger.warning(f"Profiles directory not found: {profiles_dir}")
+        return mapping
+
+    for filename in os.listdir(profiles_dir):
+        if not filename.endswith('.json'):
+            continue
+
+        try:
+            filepath = os.path.join(profiles_dir, filename)
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+
+            customer_id = data.get('customer_id', '')
+            meter_ids = data.get('meter_ids', [])
+
+            for meter_id in meter_ids:
+                # Normalize meter_id (strip whitespace, convert to string)
+                meter_id = str(meter_id).strip()
+                if meter_id:
+                    if meter_id in mapping:
+                        logger.warning(
+                            f"Duplicate meter_id {meter_id}: "
+                            f"already mapped to {mapping[meter_id]}, "
+                            f"ignoring mapping to {customer_id}"
+                        )
+                    else:
+                        mapping[meter_id] = customer_id
+
+        except Exception as e:
+            logger.error(f"Error loading profile {filename}: {e}")
+
+    logger.info(f"Built meter mapping: {len(mapping)} meter(s) across profiles")
+    return mapping
+
+
+def find_customer_by_meter_id(meter_id: str, profiles_dir: str = "profiles") -> Optional[str]:
+    """
+    Find customer_id for a given meter_id.
+
+    Args:
+        meter_id: The energy meter ID to look up
+        profiles_dir: Directory containing profile JSON files
+
+    Returns:
+        customer_id if found, None otherwise
+    """
+    mapping = build_meter_mapping(profiles_dir)
+    return mapping.get(str(meter_id).strip())

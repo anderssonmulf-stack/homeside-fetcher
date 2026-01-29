@@ -190,10 +190,9 @@
         <div class="card">
             <h2>Quick Links</h2>
             <div class="quick-links-list">
-                <a href="https://grafana.svenskeb.se/d/homeside-2/{{ profile.friendly_name|lower|replace(' ', '-') if profile.friendly_name else house_id }}?orgId=1"
-                   target="_blank" class="quick-link-item">
+                <a href="{{ url_for('house_dashboard', customer_id=house_id) }}" class="quick-link-item">
                     <span class="icon">📊</span>
-                    <span>View in Grafana</span>
+                    <span>View Dashboard</span>
                 </a>
             </div>
         </div>

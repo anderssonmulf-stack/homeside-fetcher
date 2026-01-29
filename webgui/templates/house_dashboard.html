@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ friendly_name }} - Dashboard{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* Ensure iframes don't have scrollbars unless needed */
+    iframe {
+        border: none;
+    }
+</style>
+{% endblock %}
+
+{% set cache_bust = range(1000000) | random %}
+
+{% block content %}
+<div class="grafana-dashboard-container">
+    <div class="page-header">
+        <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to Dashboard</a>
+        <h1 class="friendly-name">{{ friendly_name }}</h1>
+        <p class="subtitle">{{ customer_id }}</p>
+    </div>
+
+    <!-- House selector for users with multiple houses -->
+    {% if user_houses|length > 1 %}
+    <div class="house-selector">
+        {% for house in user_houses %}
+        <a href="{{ url_for('house_dashboard', customer_id=house.id) }}"
+           class="btn {% if house.id == customer_id %}btn-primary{% else %}btn-secondary{% endif %}">
+            {{ house.name }}
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Quick action links -->
+    <div class="dashboard-actions">
+        <a href="{{ url_for('house_detail', house_id=customer_id) }}" class="btn btn-small">Settings</a>
+    </div>
+
+    <!-- Grafana panels in iframes -->
+    <div class="grafana-panels">
+        <!-- Row 1: Key stats -->
+        <div class="panel-row stats-row">
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=1&var-house_id={{ customer_id }}&theme=dark&_={{ cache_bust }}"
+                    class="panel-stat" title="Room Temperature"></iframe>
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=6&var-house_id={{ customer_id }}&theme=dark&_={{ cache_bust }}"
+                    class="panel-stat" title="Target Temperature"></iframe>
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=2&var-house_id={{ customer_id }}&theme=dark&_={{ cache_bust }}"
+                    class="panel-stat" title="Outdoor Temperature"></iframe>
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=3&var-house_id={{ customer_id }}&theme=dark&_={{ cache_bust }}"
+                    class="panel-stat" title="Supply Temperature"></iframe>
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=4&var-house_id={{ customer_id }}&theme=dark&_={{ cache_bust }}"
+                    class="panel-stat" title="Hot Water"></iframe>
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=5&var-house_id={{ customer_id }}&theme=dark&_={{ cache_bust }}"
+                    class="panel-stat" title="System Pressure"></iframe>
+        </div>
+
+        <!-- Supply & Return Temperatures -->
+        <div class="panel-row">
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=8&var-house_id={{ customer_id }}&from=now-24h&to=now%2B24h&theme=dark&_={{ cache_bust }}"
+                    class="panel-graph" title="Supply & Return Temperatures"></iframe>
+        </div>
+
+        <!-- Indoor temperature graph -->
+        <div class="panel-row">
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=7&var-house_id={{ customer_id }}&from=now-24h&to=now%2B24h&theme=dark&_={{ cache_bust }}"
+                    class="panel-graph" title="Indoor Temperature & Forecast"></iframe>
+        </div>
+
+        <!-- Outdoor temperature graph -->
+        <div class="panel-row">
+            <iframe src="{{ grafana_base }}/d-solo/{{ dashboard_uid }}?orgId=1&panelId=13&var-house_id={{ customer_id }}&from=now-24h&to=now%2B24h&theme=dark&_={{ cache_bust }}"
+                    class="panel-graph" title="Outdoor Temperature & Forecast"></iframe>
+        </div>
+    </div>
+</div>
+{% endblock %}

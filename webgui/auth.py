@@ -94,7 +94,8 @@ class UserManager:
                     registration_note: str = '',
                     homeside_username: str = '',
                     homeside_password: str = '',
-                    house_friendly_name: str = '') -> bool:
+                    house_friendly_name: str = '',
+                    verified_customer_id: str = '') -> bool:
         """Create a new user account"""
         data = self._load_data()
 
@@ -113,7 +114,8 @@ class UserManager:
             'registration_note': registration_note,
             'homeside_username': homeside_username,
             'homeside_password': homeside_password,
-            'house_friendly_name': house_friendly_name
+            'house_friendly_name': house_friendly_name,
+            'verified_customer_id': verified_customer_id
         }
 
         self._save_data(data)
@@ -313,3 +315,80 @@ class UserManager:
 
         self._save_data(data)
         return True
+
+    # =========================================================================
+    # Soft Delete / Offboarding
+    # =========================================================================
+
+    def soft_delete_user(self, username: str) -> bool:
+        """Mark user as deleted with 30-day grace period"""
+        data = self._load_data()
+        if username not in data['users']:
+            return False
+
+        now = datetime.utcnow()
+        purge_date = now + timedelta(days=30)
+
+        data['users'][username]['role'] = 'deleted'
+        data['users'][username]['deleted_at'] = now.isoformat() + 'Z'
+        data['users'][username]['scheduled_purge_at'] = purge_date.isoformat() + 'Z'
+
+        self._save_data(data)
+        return True
+
+    def restore_user(self, username: str, role: str = 'user') -> bool:
+        """Restore a soft-deleted user before purge date"""
+        data = self._load_data()
+        if username not in data['users']:
+            return False
+        if data['users'][username].get('role') != 'deleted':
+            return False
+
+        # Validate role
+        if role not in ['user', 'viewer', 'admin']:
+            role = 'user'
+
+        data['users'][username]['role'] = role
+        data['users'][username]['deleted_at'] = None
+        data['users'][username]['scheduled_purge_at'] = None
+
+        self._save_data(data)
+        return True
+
+    def get_users_pending_purge(self) -> List[Dict]:
+        """Get users past their purge date"""
+        data = self._load_data()
+        now = datetime.utcnow()
+        pending = []
+
+        for username, user in data['users'].items():
+            purge_at = user.get('scheduled_purge_at')
+            if purge_at and user.get('role') == 'deleted':
+                purge_date = datetime.fromisoformat(purge_at.replace('Z', ''))
+                if now >= purge_date:
+                    pending.append({'username': username, **user})
+
+        return pending
+
+    def get_deleted_users(self) -> List[Dict]:
+        """Get all soft-deleted users (for admin UI) with days_left calculated"""
+        data = self._load_data()
+        now = datetime.utcnow()
+        deleted = []
+
+        for username, user in data['users'].items():
+            if user.get('role') == 'deleted':
+                user_data = {'username': username, **user}
+
+                # Calculate days left until purge
+                purge_at = user.get('scheduled_purge_at')
+                if purge_at:
+                    purge_date = datetime.fromisoformat(purge_at.replace('Z', ''))
+                    days_left = (purge_date - now).days
+                    user_data['days_left'] = days_left
+                else:
+                    user_data['days_left'] = 30
+
+                deleted.append(user_data)
+
+        return deleted

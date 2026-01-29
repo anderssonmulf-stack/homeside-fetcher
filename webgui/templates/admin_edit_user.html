@@ -35,14 +35,19 @@
             </div>
 
             <div class="form-group">
-                <label for="houses">Houses</label>
-                <select id="houses" name="houses" multiple size="6">
-                    <option value="*" {% if '*' in user.houses %}selected{% endif %}>All Houses (*)</option>
+                <label>Houses</label>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="houses" value="*" {% if '*' in user.houses %}checked{% endif %}>
+                        <span>All Houses (*)</span>
+                    </label>
                     {% for house in all_houses %}
-                    <option value="{{ house.id }}" {% if house.id in user.houses %}selected{% endif %}>{{ house.friendly_name }}</option>
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="houses" value="{{ house.id }}" {% if house.id in user.houses %}checked{% endif %}>
+                        <span>{{ house.friendly_name }}</span>
+                    </label>
                     {% endfor %}
-                </select>
-                <p class="help-text">Hold Ctrl/Cmd to select multiple houses.</p>
+                </div>
             </div>
 
             <div class="form-actions">
@@ -73,7 +78,61 @@
             <dt>House Name</dt>
             <dd>{{ user.house_friendly_name or 'Not set' }}</dd>
             {% endif %}
+
+            {% if user.role == 'deleted' %}
+            <dt>Deleted At</dt>
+            <dd>{{ user.deleted_at[:16] if user.deleted_at else 'Unknown' }}</dd>
+
+            <dt>Scheduled Purge</dt>
+            <dd>{{ user.scheduled_purge_at[:10] if user.scheduled_purge_at else 'Unknown' }}</dd>
+            {% endif %}
         </dl>
+    </div>
+
+    <div class="card danger-zone">
+        <h2>Danger Zone</h2>
+
+        {% if user.role != 'deleted' %}
+        <div class="danger-action">
+            <div class="danger-info">
+                <h3>Disable Account</h3>
+                <p>Stop data collection. User cannot login. Account and data will be permanently deleted in 30 days. Can be restored before then.</p>
+            </div>
+            <form method="POST" action="{{ url_for('admin_soft_delete_user', username=username) }}"
+                  onsubmit="return confirm('Disable this account? Data collection will stop and account will be scheduled for deletion in 30 days.');">
+                <button type="submit" class="btn btn-warning">Disable Account</button>
+            </form>
+        </div>
+        {% else %}
+        <div class="danger-action restore-action">
+            <div class="danger-info">
+                <h3>Restore Account</h3>
+                <p>Re-enable this account and restart data collection. Scheduled purge: <strong>{{ user.scheduled_purge_at[:10] if user.scheduled_purge_at else 'Unknown' }}</strong></p>
+            </div>
+            <form method="POST" action="{{ url_for('admin_restore_user', username=username) }}">
+                <button type="submit" class="btn btn-success">Restore Account</button>
+            </form>
+        </div>
+        {% endif %}
+
+        <div class="danger-action">
+            <div class="danger-info">
+                <h3>Permanent Deletion</h3>
+                <p>Immediately and permanently delete user account and ALL associated data including:
+                    profile, environment file, Docker container, and InfluxDB time-series data.
+                    <strong>This cannot be undone.</strong></p>
+            </div>
+            <form method="POST" action="{{ url_for('admin_hard_delete_user', username=username) }}"
+                  class="hard-delete-form"
+                  onsubmit="return confirm('PERMANENT DELETION: This will delete the user and ALL their data forever. This cannot be undone!');">
+                <div class="form-group confirm-group">
+                    <label>Type <strong>{{ username }}</strong> to confirm:</label>
+                    <input type="text" name="confirm_delete" placeholder="{{ username }}" required
+                           pattern="{{ username }}" title="Please type the username exactly">
+                </div>
+                <button type="submit" class="btn btn-danger">Delete Forever</button>
+            </form>
+        </div>
     </div>
 </div>
 {% endblock %}

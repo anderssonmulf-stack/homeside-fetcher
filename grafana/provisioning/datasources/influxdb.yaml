@@ -12,3 +12,11 @@ datasources:
       defaultBucket: heating
     secureJsonData:
       token: homeside_token_2026_secret
+
+  - name: Svenskeb API
+    type: yesoreyeram-infinity-datasource
+    uid: svenskeb-api
+    access: proxy
+    jsonData:
+      # Base URL for the web app (host machine IP)
+      url: http://192.168.86.9:5000

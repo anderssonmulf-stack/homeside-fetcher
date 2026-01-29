@@ -31,7 +31,8 @@ class InfluxDBWriter:
         bucket: str,
         house_id: str,
         logger,
-        enabled: bool = True
+        enabled: bool = True,
+        seq_logger=None
     ):
         """
         Initialize InfluxDB client
@@ -44,10 +45,13 @@ class InfluxDBWriter:
             house_id: Unique identifier for this house
             logger: Logger instance
             enabled: Whether InfluxDB writing is enabled
+            seq_logger: Optional SeqLogger for error reporting
         """
         self.enabled = enabled
         self.house_id = house_id
         self.logger = logger
+        self.seq_logger = seq_logger
+        self._consecutive_failures = 0
 
         if not self.enabled:
             self.logger.info("InfluxDB writing disabled")
@@ -71,9 +75,41 @@ class InfluxDBWriter:
 
         except Exception as e:
             self.logger.error(f"Failed to initialize InfluxDB client: {str(e)}")
+            self._log_influx_error("InfluxDB initialization failed", e, "init")
             self.enabled = False
             self.client = None
             self.write_api = None
+
+    def _log_influx_error(self, message: str, error: Exception, operation: str):
+        """Log InfluxDB error to Seq if configured."""
+        self._consecutive_failures += 1
+
+        if self.seq_logger:
+            self.seq_logger.log_error(
+                f"InfluxDB {operation} failed: {message}",
+                error=error,
+                properties={
+                    'EventType': 'InfluxDBError',
+                    'Operation': operation,
+                    'ConsecutiveFailures': self._consecutive_failures,
+                    'HouseId': self.house_id
+                }
+            )
+
+    def _log_influx_success(self):
+        """Reset failure counter on successful write."""
+        if self._consecutive_failures > 0:
+            if self.seq_logger:
+                self.seq_logger.log(
+                    f"InfluxDB connection restored after {self._consecutive_failures} failures",
+                    level='Information',
+                    properties={
+                        'EventType': 'InfluxDBRestored',
+                        'PreviousFailures': self._consecutive_failures,
+                        'HouseId': self.house_id
+                    }
+                )
+            self._consecutive_failures = 0
 
     def write_heating_data(self, data: Dict) -> bool:
         """
@@ -143,10 +179,12 @@ class InfluxDBWriter:
 
             # Write to InfluxDB
             self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self._log_influx_success()
             return True
 
         except Exception as e:
             self.logger.error(f"Failed to write to InfluxDB: {str(e)}")
+            self._log_influx_error("Heating data write failed", e, "write_heating_data")
             return False
 
     def write_forecast_data(self, forecast: Dict) -> bool:
@@ -196,6 +234,7 @@ class InfluxDBWriter:
 
         except Exception as e:
             self.logger.error(f"Failed to write forecast to InfluxDB: {str(e)}")
+            self._log_influx_error("Forecast write failed", e, "write_forecast_data")
             return False
 
     def write_control_decision(self, decision: Dict) -> bool:
@@ -281,6 +320,7 @@ class InfluxDBWriter:
 
         except Exception as e:
             self.logger.error(f"Failed to write weather observation to InfluxDB: {str(e)}")
+            self._log_influx_error("Weather observation write failed", e, "write_weather_observation")
             return False
 
     def write_thermal_coefficient(self, coefficient: float, learning_period_hours: int) -> bool:
@@ -489,14 +529,16 @@ class InfluxDBWriter:
 
         except Exception as e:
             self.logger.error(f"Failed to write thermal data point: {str(e)}")
+            self._log_influx_error("Thermal data point write failed", e, "write_thermal_data_point")
             return False
 
     def delete_old_forecasts(self) -> bool:
         """
-        Delete previous forecast points before writing new ones.
+        Delete old forecast points that are in the past.
 
-        Prevents stale data accumulation by removing all temperature_forecast
-        data for this house_id before writing fresh forecasts.
+        Only deletes forecasts for PAST times (already resolved), not future times.
+        This allows multiple predictions for the same future time to coexist,
+        enabling lead-time accuracy comparison (24h vs 12h vs 3h predictions).
 
         Returns:
             True if delete succeeded, False otherwise
@@ -507,10 +549,10 @@ class InfluxDBWriter:
         try:
             delete_api = self.client.delete_api()
 
-            # Delete all forecasts from now until 24 hours in the future
-            # (covers our 12h forecast window with margin)
-            start = datetime.now(timezone.utc) - timedelta(hours=1)
-            stop = datetime.now(timezone.utc) + timedelta(hours=24)
+            # Only delete PAST forecasts (from -48h to now)
+            # Keep future forecasts to allow lead-time accuracy comparison
+            start = datetime.now(timezone.utc) - timedelta(hours=48)
+            stop = datetime.now(timezone.utc)
 
             # Delete predicate: measurement and house_id
             predicate = f'_measurement="temperature_forecast" AND house_id="{self.house_id}"'
@@ -523,7 +565,7 @@ class InfluxDBWriter:
                 org=self.org
             )
 
-            self.logger.info("Deleted old forecast points")
+            self.logger.info("Deleted past forecast points (keeping future forecasts for lead-time comparison)")
             return True
 
         except Exception as e:
@@ -534,7 +576,9 @@ class InfluxDBWriter:
         """
         Write hourly forecast points to InfluxDB with FUTURE timestamps.
 
-        Each forecast point contains temperature predictions at a future time.
+        Each forecast point contains temperature predictions at a future time,
+        along with lead_time_hours to enable accuracy comparison at different
+        prediction horizons (24h, 12h, 3h).
 
         Args:
             forecast_data: List of forecast dictionaries:
@@ -543,7 +587,8 @@ class InfluxDBWriter:
                         'timestamp': datetime (future time),
                         'forecast_type': str ('outdoor_temp', 'supply_temp_baseline',
                                              'supply_temp_ml', 'indoor_temp'),
-                        'value': float (temperature in Celsius)
+                        'value': float (temperature in Celsius),
+                        'lead_time_hours': float (hours from now to forecast time)
                     },
                     ...
                 ]
@@ -563,6 +608,7 @@ class InfluxDBWriter:
                 timestamp = data.get('timestamp')
                 forecast_type = data.get('forecast_type')
                 value = data.get('value')
+                lead_time_hours = data.get('lead_time_hours', 0.0)
 
                 if timestamp is None or forecast_type is None or value is None:
                     continue
@@ -572,13 +618,14 @@ class InfluxDBWriter:
                     .tag("forecast_type", forecast_type) \
                     .tag("forecast_time", forecast_time) \
                     .field("value", round(float(value), 2)) \
+                    .field("lead_time_hours", round(float(lead_time_hours), 1)) \
                     .time(timestamp, WritePrecision.S)
 
                 points.append(point)
 
             if points:
                 self.write_api.write(bucket=self.bucket, org=self.org, record=points)
-                self.logger.info(f"Wrote {len(points)} forecast points to InfluxDB")
+                self.logger.info(f"Wrote {len(points)} forecast points to InfluxDB (with lead_time_hours)")
                 return True
 
             return False
@@ -673,6 +720,7 @@ class InfluxDBWriter:
 
         except Exception as e:
             self.logger.error(f"Failed to write forecast accuracy: {str(e)}")
+            self._log_influx_error("Forecast accuracy write failed", e, "write_forecast_accuracy")
             return False
 
     def read_thermal_history(self, days: int = 7) -> list:
