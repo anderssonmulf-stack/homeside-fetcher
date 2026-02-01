@@ -138,11 +138,13 @@ class SimpleWeatherModel(WeatherEnergyModel):
 
         # Wind effect: increases with square root of wind speed
         # This follows convective heat transfer physics
-        wind_effect = self.wind_coefficient * math.sqrt(max(0, conditions.wind_speed))
+        wind_speed = conditions.wind_speed if conditions.wind_speed is not None else 3.0
+        wind_effect = self.wind_coefficient * math.sqrt(max(0, wind_speed))
 
         # Humidity effect: cold + humid air conducts heat better
         # Only significant when humidity is above ~50%
-        humidity_above_baseline = max(0, conditions.humidity - 50)
+        humidity = conditions.humidity if conditions.humidity is not None else 60.0
+        humidity_above_baseline = max(0, humidity - 50)
         humidity_effect = self.humidity_coefficient * humidity_above_baseline
 
         # Solar effect: depends on sun position and cloud cover

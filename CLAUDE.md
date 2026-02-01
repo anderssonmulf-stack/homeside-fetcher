@@ -65,12 +65,65 @@ Provisioning configs in `grafana/provisioning/`:
 |------|---------|
 | `add_customer.py` | Interactive script to add new customers (creates profile, updates docker-compose, deploys) |
 | `migrate_seq_to_influx.py` | Migrates historical data from Seq logs to InfluxDB (for data recovery) |
+| `import_historical_data.py` | Fetches historical data from Arrigo GraphQL API to bootstrap thermal analyzer for new houses |
 
 ### Migration Scripts
 
 | File | Purpose |
 |------|---------|
 | `migrate_seq_to_influx.py` | One-time migration: reads thermal data from Seq logs and writes to InfluxDB `thermal_history` measurement |
+
+## Historical Data Import (New Customers)
+
+When adding a new customer, you can import 3 months of historical data from the Arrigo API to immediately calculate thermal coefficients instead of waiting 6+ hours for the thermal analyzer to collect enough data.
+
+### Usage
+
+```bash
+# Dry run - see what would be imported
+python3 import_historical_data.py --username FC2000232581 --password "xxx" --days 90 --dry-run
+
+# Import 3 months of data
+python3 import_historical_data.py --username FC2000232581 --password "xxx" --days 90
+
+# List available signals
+python3 import_historical_data.py --username FC2000232581 --password "xxx" --list-signals
+```
+
+### How It Works
+
+The script:
+1. Authenticates with HomeSide API (same as the fetcher)
+2. Gets BMS token for Arrigo access
+3. Attempts to fetch historical data via GraphQL
+4. Maps Arrigo signal names to our field names:
+   - "Ute Temperatur" -> `outdoor_temperature`
+   - "Medeltemperatur Rum" -> `room_temperature`
+   - "Tillopp värme" -> `supply_temp`
+   - "Retur värme" -> `return_temp`
+5. Writes data to InfluxDB (`thermal_history` and `heating_system` measurements)
+
+### Known Limitations
+
+The Arrigo GraphQL API endpoint varies by installation:
+- `exodrift10.systeminstallation.se/arrigo/api/graphql` - some installations
+- Other server hostnames may be used
+
+If automatic discovery fails, you can specify the server:
+```bash
+python3 import_historical_data.py --username FC... --password "..." --arrigo-host exodrift10.systeminstallation.se
+```
+
+### Signal Name Mapping
+
+| Arrigo Signal | Field Name |
+|---------------|------------|
+| Ute Temperatur | outdoor_temperature |
+| Medeltemperatur Rum | room_temperature |
+| Tillopp värme, FC... | supply_temp |
+| Retur värme, FC... | return_temp |
+| Tappvarmvatten, FC... | hot_water_temp |
+| Framledning Börvärde | supply_setpoint |
 
 ## External Scripts
 

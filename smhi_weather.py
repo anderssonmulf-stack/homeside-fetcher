@@ -332,6 +332,8 @@ class SMHIWeather:
                 # Extract forecast parameters
                 temp = None
                 cloud_cover = None
+                wind_speed = None
+                humidity = None
 
                 for param in time_series.get('parameters', []):
                     param_name = param.get('name')
@@ -339,6 +341,10 @@ class SMHIWeather:
                         temp = param.get('values', [None])[0]
                     elif param_name == 'tcc_mean':  # Total cloud cover (0-8 octas)
                         cloud_cover = param.get('values', [None])[0]
+                    elif param_name == 'ws':  # Wind speed (m/s)
+                        wind_speed = param.get('values', [None])[0]
+                    elif param_name == 'r':  # Relative humidity (%)
+                        humidity = param.get('values', [None])[0]
 
                 if temp is not None:
                     hours_from_now = (valid_time - now).total_seconds() / 3600
@@ -350,6 +356,10 @@ class SMHIWeather:
 
                     if cloud_cover is not None:
                         forecast_point['cloud_cover'] = cloud_cover
+                    if wind_speed is not None:
+                        forecast_point['wind_speed'] = wind_speed
+                    if humidity is not None:
+                        forecast_point['humidity'] = humidity
 
                     forecasts.append(forecast_point)
 

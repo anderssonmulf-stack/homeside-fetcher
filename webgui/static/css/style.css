@@ -106,6 +106,19 @@ a:hover {
     100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
 }
 
+.nav-separator {
+    color: var(--muted);
+    font-size: 1.2rem;
+}
+
+.nav-house-name {
+    color: var(--white);
+    font-weight: 500;
+    background: rgba(255,255,255,0.1);
+    padding: 4px 12px;
+    border-radius: 4px;
+}
+
 .nav-user {
     margin-left: auto;
     display: flex;
@@ -526,6 +539,48 @@ a:hover {
     color: var(--dark);
 }
 
+.house-id {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 4px;
+}
+
+.house-card-wrapper {
+    display: flex;
+    flex-direction: column;
+}
+
+.house-card-wrapper .house-card {
+    flex: 1;
+    border-radius: 8px 8px 0 0;
+}
+
+.house-links {
+    display: flex;
+    background: var(--light);
+    border-radius: 0 0 8px 8px;
+    overflow: hidden;
+}
+
+.house-link {
+    flex: 1;
+    padding: 8px 4px;
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--dark);
+    border-right: 1px solid var(--border);
+    transition: background 0.2s;
+}
+
+.house-link:last-child {
+    border-right: none;
+}
+
+.house-link:hover {
+    background: var(--white);
+    text-decoration: none;
+}
+
 .house-action {
     color: var(--primary);
     font-size: 0.9rem;
@@ -557,6 +612,13 @@ a:hover {
     text-align: center;
     margin-bottom: 8px;
     color: var(--dark);
+}
+
+.auth-logo {
+    display: block;
+    margin: 0 auto 8px auto;
+    height: 60px;
+    width: auto;
 }
 
 .auth-box .subtitle {

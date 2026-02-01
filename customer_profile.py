@@ -57,6 +57,27 @@ class LearnedParameters:
 
 
 @dataclass
+class EnergySeparationConfig:
+    """
+    Configuration for separating district heating energy into components.
+
+    Different methods are available for different heating system setups:
+    - homeside_ondemand_dhw: For HomeSide systems with on-demand DHW heating
+    - (future methods for other setups)
+    """
+    enabled: bool = False
+    method: str = "homeside_ondemand_dhw"  # Separation method to use
+
+    # HomeSide on-demand DHW method settings
+    dhw_temp_threshold: float = 45.0       # Min temp to consider DHW active
+    dhw_temp_rise_threshold: float = 2.0   # Min rise from baseline to detect event
+    dhw_baseline_temp: float = 25.0        # Expected temp when DHW not in use
+    avg_dhw_power_kw: float = 25.0         # Typical instantaneous power during DHW
+    cold_water_temp: float = 8.0           # Assumed cold water inlet temp
+    hot_water_target_temp: float = 55.0    # Target hot water delivery temp
+
+
+@dataclass
 class CustomerProfile:
     """
     Complete customer profile containing all settings and learned parameters.
@@ -75,6 +96,7 @@ class CustomerProfile:
     comfort: ComfortConfig = field(default_factory=ComfortConfig)
     heating_system: HeatingSystemConfig = field(default_factory=HeatingSystemConfig)
     learned: LearnedParameters = field(default_factory=LearnedParameters)
+    energy_separation: EnergySeparationConfig = field(default_factory=EnergySeparationConfig)
 
     _profiles_dir: str = field(default="profiles", repr=False)
     _logger: logging.Logger = field(default=None, repr=False)
@@ -140,7 +162,8 @@ class CustomerProfile:
             building=BuildingConfig(**data.get("building", {})),
             comfort=ComfortConfig(**data.get("comfort", {})),
             heating_system=HeatingSystemConfig(**data.get("heating_system", {})),
-            learned=LearnedParameters(**data.get("learned", {}))
+            learned=LearnedParameters(**data.get("learned", {})),
+            energy_separation=EnergySeparationConfig(**data.get("energy_separation", {}))
         )
 
     def save(self) -> None:
@@ -155,7 +178,8 @@ class CustomerProfile:
             "building": asdict(self.building),
             "comfort": asdict(self.comfort),
             "heating_system": asdict(self.heating_system),
-            "learned": asdict(self.learned)
+            "learned": asdict(self.learned),
+            "energy_separation": asdict(self.energy_separation)
         }
 
         with open(filepath, 'w') as f:
@@ -173,7 +197,8 @@ class CustomerProfile:
             "building": asdict(self.building),
             "comfort": asdict(self.comfort),
             "heating_system": asdict(self.heating_system),
-            "learned": asdict(self.learned)
+            "learned": asdict(self.learned),
+            "energy_separation": asdict(self.energy_separation)
         }
 
     def update_learned_params(

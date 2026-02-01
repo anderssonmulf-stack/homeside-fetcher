@@ -71,6 +71,36 @@
       "field_name": "away_temp_setpoint",
       "description": "Target temperature setpoint when away",
       "unit": "°C"
+    },
+    {
+      "api_name": "VMM1_TempForw",
+      "field_name": "dh_supply_temp",
+      "description": "District heating supply temperature (from utility)",
+      "unit": "°C"
+    },
+    {
+      "api_name": "VMM1_TempRet",
+      "field_name": "dh_return_temp",
+      "description": "District heating return temperature (to utility)",
+      "unit": "°C"
+    },
+    {
+      "api_name": "VMM1_Power",
+      "field_name": "dh_power",
+      "description": "District heating power consumption",
+      "unit": "kW"
+    },
+    {
+      "api_name": "VMM1_Flow",
+      "field_name": "dh_flow",
+      "description": "District heating water flow rate",
+      "unit": "l/h"
+    },
+    {
+      "api_name": "PID_VS1_GT_TILL_1_SetP",
+      "field_name": "supply_setpoint",
+      "description": "Supply temperature setpoint (PID controller target)",
+      "unit": "°C"
     }
   ]
 }

@@ -10,12 +10,19 @@
 
         {% if houses %}
         <div class="house-grid">
-            {% for house_id in houses %}
-            <a href="{{ url_for('house_dashboard', customer_id=house_id) }}" class="house-card">
-                <div class="house-icon">🏠</div>
-                <div class="house-name">{{ house_id }}</div>
-                <div class="house-action">View Dashboard →</div>
-            </a>
+            {% for house in houses %}
+            <div class="house-card-wrapper">
+                <a href="{{ url_for('house_detail', house_id=house.id) }}" class="house-card">
+                    <div class="house-icon">🏠</div>
+                    <div class="house-name">{{ house.name }}</div>
+                    <div class="house-id">{{ house.id }}</div>
+                </a>
+                <div class="house-links">
+                    <a href="{{ url_for('house_dashboard', customer_id=house.id) }}" class="house-link">📊 Dashboard</a>
+                    <a href="{{ url_for('house_graphs', house_id=house.id) }}" class="house-link">📈 Graphs</a>
+                    <a href="{{ url_for('house_detail', house_id=house.id) }}" class="house-link">⚙️ Settings</a>
+                </div>
+            </div>
             {% endfor %}
         </div>
         {% else %}

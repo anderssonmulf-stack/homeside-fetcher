@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Svenskeb{% endblock %} - Heating System</title>
+    <title>{% block title %}SvenskEB{% endblock %} - Heating System</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block extra_head %}{% endblock %}
 </head>
@@ -17,6 +17,10 @@
         </div>
         <div class="nav-links">
             <a href="{{ url_for('dashboard') }}">Dashboard</a>
+            {% if current_house_name %}
+            <span class="nav-separator">›</span>
+            <span class="nav-house-name">{{ current_house_name }}</span>
+            {% endif %}
             {% if session.user_role == 'admin' %}
             <a href="{{ url_for('admin_users') }}">Users{% if pending_count %} <span class="nav-badge">{{ pending_count }}</span>{% endif %}</a>
             {% endif %}

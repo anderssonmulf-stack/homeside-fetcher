@@ -276,12 +276,31 @@ def dashboard():
 
     # Get houses this user can see
     if role == 'admin' or '*' in user_houses:
-        houses = user_manager.get_all_houses()
+        house_ids = user_manager.get_all_houses()
     else:
-        houses = user_houses
+        house_ids = user_houses
+
+    # Get houses with friendly names
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    houses = []
+    for house_id in house_ids:
+        if house_id == '*':
+            continue
+        try:
+            profile = CustomerProfile.load(house_id, profiles_dir)
+            houses.append({
+                'id': house_id,
+                'name': profile.friendly_name or house_id
+            })
+        except FileNotFoundError:
+            houses.append({'id': house_id, 'name': house_id})
+
+    # Sort by name
+    houses.sort(key=lambda x: x['name'].lower())
 
     # Get recent changes for user's houses
-    recent_changes = audit_logger.get_recent_changes(houses, limit=10)
+    recent_changes = audit_logger.get_recent_changes(house_ids, limit=10)
 
     return render_template('dashboard.html',
                            houses=houses,
@@ -322,7 +341,8 @@ def house_detail(house_id):
                            can_edit=can_edit,
                            changes=changes,
                            realtime=realtime_data,
-                           forecast=forecast_data)
+                           forecast=forecast_data,
+                           current_house_name=profile.friendly_name or house_id)
 
 
 @app.route('/house/<customer_id>/dashboard')
@@ -373,7 +393,8 @@ def house_dashboard(customer_id):
         friendly_name=friendly_name,
         user_houses=user_houses,
         grafana_base='/grafana',
-        dashboard_uid='homeside-v3'
+        dashboard_uid='homeside-v3',
+        current_house_name=friendly_name
     )
 
 
@@ -495,7 +516,8 @@ def house_graphs(house_id):
         friendly_name=friendly_name,
         graph_json=graph_json,
         config_json=config_json,
-        availability=availability
+        availability=availability,
+        current_house_name=friendly_name
     )
 
 
@@ -549,10 +571,16 @@ def api_effective_temperature(house_id):
     # Get weather history
     from influx_reader import get_influx_reader
     influx = get_influx_reader()
+
+    # Debug: check connection
+    print(f"[DEBUG] InfluxDB client: {influx.client is not None}, URL: {influx.url}")
+
     weather_data = influx.get_weather_history(house_id, hours=hours)
 
+    print(f"[DEBUG] Weather data for {house_id}: {len(weather_data)} points")
+
     if not weather_data:
-        return jsonify({'error': 'No weather data available', 'data': []})
+        return jsonify({'error': 'No weather data available', 'data': [], 'debug': {'hours': hours, 'house_id': house_id}})
 
     # Calculate effective temperatures
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -602,6 +630,299 @@ def api_effective_temperature(house_id):
         'data': results,
         'model_version': model.model_version,
         'location': {'latitude': latitude, 'longitude': longitude}
+    })
+
+
+@app.route('/api/house/<house_id>/forecast-effective-temperature')
+@require_login
+def api_forecast_effective_temperature(house_id):
+    """
+    API endpoint for forecast effective temperature (12h ahead).
+    Used for predicting control parameters.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours_ahead = request.args.get('hours', 12, type=int)
+    hours_ahead = min(max(hours_ahead, 1), 48)
+
+    # Get house location from profile
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    try:
+        profile = CustomerProfile.load(house_id, profiles_dir)
+        latitude = getattr(profile, 'latitude', None)
+        longitude = getattr(profile, 'longitude', None)
+    except FileNotFoundError:
+        latitude = None
+        longitude = None
+
+    if latitude is None:
+        latitude = float(os.environ.get('LATITUDE', '58.41'))
+    if longitude is None:
+        longitude = float(os.environ.get('LONGITUDE', '15.62'))
+
+    # Get forecast data directly from SMHI (includes wind, humidity, cloud cover)
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    forecast_data = influx.get_smhi_forecast(latitude, longitude, hours_ahead=hours_ahead)
+
+    if not forecast_data:
+        return jsonify({'error': 'No forecast data available', 'data': []})
+
+    # Calculate effective temperatures
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from energy_models import get_weather_model
+    from energy_models.weather_energy_model import WeatherConditions
+    from datetime import datetime
+
+    model = get_weather_model('simple')
+
+    results = []
+    for f in forecast_data:
+        if f.get('temperature') is None:
+            continue
+
+        try:
+            timestamp = datetime.fromisoformat(f['timestamp'].replace('Z', '+00:00'))
+
+            conditions = WeatherConditions(
+                timestamp=timestamp,
+                temperature=f['temperature'],
+                wind_speed=f.get('wind_speed', 3.0),  # Real forecast wind
+                humidity=f.get('humidity', 60.0),     # Real forecast humidity (if available)
+                cloud_cover=f.get('cloud_cover', 4.0),
+                latitude=latitude,
+                longitude=longitude
+            )
+
+            eff = model.effective_temperature(conditions)
+
+            results.append({
+                'timestamp': f['timestamp'],
+                'timestamp_display': f['timestamp_swedish'],
+                'forecast_temp': round(f['temperature'], 1),
+                'effective_temp': round(eff.effective_temp, 1),
+                'wind_effect': round(eff.wind_effect, 2),
+                'humidity_effect': round(eff.humidity_effect, 2),
+                'solar_effect': round(eff.solar_effect, 2),
+                'sun_elevation': round(eff.sun_elevation, 1) if eff.sun_elevation else None,
+                'wind_speed': f.get('wind_speed'),
+                'humidity': f.get('humidity'),
+                'cloud_cover': f.get('cloud_cover'),
+                'is_forecast': True
+            })
+        except Exception as e:
+            continue
+
+    return jsonify({
+        'data': results,
+        'model_version': model.model_version,
+        'hours_ahead': hours_ahead
+    })
+
+
+@app.route('/api/house/<house_id>/temperature-history')
+@require_login
+def api_temperature_history(house_id):
+    """
+    API endpoint for primary/secondary temperature comparison chart.
+    Returns DH side and house side temperatures.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)  # Clamp between 1 and 30 days
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    data = influx.get_temperature_history(house_id, hours=hours)
+
+    if not data:
+        return jsonify({'error': 'No temperature data available', 'data': []})
+
+    return jsonify({
+        'data': data,
+        'hours': hours
+    })
+
+
+@app.route('/api/house/<house_id>/energy-consumption')
+@require_login
+def api_energy_consumption(house_id):
+    """
+    API endpoint for energy consumption chart.
+    Returns consumption data aggregated by day/hour/month.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)  # Clamp between 7 and 365 days
+
+    aggregation = request.args.get('aggregation', 'daily')
+    if aggregation not in ['hourly', 'daily', 'monthly']:
+        aggregation = 'daily'
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_energy_consumption_history(house_id, days=days, aggregation=aggregation)
+
+    # data_source is set by influx_reader ('imported' or 'live')
+    return jsonify(result)
+
+
+@app.route('/api/house/<house_id>/efficiency-metrics')
+@require_login
+def api_efficiency_metrics(house_id):
+    """
+    API endpoint for efficiency metrics chart.
+    Returns delta T, power, flow rate, and efficiency ratio.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    data = influx.get_efficiency_metrics(house_id, hours=hours)
+
+    if not data:
+        return jsonify({'error': 'No efficiency data available', 'data': []})
+
+    # Calculate summary statistics
+    valid_dh_delta = [d['dh_delta_t'] for d in data if d['dh_delta_t'] is not None]
+    valid_house_delta = [d['house_delta_t'] for d in data if d['house_delta_t'] is not None]
+    valid_power = [d['dh_power'] for d in data if d['dh_power'] is not None]
+
+    summary = {
+        'avg_dh_delta_t': round(sum(valid_dh_delta) / len(valid_dh_delta), 1) if valid_dh_delta else None,
+        'avg_house_delta_t': round(sum(valid_house_delta) / len(valid_house_delta), 1) if valid_house_delta else None,
+        'avg_power': round(sum(valid_power) / len(valid_power), 1) if valid_power else None,
+        'max_power': round(max(valid_power), 1) if valid_power else None,
+        'min_power': round(min(valid_power), 1) if valid_power else None,
+    }
+
+    return jsonify({
+        'data': data,
+        'summary': summary,
+        'hours': hours
+    })
+
+
+@app.route('/api/house/<house_id>/power-history')
+@require_login
+def api_power_history(house_id):
+    """
+    API endpoint for real-time power consumption chart.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_power_history(house_id, hours=hours)
+
+    data = result.get('data', [])
+    data_source = result.get('data_source')
+
+    if not data:
+        return jsonify({'error': 'No power data available', 'data': [], 'data_source': None})
+
+    # Calculate energy estimate (integrate power over time)
+    # Approximate using trapezoidal rule
+    total_kwh = 0
+    if len(data) >= 2:
+        for i in range(1, len(data)):
+            prev = data[i-1]
+            curr = data[i]
+            try:
+                from datetime import datetime
+                t1 = datetime.fromisoformat(prev['timestamp'].replace('Z', '+00:00'))
+                t2 = datetime.fromisoformat(curr['timestamp'].replace('Z', '+00:00'))
+                hours_diff = (t2 - t1).total_seconds() / 3600
+                avg_power = (prev['dh_power'] + curr['dh_power']) / 2
+                total_kwh += avg_power * hours_diff
+            except Exception:
+                continue
+
+    return jsonify({
+        'data': data,
+        'estimated_kwh': round(total_kwh, 1),
+        'hours': hours,
+        'data_source': data_source
+    })
+
+
+@app.route('/api/house/<house_id>/cost-estimate')
+@require_login
+def api_cost_estimate(house_id):
+    """
+    API endpoint for cost estimation based on energy consumption.
+    Uses configurable price per kWh.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)
+
+    # Default district heating price in SEK/kWh (typical Swedish price)
+    # Can be made configurable per house in the future
+    price_per_kwh = request.args.get('price', 1.20, type=float)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    energy_result = influx.get_energy_consumption_history(house_id, days=days, aggregation='daily')
+
+    # Get data source from energy query (imported or live)
+    data_source = energy_result.get('data_source')
+
+    # Calculate costs
+    cost_data = []
+    total_cost = 0
+    total_kwh = 0
+
+    for energy_type, entries in energy_result.get('data', {}).items():
+        for entry in entries:
+            kwh = entry['value']
+            cost = kwh * price_per_kwh
+            cost_data.append({
+                'timestamp': entry['timestamp'],
+                'timestamp_display': entry['timestamp_display'],
+                'kwh': kwh,
+                'cost': round(cost, 2),
+                'energy_type': energy_type
+            })
+            total_kwh += kwh
+            total_cost += cost
+
+    # Calculate daily average
+    daily_avg_kwh = total_kwh / days if days > 0 else 0
+    daily_avg_cost = total_cost / days if days > 0 else 0
+
+    # Project monthly cost
+    monthly_projection = daily_avg_cost * 30
+
+    return jsonify({
+        'data': cost_data,
+        'summary': {
+            'total_kwh': round(total_kwh, 1),
+            'total_cost': round(total_cost, 2),
+            'daily_avg_kwh': round(daily_avg_kwh, 1),
+            'daily_avg_cost': round(daily_avg_cost, 2),
+            'monthly_projection': round(monthly_projection, 2),
+            'price_per_kwh': price_per_kwh,
+            'currency': 'SEK'
+        },
+        'days': days,
+        'data_source': data_source
     })
 
 

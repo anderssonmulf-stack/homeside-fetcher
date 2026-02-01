@@ -130,7 +130,12 @@ class InfluxDBWriter:
                     'away_temp_setpoint': float,
                     'electric_heater': bool,
                     'heat_recovery': bool,
-                    'away_mode': bool
+                    'away_mode': bool,
+                    'dh_supply_temp': float,  # District heating supply
+                    'dh_return_temp': float,  # District heating return
+                    'dh_power': float,        # District heating power (kW)
+                    'dh_flow': float,         # District heating flow (l/h)
+                    'supply_setpoint': float  # PID supply temp target
                 }
 
         Returns:
@@ -168,6 +173,18 @@ class InfluxDBWriter:
                 point.field("target_temp_setpoint", round(float(data['target_temp_setpoint']), 2))
             if 'away_temp_setpoint' in data:
                 point.field("away_temp_setpoint", round(float(data['away_temp_setpoint']), 2))
+
+            # District heating fields
+            if 'dh_supply_temp' in data:
+                point.field("dh_supply_temp", round(float(data['dh_supply_temp']), 2))
+            if 'dh_return_temp' in data:
+                point.field("dh_return_temp", round(float(data['dh_return_temp']), 2))
+            if 'dh_power' in data:
+                point.field("dh_power", round(float(data['dh_power']), 2))
+            if 'dh_flow' in data:
+                point.field("dh_flow", round(float(data['dh_flow']), 2))
+            if 'supply_setpoint' in data:
+                point.field("supply_setpoint", round(float(data['supply_setpoint']), 2))
 
             # Add boolean status fields (convert to int for easier graphing)
             if 'electric_heater' in data:
