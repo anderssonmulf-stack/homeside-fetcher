@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Import Preview - {{ house_name }}{% endblock %}
+
+{% block content %}
+<div class="import-preview">
+    <div class="page-header">
+        <a href="{{ url_for('house_detail', house_id=house_id) }}" class="back-link">
+            &larr; Back to {{ house_name }}
+        </a>
+        <h1>Energy Import Preview</h1>
+        <p class="subtitle">{{ energy_type_label }}</p>
+    </div>
+
+    {% if result.success %}
+    <div class="card import-summary">
+        <h2>Import Summary</h2>
+        <div class="import-stats">
+            <div class="stat-item">
+                <span class="stat-label">Date Range</span>
+                <span class="stat-value">{{ result.date_range.start }}</span>
+                <span class="stat-label">to</span>
+                <span class="stat-value">{{ result.date_range.end }}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Total Rows in File</span>
+                <span class="stat-value">{{ result.valid_rows }}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Duplicates (will skip)</span>
+                <span class="stat-value {% if result.duplicate_count > 0 %}text-warning{% endif %}">
+                    {{ result.duplicate_count }}
+                </span>
+            </div>
+            <div class="stat-item highlight-box">
+                <span class="stat-label">New Rows (will import)</span>
+                <span class="stat-value highlight">{{ result.new_rows }}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Total Energy</span>
+                <span class="stat-value">{{ "%.1f"|format(result.total_kwh) }} kWh</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">New Energy</span>
+                <span class="stat-value">{{ "%.1f"|format(result.new_kwh) }} kWh</span>
+            </div>
+        </div>
+    </div>
+
+    {% if result.trimmed_days and result.trimmed_days > 0 %}
+    <div class="card">
+        <div class="alert alert-info" style="margin: 0;">
+            <strong>Note:</strong> {{ result.trimmed_days }} trailing day(s) with only zero values were removed (likely incomplete data).
+        </div>
+    </div>
+    {% endif %}
+
+    {% if result.errors %}
+    <div class="card">
+        <h2>Parsing Warnings</h2>
+        <p class="muted">The following rows could not be parsed and will be skipped:</p>
+        <ul class="error-list">
+            {% for error in result.errors[:10] %}
+            <li>{{ error }}</li>
+            {% endfor %}
+            {% if result.errors|length > 10 %}
+            <li class="muted">... and {{ result.errors|length - 10 }} more</li>
+            {% endif %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if result.preview_first %}
+    <div class="card">
+        <h2>Preview - First 10 Rows</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Value (kWh)</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in result.preview_first %}
+                <tr class="{% if row.is_duplicate %}duplicate-row{% endif %}">
+                    <td>{{ row.timestamp_display }}</td>
+                    <td>{{ "%.3f"|format(row.value) }}</td>
+                    <td>
+                        {% if row.is_duplicate %}
+                        <span class="badge badge-warning">Duplicate - Skip</span>
+                        {% else %}
+                        <span class="badge badge-success">New</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if result.preview_last %}
+    <div class="card">
+        <h2>Preview - Last 10 Rows</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Value (kWh)</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in result.preview_last %}
+                <tr class="{% if row.is_duplicate %}duplicate-row{% endif %}">
+                    <td>{{ row.timestamp_display }}</td>
+                    <td>{{ "%.3f"|format(row.value) }}</td>
+                    <td>
+                        {% if row.is_duplicate %}
+                        <span class="badge badge-warning">Duplicate - Skip</span>
+                        {% else %}
+                        <span class="badge badge-success">New</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <div class="card form-actions-card">
+        <div class="form-actions">
+            {% if result.new_rows > 0 %}
+            <form method="POST" action="{{ url_for('confirm_energy_import', house_id=house_id) }}" style="display: inline;">
+                <input type="hidden" name="confirm" value="yes">
+                <button type="submit" class="btn btn-success">
+                    Import {{ result.new_rows }} Rows ({{ "%.1f"|format(result.new_kwh) }} kWh)
+                </button>
+            </form>
+            {% else %}
+            <button class="btn btn-success" disabled>
+                No New Rows to Import
+            </button>
+            {% endif %}
+            <a href="{{ url_for('house_detail', house_id=house_id) }}" class="btn">Cancel</a>
+        </div>
+    </div>
+
+    {% else %}
+    <div class="card">
+        <div class="alert alert-error" style="margin: 0;">
+            <strong>Import Failed</strong>
+            <p>Could not parse the CSV file.</p>
+            {% if result.errors %}
+            <ul class="error-list">
+                {% for error in result.errors %}
+                <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card form-actions-card">
+        <a href="{{ url_for('house_detail', house_id=house_id) }}" class="btn">Back</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

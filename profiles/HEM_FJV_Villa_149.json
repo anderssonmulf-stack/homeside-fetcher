@@ -2,7 +2,9 @@
   "schema_version": 1,
   "customer_id": "HEM_FJV_Villa_149",
   "friendly_name": "Daggis8",
-  "meter_ids": ["METER001"],
+  "meter_ids": [
+    "METER001"
+  ],
   "building": {
     "description": "Daggstigen 8, 152 kvm p\u00e5 3 plan. Bygg\u00e5r 2022",
     "thermal_response": "medium"
@@ -16,12 +18,36 @@
     "max_supply_temp": 55
   },
   "learned": {
-    "thermal_coefficient": null,
+    "thermal_coefficient": 0.031114269543053172,
     "thermal_coefficient_confidence": 0.0,
-    "hourly_bias": {},
+    "hourly_bias": {
+      "19": 0.06,
+      "22": 0.104,
+      "00": 0.136,
+      "02": 0.096,
+      "04": 0.156,
+      "05": 0.096,
+      "07": 0.096,
+      "08": 0.308,
+      "09": 0.304,
+      "10": 0.576,
+      "12": 0.528,
+      "13": 0.08,
+      "14": 0.08,
+      "15": 0.08,
+      "16": 0.08,
+      "17": 0.08,
+      "20": 0.06,
+      "21": 0.12,
+      "23": 0.14,
+      "01": 0.08,
+      "03": 0.16,
+      "06": 0.1,
+      "11": 0.484
+    },
     "samples_since_last_update": 0,
-    "total_samples": 0,
-    "next_update_at_samples": 24,
-    "updated_at": null
+    "total_samples": 168,
+    "next_update_at_samples": 96,
+    "updated_at": "2026-01-31T12:45:36.238932+00:00"
   }
 }

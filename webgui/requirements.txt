@@ -5,3 +5,5 @@ requests>=2.31.0
 gunicorn>=21.0.0
 python-dotenv>=1.0.0
 influxdb-client>=1.36.0
+plotly>=5.18.0
+astral>=3.2

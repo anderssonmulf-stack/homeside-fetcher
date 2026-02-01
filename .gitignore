@@ -1,5 +1,6 @@
 # Environment and secrets
 .env
+envs/
 *.db
 
 # Python

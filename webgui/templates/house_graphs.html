@@ -1,0 +1,393 @@
+{% extends "base.html" %}
+{% block title %}Graphs - {{ friendly_name }}{% endblock %}
+
+{% block content %}
+<div class="house-detail">
+    <div class="page-header">
+        <a href="{{ url_for('house_detail', house_id=house_id) }}" class="back-link">&larr; Back to {{ friendly_name }}</a>
+        <h1 class="friendly-name">Data Overview</h1>
+        <p class="subtitle">{{ friendly_name }}</p>
+    </div>
+
+    <!-- Data Availability Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Data Availability</h2>
+            <div class="chart-controls">
+                <select id="days-select" class="role-select" onchange="updateChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Shows data coverage per category. Darker blue = more data points.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color predicted"></span> * = Predicted data</span>
+            </span>
+        </p>
+
+        {% if availability.categories %}
+        <div id="availability-chart" class="chart-container"></div>
+        {% else %}
+        <p class="muted">No data available for this house yet.</p>
+        {% endif %}
+    </div>
+
+    <!-- Effective Temperature Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Effective Outdoor Temperature</h2>
+            <div class="chart-controls">
+                <select id="eff-temp-days-select" class="role-select" onchange="updateEffectiveTempChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Compares actual outdoor temperature with "effective" temperature
+            that accounts for wind chill, humidity, and solar effects.
+            <strong>Dotted line</strong> = effective temp (what it "feels like" for heating).
+        </p>
+        <div id="effective-temp-chart" class="chart-container">
+            <div class="loading-spinner">Loading weather data...</div>
+        </div>
+    </div>
+
+    <!-- Effect Breakdown Chart -->
+    <div class="card">
+        <h2>Weather Effect Breakdown</h2>
+        <p class="card-description">
+            Shows how wind, humidity, and solar radiation affect the effective temperature.
+            Negative values = colder, Positive = warmer.
+        </p>
+        <div id="effect-breakdown-chart" class="chart-container">
+            <div class="loading-spinner">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Coming Soon: More Charts -->
+    <div class="card">
+        <h2>More Charts Coming Soon</h2>
+        <p class="card-description">Future visualizations will include:</p>
+        <ul class="feature-list">
+            <li>Indoor temperature history with forecast overlay</li>
+            <li>Supply temp vs Outdoor temp (heat curve)</li>
+            <li>Predicted vs actual heating energy</li>
+            <li>Energy consumption breakdown</li>
+        </ul>
+    </div>
+</div>
+
+<style>
+.card-header-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.card-header-flex h2 {
+    margin: 0;
+}
+.chart-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.chart-container {
+    width: 100%;
+    min-height: 300px;
+}
+.legend-inline {
+    display: inline-flex;
+    gap: 15px;
+    margin-left: 10px;
+}
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.85em;
+    color: var(--muted);
+}
+.legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+}
+.legend-color.measured {
+    background: #3498db;
+}
+.legend-color.predicted {
+    background: #9b59b6;
+}
+.feature-list {
+    margin: 15px 0;
+    padding-left: 20px;
+}
+.feature-list li {
+    margin: 8px 0;
+    color: var(--muted);
+}
+.loading-spinner {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-style: italic;
+}
+</style>
+
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script>
+    const houseId = "{{ house_id }}";
+    let currentChart = null;
+
+    // Initial chart data from server
+    const initialData = {{ graph_json | safe }};
+    const chartConfig = {{ config_json | safe }};
+
+    function renderChart(data) {
+        Plotly.newPlot('availability-chart', data.data, data.layout, chartConfig);
+    }
+
+    function updateChart() {
+        const days = document.getElementById('days-select').value;
+        const chartDiv = document.getElementById('availability-chart');
+
+        // Show loading state
+        chartDiv.style.opacity = '0.5';
+
+        fetch(`/api/house/${houseId}/data-availability?days=${days}`)
+            .then(response => response.json())
+            .then(availability => {
+                if (!availability.categories || availability.categories.length === 0) {
+                    chartDiv.innerHTML = '<p class="muted">No data available.</p>';
+                    chartDiv.style.opacity = '1';
+                    return;
+                }
+
+                // Collect all unique dates
+                const allDatesSet = new Set();
+                availability.categories.forEach(cat => {
+                    cat.data.forEach(d => allDatesSet.add(d.date));
+                });
+                const allDates = Array.from(allDatesSet).sort();
+
+                // Build heatmap data
+                const categoryNames = availability.categories.map(c => c.name);
+                const zValues = availability.categories.map(cat => {
+                    const dateToCount = {};
+                    cat.data.forEach(d => { dateToCount[d.date] = d.count; });
+                    return allDates.map(date => dateToCount[date] || 0);
+                });
+
+                const traces = [{
+                    z: zValues,
+                    x: allDates,
+                    y: categoryNames,
+                    type: 'heatmap',
+                    colorscale: [
+                        [0, '#f8f9fa'],
+                        [0.01, '#e3f2fd'],
+                        [0.25, '#90caf9'],
+                        [0.5, '#42a5f5'],
+                        [1, '#1565c0']
+                    ],
+                    showscale: true,
+                    colorbar: {
+                        title: { text: 'Data points', side: 'right' }
+                    },
+                    hovertemplate: '%{x}<br>%{y}: %{z} points<extra></extra>'
+                }];
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: null,
+                        autorange: 'reversed'
+                    },
+                    height: Math.max(300, availability.categories.length * 40 + 150),
+                    margin: { l: 130, r: 80, t: 20, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: 'pan'
+                };
+
+                Plotly.react('availability-chart', traces, layout, chartConfig);
+                chartDiv.style.opacity = '1';
+            })
+            .catch(error => {
+                console.error('Failed to update chart:', error);
+                chartDiv.style.opacity = '1';
+            });
+    }
+
+    // Render initial chart
+    document.addEventListener('DOMContentLoaded', function() {
+        if (document.getElementById('availability-chart')) {
+            renderChart(initialData);
+        }
+        // Load effective temperature chart
+        updateEffectiveTempChart();
+    });
+
+    // Effective Temperature Chart
+    function updateEffectiveTempChart() {
+        const hours = document.getElementById('eff-temp-days-select').value;
+        const chartDiv = document.getElementById('effective-temp-chart');
+        const breakdownDiv = document.getElementById('effect-breakdown-chart');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading weather data...</div>';
+        breakdownDiv.innerHTML = '<div class="loading-spinner">Loading...</div>';
+
+        fetch(`/api/house/${houseId}/effective-temperature?hours=${hours}`)
+            .then(response => response.json())
+            .then(result => {
+                if (result.error || !result.data || result.data.length === 0) {
+                    chartDiv.innerHTML = '<p class="muted">No weather data available for this period.</p>';
+                    breakdownDiv.innerHTML = '';
+                    return;
+                }
+
+                const data = result.data;
+
+                // Main temperature comparison chart
+                const tempTraces = [
+                    {
+                        x: data.map(d => d.timestamp),
+                        y: data.map(d => d.actual_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Actual Outdoor',
+                        line: { color: '#3498db', width: 2 },
+                        hovertemplate: '%{x}<br>Actual: %{y}°C<extra></extra>'
+                    },
+                    {
+                        x: data.map(d => d.timestamp),
+                        y: data.map(d => d.effective_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Effective Temp',
+                        line: { color: '#e74c3c', width: 2, dash: 'dot' },
+                        hovertemplate: '%{x}<br>Effective: %{y}°C<extra></extra>'
+                    }
+                ];
+
+                const tempLayout = {
+                    xaxis: {
+                        title: 'Time',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis: {
+                        title: 'Temperature (°C)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                Plotly.newPlot('effective-temp-chart', tempTraces, tempLayout, chartConfig);
+
+                // Effect breakdown chart (stacked area)
+                const breakdownTraces = [
+                    {
+                        x: data.map(d => d.timestamp),
+                        y: data.map(d => d.wind_effect),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Wind Effect',
+                        fill: 'tozeroy',
+                        line: { color: '#9b59b6', width: 1 },
+                        fillcolor: 'rgba(155, 89, 182, 0.3)',
+                        hovertemplate: 'Wind: %{y}°C<extra></extra>'
+                    },
+                    {
+                        x: data.map(d => d.timestamp),
+                        y: data.map(d => d.humidity_effect),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Humidity Effect',
+                        fill: 'tozeroy',
+                        line: { color: '#3498db', width: 1 },
+                        fillcolor: 'rgba(52, 152, 219, 0.3)',
+                        hovertemplate: 'Humidity: %{y}°C<extra></extra>'
+                    },
+                    {
+                        x: data.map(d => d.timestamp),
+                        y: data.map(d => d.solar_effect),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Solar Effect',
+                        fill: 'tozeroy',
+                        line: { color: '#f39c12', width: 1 },
+                        fillcolor: 'rgba(243, 156, 18, 0.3)',
+                        hovertemplate: 'Solar: %{y}°C<extra></extra>'
+                    }
+                ];
+
+                const breakdownLayout = {
+                    xaxis: {
+                        title: 'Time',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis: {
+                        title: 'Effect (°C)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        zeroline: true,
+                        zerolinecolor: 'rgba(0,0,0,0.3)',
+                        zerolinewidth: 1
+                    },
+                    height: 280,
+                    margin: { l: 60, r: 30, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                Plotly.newPlot('effect-breakdown-chart', breakdownTraces, breakdownLayout, chartConfig);
+            })
+            .catch(error => {
+                console.error('Failed to load effective temperature data:', error);
+                chartDiv.innerHTML = '<p class="muted">Failed to load weather data.</p>';
+                breakdownDiv.innerHTML = '';
+            });
+    }
+</script>
+{% endblock %}

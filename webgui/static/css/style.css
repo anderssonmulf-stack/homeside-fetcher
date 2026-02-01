@@ -1235,3 +1235,121 @@ a:hover {
         height: 250px;
     }
 }
+
+/* =============================================================================
+   Energy Import
+   ============================================================================= */
+
+.import-preview .page-header {
+    margin-bottom: 24px;
+}
+
+.import-preview .subtitle {
+    color: var(--gray);
+    margin-top: 4px;
+}
+
+.import-summary {
+    background: linear-gradient(135deg, var(--success) 0%, #1e8449 100%);
+    color: var(--white);
+}
+
+.import-summary h2 {
+    color: var(--white);
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+
+.import-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+}
+
+.stat-item {
+    text-align: center;
+    padding: 12px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 8px;
+}
+
+.stat-item.highlight-box {
+    background: rgba(255,255,255,0.25);
+    border: 2px solid rgba(255,255,255,0.4);
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.8rem;
+    opacity: 0.9;
+    margin-bottom: 4px;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+.stat-value.highlight {
+    font-size: 1.5rem;
+}
+
+.stat-value.text-warning {
+    color: #f1c40f;
+}
+
+.duplicate-row {
+    background: rgba(243, 156, 18, 0.15);
+}
+
+.duplicate-row td {
+    opacity: 0.8;
+}
+
+.error-list {
+    list-style: disc;
+    padding-left: 20px;
+    margin: 12px 0 0 0;
+}
+
+.error-list li {
+    margin-bottom: 4px;
+    font-size: 0.9rem;
+}
+
+.form-actions-card {
+    background: var(--gray-light);
+}
+
+.form-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.btn-success {
+    background: var(--success);
+    color: var(--white);
+}
+
+.btn-success:hover {
+    background: #1e8449;
+}
+
+.btn-success:disabled {
+    background: var(--gray);
+    cursor: not-allowed;
+}
+
+.file-input {
+    padding: 8px;
+    border: 2px dashed var(--gray);
+    border-radius: 8px;
+    width: 100%;
+    cursor: pointer;
+}
+
+.file-input:hover {
+    border-color: var(--primary);
+    background: rgba(52, 152, 219, 0.05);
+}

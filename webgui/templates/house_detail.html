@@ -194,8 +194,43 @@
                     <span class="icon">📊</span>
                     <span>View Dashboard</span>
                 </a>
+                <a href="{{ url_for('house_graphs', house_id=house_id) }}" class="quick-link-item">
+                    <span class="icon">📈</span>
+                    <span>Data Graphs</span>
+                </a>
             </div>
         </div>
+
+        {% if can_edit %}
+        <!-- Energy Import Card -->
+        <div class="card">
+            <h2>Import Energy Data</h2>
+            <p class="card-description">Import historical energy consumption from CSV file.</p>
+
+            <form method="POST" action="{{ url_for('upload_energy_data', house_id=house_id) }}"
+                  enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="energy_file">CSV File</label>
+                    <input type="file" id="energy_file" name="energy_file"
+                           accept=".csv" required class="file-input">
+                    <small class="help-text">
+                        Format: Semicolon-separated, Swedish decimal format (comma).
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label for="energy_type">Energy Type</label>
+                    <select id="energy_type" name="energy_type" class="role-select">
+                        <option value="fjv_total">Fjärrvärme kWh (Total)</option>
+                        <option value="fjv_heating">Fjärrvärme kWh (Heating)</option>
+                        <option value="fjv_tapwater">Fjärrvärme kWh (Tap Water)</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Preview Import</button>
+            </form>
+        </div>
+        {% endif %}
 
         <!-- Change History Card -->
         <div class="card full-width">

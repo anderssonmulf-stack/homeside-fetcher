@@ -37,6 +37,18 @@ class InfluxReader:
             print(f"Failed to connect to InfluxDB: {e}")
             self.client = None
 
+    def _ensure_connection(self):
+        """Ensure we have a valid connection, reconnect if needed"""
+        if self.client is None:
+            self._connect()
+        elif self.client:
+            try:
+                health = self.client.health()
+                if health.status != "pass":
+                    self._connect()
+            except Exception:
+                self._connect()
+
     def get_latest_heating_data(self, house_id: str) -> Optional[Dict]:
         """
         Get the most recent heating system data for a house.
@@ -175,6 +187,285 @@ class InfluxReader:
         except Exception as e:
             print(f"Failed to query forecast: {e}")
             return None
+
+    def get_data_availability(self, house_id: str, days: int = 30) -> Dict:
+        """
+        Get data availability per day for each measurement type.
+        Returns dict with measurement info and daily counts for Plotly chart.
+
+        Structure:
+        {
+            'categories': [
+                {
+                    'name': 'Heating Data',
+                    'measurement': 'heating_system',
+                    'type': 'measured',  # or 'predicted'
+                    'data': [{'date': '2026-01-01', 'count': 96}, ...]
+                },
+                ...
+            ],
+            'date_range': {'start': '2026-01-01', 'end': '2026-01-31'}
+        }
+        """
+        if not self.client:
+            return {'categories': [], 'date_range': {}}
+
+        # Define measurements to query
+        measurements = [
+            ('heating_system', 'Heating Data', 'measured'),
+            ('weather_observation', 'Weather Obs', 'measured'),
+            ('weather_forecast', 'Weather Forecast', 'predicted'),
+            ('temperature_forecast', 'Temp Predictions', 'predicted'),
+            ('heating_control', 'ML Control', 'measured'),
+            ('heat_curve_adjustment', 'Curve Adjustments', 'measured'),
+            ('energy_consumption', 'Energy Data', 'measured'),
+        ]
+
+        categories = []
+        query_api = self.client.query_api()
+
+        for measurement, display_name, data_type in measurements:
+            try:
+                # Query daily counts for this measurement
+                query = f'''
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -{days}d)
+                    |> filter(fn: (r) => r["_measurement"] == "{measurement}")
+                    |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                    |> aggregateWindow(every: 1d, fn: count, createEmpty: true)
+                    |> yield(name: "count")
+                '''
+
+                tables = query_api.query(query, org=self.org)
+
+                # Collect daily counts
+                daily_data = {}
+                for table in tables:
+                    for record in table.records:
+                        # Get date in YYYY-MM-DD format
+                        timestamp = record.get_time()
+                        if timestamp:
+                            date_str = timestamp.strftime('%Y-%m-%d')
+                            count = record.get_value() or 0
+                            # Sum counts across fields for the same day
+                            if date_str in daily_data:
+                                daily_data[date_str] += count
+                            else:
+                                daily_data[date_str] = count
+
+                # Convert to sorted list
+                data_list = [
+                    {'date': date, 'count': count}
+                    for date, count in sorted(daily_data.items())
+                ]
+
+                # Only include if there's any data
+                if any(d['count'] > 0 for d in data_list):
+                    categories.append({
+                        'name': display_name,
+                        'measurement': measurement,
+                        'type': data_type,
+                        'data': data_list
+                    })
+
+            except Exception as e:
+                print(f"Failed to query {measurement}: {e}")
+                continue
+
+        # Calculate date range
+        all_dates = []
+        for cat in categories:
+            for d in cat['data']:
+                all_dates.append(d['date'])
+
+        date_range = {}
+        if all_dates:
+            date_range = {
+                'start': min(all_dates),
+                'end': max(all_dates)
+            }
+
+        return {
+            'categories': categories,
+            'date_range': date_range
+        }
+
+    def get_cloud_cover_history(self, house_id: str, hours: int = 168) -> dict:
+        """
+        Get cloud cover data from weather_forecast measurement.
+        Returns dict mapping timestamp (rounded to hour) to cloud cover value (0-8 octas).
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {}
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "weather_forecast")
+                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["_field"] == "avg_cloud_cover")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            cloud_data = {}
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    value = record.get_value()
+                    if timestamp and value is not None:
+                        # Round to nearest hour for matching with weather obs
+                        hour_key = timestamp.replace(minute=0, second=0, microsecond=0)
+                        cloud_data[hour_key.isoformat()] = value
+
+            return cloud_data
+
+        except Exception as e:
+            print(f"Failed to query cloud cover: {e}")
+            return {}
+
+    def get_weather_history(self, house_id: str, hours: int = 168) -> list:
+        """
+        Get historical weather data for effective temperature calculation.
+
+        Args:
+            house_id: House identifier
+            hours: Hours of history to fetch (default 168 = 7 days)
+
+        Returns:
+            List of dicts with timestamp, temperature, wind_speed, humidity, cloud_cover
+        """
+        self._ensure_connection()
+        if not self.client:
+            return []
+
+        try:
+            query_api = self.client.query_api()
+
+            # Get cloud cover data first (from weather_forecast)
+            cloud_data = self.get_cloud_cover_history(house_id, hours)
+
+            # Query weather observations
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "weather_observation")
+                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            results = []
+            last_cloud_cover = 4.0  # Default: partly cloudy
+
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        # Convert to Swedish timezone for display
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        # Find cloud cover for this hour
+                        hour_key = timestamp.replace(minute=0, second=0, microsecond=0).isoformat()
+                        cloud_cover = cloud_data.get(hour_key, last_cloud_cover)
+                        if hour_key in cloud_data:
+                            last_cloud_cover = cloud_cover
+
+                        results.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_swedish': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'temperature': record.values.get('temperature'),
+                            'wind_speed': record.values.get('wind_speed', 0),
+                            'humidity': record.values.get('humidity', 50),
+                            'cloud_cover': cloud_cover,
+                        })
+
+            return results
+
+        except Exception as e:
+            print(f"Failed to query weather history: {e}")
+            return []
+
+    def get_heating_and_weather_history(self, house_id: str, hours: int = 168) -> dict:
+        """
+        Get combined heating system and weather data for analysis.
+
+        Returns dict with 'heating' and 'weather' lists, plus 'location' for solar calc.
+        """
+        if not self.client:
+            return {'heating': [], 'weather': [], 'location': None}
+
+        try:
+            query_api = self.client.query_api()
+
+            # Get heating data (includes outdoor temp from HomeSide sensor)
+            heating_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "heating_system")
+                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["_field"] == "outdoor_temperature" or
+                                     r["_field"] == "room_temperature" or
+                                     r["_field"] == "supply_temp")
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            heating_tables = query_api.query(heating_query, org=self.org)
+
+            heating_data = []
+            for table in heating_tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        heating_data.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_swedish': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'outdoor_temperature': record.values.get('outdoor_temperature'),
+                            'room_temperature': record.values.get('room_temperature'),
+                            'supply_temp': record.values.get('supply_temp'),
+                        })
+
+            # Get weather observations (SMHI data with wind, humidity)
+            weather_data = self.get_weather_history(house_id, hours)
+
+            # Try to get location from weather forecast tags
+            location = None
+            try:
+                loc_query = f'''
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -1h)
+                    |> filter(fn: (r) => r["_measurement"] == "weather_forecast")
+                    |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                    |> last()
+                    |> keep(columns: ["latitude", "longitude"])
+                '''
+                # Location might be stored elsewhere - fallback to profile
+            except Exception:
+                pass
+
+            return {
+                'heating': heating_data,
+                'weather': weather_data,
+                'location': location
+            }
+
+        except Exception as e:
+            print(f"Failed to query heating/weather history: {e}")
+            return {'heating': [], 'weather': [], 'location': None}
 
     def close(self):
         """Close the connection"""

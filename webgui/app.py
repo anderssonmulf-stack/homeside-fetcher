@@ -377,6 +377,234 @@ def house_dashboard(customer_id):
     )
 
 
+@app.route('/house/<house_id>/graphs')
+@require_login
+def house_graphs(house_id):
+    """Display data availability and graphs for a house."""
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        flash('Access denied.', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Get house info from profile
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    try:
+        profile = CustomerProfile.load(house_id, profiles_dir)
+        friendly_name = profile.friendly_name or house_id
+    except FileNotFoundError:
+        friendly_name = house_id
+
+    # Get data availability
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    availability = influx.get_data_availability(house_id, days=30)
+
+    # Build Plotly chart data - using heatmap for data availability
+    import plotly.graph_objects as go
+    import json
+
+    fig = go.Figure()
+
+    if availability['categories']:
+        # Collect all unique dates
+        all_dates = set()
+        for cat in availability['categories']:
+            for d in cat['data']:
+                all_dates.add(d['date'])
+        all_dates = sorted(all_dates)
+
+        # Build heatmap data matrix
+        category_names = [c['name'] for c in availability['categories']]
+        category_types = [c['type'] for c in availability['categories']]
+
+        # Create z-values matrix (categories x dates)
+        z_values = []
+        for cat in availability['categories']:
+            date_to_count = {d['date']: d['count'] for d in cat['data']}
+            row = [date_to_count.get(date, 0) for date in all_dates]
+            z_values.append(row)
+
+        # Custom colorscale: white (0) to blue (measured)
+        # We'll use annotations to show predicted vs measured distinction
+        fig.add_trace(go.Heatmap(
+            z=z_values,
+            x=all_dates,
+            y=category_names,
+            colorscale=[
+                [0, '#f8f9fa'],      # No data - light gray
+                [0.01, '#e3f2fd'],   # Very few points - very light blue
+                [0.25, '#90caf9'],   # Some data - light blue
+                [0.5, '#42a5f5'],    # Good coverage - medium blue
+                [1, '#1565c0']       # Full coverage - dark blue
+            ],
+            showscale=True,
+            colorbar=dict(
+                title=dict(text='Data points', side='right')
+            ),
+            hovertemplate='%{x}<br>%{y}: %{z} points<extra></extra>'
+        ))
+
+        # Add markers for predicted data types (dotted border effect via annotations)
+        for i, cat_type in enumerate(category_types):
+            if cat_type == 'predicted':
+                # Add a subtle indicator that this is predicted data
+                fig.add_annotation(
+                    x=-0.02,
+                    y=category_names[i],
+                    xref='paper',
+                    yref='y',
+                    text='*',
+                    showarrow=False,
+                    font=dict(size=14, color='#9b59b6')
+                )
+
+    # Update layout
+    fig.update_layout(
+        title=None,
+        xaxis=dict(
+            title='Date',
+            showgrid=True,
+            gridcolor='rgba(0,0,0,0.1)',
+            tickangle=-45
+        ),
+        yaxis=dict(
+            title=None,
+            autorange='reversed'  # First category at top
+        ),
+        height=max(300, len(availability['categories']) * 40 + 150),
+        margin=dict(l=130, r=80, t=20, b=80),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='#ffffff',
+        font=dict(family='system-ui, -apple-system, sans-serif'),
+        dragmode='pan'
+    )
+
+    # Add config for interactivity
+    graph_config = {
+        'displayModeBar': True,
+        'modeBarButtonsToRemove': ['lasso2d', 'select2d', 'autoScale2d'],
+        'displaylogo': False,
+        'scrollZoom': True
+    }
+
+    graph_json = json.dumps(fig.to_dict())
+    config_json = json.dumps(graph_config)
+
+    return render_template('house_graphs.html',
+        house_id=house_id,
+        friendly_name=friendly_name,
+        graph_json=graph_json,
+        config_json=config_json,
+        availability=availability
+    )
+
+
+@app.route('/api/house/<house_id>/data-availability')
+@require_login
+def api_data_availability(house_id):
+    """API endpoint for data availability chart (for dynamic updates)."""
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)  # Clamp between 7 and 365
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    availability = influx.get_data_availability(house_id, days=days)
+
+    return jsonify(availability)
+
+
+@app.route('/api/house/<house_id>/effective-temperature')
+@require_login
+def api_effective_temperature(house_id):
+    """
+    API endpoint for effective temperature chart.
+    Returns actual temp, effective temp, and effect breakdown.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)  # Default 7 days
+    hours = min(max(hours, 24), 720)  # Clamp between 1 and 30 days
+
+    # Get house location from profile
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    try:
+        profile = CustomerProfile.load(house_id, profiles_dir)
+        latitude = getattr(profile, 'latitude', None)
+        longitude = getattr(profile, 'longitude', None)
+    except FileNotFoundError:
+        latitude = None
+        longitude = None
+
+    # Fallback to environment or default (Linköping area)
+    if latitude is None:
+        latitude = float(os.environ.get('LATITUDE', '58.41'))
+    if longitude is None:
+        longitude = float(os.environ.get('LONGITUDE', '15.62'))
+
+    # Get weather history
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    weather_data = influx.get_weather_history(house_id, hours=hours)
+
+    if not weather_data:
+        return jsonify({'error': 'No weather data available', 'data': []})
+
+    # Calculate effective temperatures
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from energy_models import get_weather_model
+    from energy_models.weather_energy_model import WeatherConditions
+    from datetime import datetime
+
+    model = get_weather_model('simple')
+
+    results = []
+    for w in weather_data:
+        if w.get('temperature') is None:
+            continue
+
+        try:
+            timestamp = datetime.fromisoformat(w['timestamp'].replace('Z', '+00:00'))
+
+            conditions = WeatherConditions(
+                timestamp=timestamp,
+                temperature=w['temperature'],
+                wind_speed=w.get('wind_speed') or 0,
+                humidity=w.get('humidity') or 50,
+                cloud_cover=w.get('cloud_cover', 4.0),  # From weather_forecast data
+                latitude=latitude,
+                longitude=longitude
+            )
+
+            eff = model.effective_temperature(conditions)
+
+            results.append({
+                'timestamp': w['timestamp'],
+                'timestamp_display': w['timestamp_swedish'],
+                'actual_temp': round(w['temperature'], 1),
+                'effective_temp': round(eff.effective_temp, 1),
+                'wind_effect': round(eff.wind_effect, 2),
+                'humidity_effect': round(eff.humidity_effect, 2),
+                'solar_effect': round(eff.solar_effect, 2),
+                'sun_elevation': round(eff.sun_elevation, 1) if eff.sun_elevation else None,
+                'wind_speed': w.get('wind_speed'),
+                'humidity': w.get('humidity'),
+                'cloud_cover': w.get('cloud_cover'),
+            })
+        except Exception as e:
+            continue
+
+    return jsonify({
+        'data': results,
+        'model_version': model.model_version,
+        'location': {'latitude': latitude, 'longitude': longitude}
+    })
+
+
 @app.route('/house/<house_id>/settings', methods=['POST'])
 @require_login
 def update_house_settings(house_id):
@@ -447,6 +675,171 @@ def update_house_settings(house_id):
         flash('Settings updated successfully.', 'success')
     else:
         flash('No changes made.', 'info')
+
+    return redirect(url_for('house_detail', house_id=house_id))
+
+
+# =============================================================================
+# Energy Import Routes
+# =============================================================================
+
+ENERGY_TYPE_LABELS = {
+    'fjv_total': 'Fjärrvärme kWh (Total)',
+    'fjv_heating': 'Fjärrvärme kWh (Heating)',
+    'fjv_tapwater': 'Fjärrvärme kWh (Tap Water)',
+}
+
+
+@app.route('/house/<house_id>/energy/upload', methods=['POST'])
+@require_login
+def upload_energy_data(house_id):
+    """Handle energy CSV upload and show dry run preview"""
+    if not user_manager.can_edit_house(session.get('user_id'), house_id):
+        flash('You do not have permission to import data for this house.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    # Get profile for friendly name
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    try:
+        profile = CustomerProfile.load(house_id, profiles_dir)
+        house_name = profile.friendly_name or house_id
+    except FileNotFoundError:
+        flash('House profile not found.', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Validate file upload
+    if 'energy_file' not in request.files:
+        flash('No file selected.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    file = request.files['energy_file']
+    if file.filename == '':
+        flash('No file selected.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    # Check file extension
+    if not file.filename.lower().endswith('.csv'):
+        flash('Only CSV files are supported.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    # Check file size (max 1MB)
+    file_content = file.read()
+    if len(file_content) > 1024 * 1024:
+        flash('File too large. Maximum size is 1MB.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    # Get energy type
+    energy_type = request.form.get('energy_type', 'fjv_total')
+    if energy_type not in ENERGY_TYPE_LABELS:
+        energy_type = 'fjv_total'
+
+    # Run dry run
+    from energy_import_service import get_energy_importer
+    importer = get_energy_importer()
+    result = importer.dry_run(house_id, file_content, energy_type)
+
+    # Store parsed data in a temp file (session cookie has 4KB limit)
+    if result['success'] and result['new_rows'] > 0:
+        import json
+        import uuid
+        import tempfile
+
+        # Create unique file for this import
+        import_id = str(uuid.uuid4())
+        temp_dir = os.path.join(tempfile.gettempdir(), 'svenskeb_imports')
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_file = os.path.join(temp_dir, f'{import_id}.json')
+
+        # Save parsed data to temp file
+        import_data = {
+            'house_id': house_id,
+            'energy_type': energy_type,
+            'data': [
+                {
+                    'timestamp': row['timestamp'].isoformat(),
+                    'value': row['value'],
+                    'energy_type': row['energy_type']
+                }
+                for row in result['parsed_data']
+            ],
+            'new_kwh': result['new_kwh']
+        }
+        with open(temp_file, 'w') as f:
+            json.dump(import_data, f)
+
+        # Store only the import ID in session
+        session['pending_import_id'] = import_id
+
+    return render_template('energy_import.html',
+        house_id=house_id,
+        house_name=house_name,
+        energy_type=energy_type,
+        energy_type_label=ENERGY_TYPE_LABELS.get(energy_type, energy_type),
+        result=result
+    )
+
+
+@app.route('/house/<house_id>/energy/confirm', methods=['POST'])
+@require_login
+def confirm_energy_import(house_id):
+    """Confirm and execute the energy data import"""
+    if not user_manager.can_edit_house(session.get('user_id'), house_id):
+        flash('You do not have permission to import data for this house.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    # Retrieve import ID from session
+    import_id = session.pop('pending_import_id', None)
+    if not import_id:
+        flash('Import session expired. Please try again.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    # Load parsed data from temp file
+    import json
+    import tempfile
+    temp_dir = os.path.join(tempfile.gettempdir(), 'svenskeb_imports')
+    temp_file = os.path.join(temp_dir, f'{import_id}.json')
+
+    try:
+        with open(temp_file, 'r') as f:
+            pending = json.load(f)
+        # Clean up temp file
+        os.remove(temp_file)
+    except FileNotFoundError:
+        flash('Import session expired. Please try again.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    # Verify house_id matches
+    if pending['house_id'] != house_id:
+        flash('Import session mismatch. Please try again.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    # Convert ISO strings back to datetime objects
+    from datetime import datetime
+    parsed_data = []
+    for row in pending['data']:
+        parsed_data.append({
+            'timestamp': datetime.fromisoformat(row['timestamp']),
+            'value': row['value'],
+            'energy_type': row['energy_type']
+        })
+
+    # Execute import
+    from energy_import_service import get_energy_importer
+    importer = get_energy_importer()
+    result = importer.import_data(house_id, parsed_data)
+
+    if result['success']:
+        # Log the import
+        audit_logger.log('EnergyDataImported', session.get('user_id'), {
+            'house_id': house_id,
+            'energy_type': pending['energy_type'],
+            'rows_imported': result['rows_written'],
+            'total_kwh': pending['new_kwh']
+        })
+        flash(f"Successfully imported {result['rows_written']} rows ({pending['new_kwh']:.1f} kWh).", 'success')
+    else:
+        flash(f"Import failed: {result['error']}", 'error')
 
     return redirect(url_for('house_detail', house_id=house_id))
 

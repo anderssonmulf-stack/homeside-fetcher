@@ -2,6 +2,7 @@
   "schema_version": 1,
   "customer_id": "HEM_FJV_Villa_34",
   "friendly_name": "Glance",
+  "meter_ids": [],
   "building": {
     "description": "",
     "thermal_response": "medium"
@@ -15,12 +16,37 @@
     "max_supply_temp": 55
   },
   "learned": {
-    "thermal_coefficient": null,
+    "thermal_coefficient": 0.031115921529067805,
     "thermal_coefficient_confidence": 0.0,
-    "hourly_bias": {},
+    "hourly_bias": {
+      "19": 0.442,
+      "20": 0.522,
+      "21": 0.44,
+      "22": 0.56,
+      "23": 0.44,
+      "00": 0.44,
+      "01": 0.44,
+      "02": 0.44,
+      "03": 0.44,
+      "04": 0.388,
+      "05": 0.404,
+      "06": 0.441,
+      "07": 0.418,
+      "08": 0.358,
+      "09": 0.38,
+      "10": 0.433,
+      "11": 0.502,
+      "12": 0.412,
+      "13": 0.278,
+      "14": 0.32,
+      "15": 0.44,
+      "16": 0.4,
+      "17": 0.368,
+      "18": 0.368
+    },
     "samples_since_last_update": 0,
-    "total_samples": 0,
-    "next_update_at_samples": 24,
-    "updated_at": null
+    "total_samples": 168,
+    "next_update_at_samples": 96,
+    "updated_at": "2026-01-31T13:00:41.292032+00:00"
   }
 }

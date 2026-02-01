@@ -242,7 +242,7 @@ backup_codebase() {
 
     local files_backed_up=0
 
-    # Backup Python files
+    # Backup Python files in root
     for py_file in "${PROJECT_DIR}"/*.py; do
         if [ -f "$py_file" ]; then
             cp "$py_file" "$code_dir/"
@@ -250,7 +250,7 @@ backup_codebase() {
         fi
     done
 
-    # Backup shell scripts
+    # Backup shell scripts in root
     for sh_file in "${PROJECT_DIR}"/*.sh; do
         if [ -f "$sh_file" ]; then
             cp "$sh_file" "$code_dir/"
@@ -258,13 +258,62 @@ backup_codebase() {
         fi
     done
 
-    # Backup JSON files
+    # Backup JSON files in root
     for json_file in "${PROJECT_DIR}"/*.json; do
         if [ -f "$json_file" ]; then
             cp "$json_file" "$code_dir/"
             files_backed_up=$((files_backed_up + 1))
         fi
     done
+
+    # Backup energy_models package
+    if [ -d "${PROJECT_DIR}/energy_models" ]; then
+        mkdir -p "$code_dir/energy_models"
+        cp -r "${PROJECT_DIR}/energy_models/"*.py "$code_dir/energy_models/" 2>/dev/null || true
+        echo -e "   ${GREEN}✅ energy_models/${NC}"
+        files_backed_up=$((files_backed_up + 1))
+    fi
+
+    # Backup webgui (excluding venv)
+    if [ -d "${PROJECT_DIR}/webgui" ]; then
+        mkdir -p "$code_dir/webgui"
+        cp "${PROJECT_DIR}/webgui/"*.py "$code_dir/webgui/" 2>/dev/null || true
+        cp "${PROJECT_DIR}/webgui/"*.txt "$code_dir/webgui/" 2>/dev/null || true
+        cp "${PROJECT_DIR}/webgui/"*.service "$code_dir/webgui/" 2>/dev/null || true
+        cp -r "${PROJECT_DIR}/webgui/templates" "$code_dir/webgui/" 2>/dev/null || true
+        cp -r "${PROJECT_DIR}/webgui/static" "$code_dir/webgui/" 2>/dev/null || true
+        echo -e "   ${GREEN}✅ webgui/${NC}"
+        files_backed_up=$((files_backed_up + 1))
+    fi
+
+    # Backup profiles
+    if [ -d "${PROJECT_DIR}/profiles" ]; then
+        mkdir -p "$code_dir/profiles"
+        cp "${PROJECT_DIR}/profiles/"*.json "$code_dir/profiles/" 2>/dev/null || true
+        echo -e "   ${GREEN}✅ profiles/${NC}"
+        files_backed_up=$((files_backed_up + 1))
+    fi
+
+    # Backup grafana dashboards
+    if [ -d "${PROJECT_DIR}/grafana" ]; then
+        cp -r "${PROJECT_DIR}/grafana" "$code_dir/" 2>/dev/null || true
+        echo -e "   ${GREEN}✅ grafana/${NC}"
+        files_backed_up=$((files_backed_up + 1))
+    fi
+
+    # Backup nginx configs
+    if [ -d "${PROJECT_DIR}/nginx" ]; then
+        cp -r "${PROJECT_DIR}/nginx" "$code_dir/" 2>/dev/null || true
+        echo -e "   ${GREEN}✅ nginx/${NC}"
+        files_backed_up=$((files_backed_up + 1))
+    fi
+
+    # Backup docs
+    if [ -d "${PROJECT_DIR}/docs" ]; then
+        cp -r "${PROJECT_DIR}/docs" "$code_dir/" 2>/dev/null || true
+        echo -e "   ${GREEN}✅ docs/${NC}"
+        files_backed_up=$((files_backed_up + 1))
+    fi
 
     # Remove __pycache__
     find "$code_dir" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
@@ -274,7 +323,7 @@ backup_codebase() {
     local size_bytes=$(du -sb "$code_dir" 2>/dev/null | cut -f1)
     local total_size_mb=$(echo "scale=2; $size_bytes / 1024 / 1024" | bc)
 
-    echo -e "   ${GREEN}✅ Backed up ${files_backed_up} files: ${total_size_mb} MB${NC}"
+    echo -e "   ${GREEN}✅ Backed up ${files_backed_up} items: ${total_size_mb} MB${NC}"
 }
 
 create_restore_script() {
