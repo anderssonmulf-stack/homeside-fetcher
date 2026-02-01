@@ -1059,6 +1059,92 @@ class InfluxReader:
             print(f"Failed to query imported energy data: {e}")
             return []
 
+    def get_energy_separation(self, house_id: str, days: int = 30) -> dict:
+        """
+        Get energy separation data (heating vs DHW) from calibration.
+
+        Args:
+            house_id: House identifier
+            days: Number of days to fetch
+
+        Returns dict with:
+            - data: list of daily records with actual, heating, dhw energy
+            - totals: summary totals
+            - k_value: calibrated heat loss coefficient
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'data': [], 'totals': {}, 'k_value': None}
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "energy_separated")
+                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            results = []
+            totals = {'actual': 0, 'heating': 0, 'dhw': 0}
+            k_value = None
+
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        actual = record.values.get('actual_energy_kwh') or 0
+                        heating = record.values.get('heating_energy_kwh') or 0
+                        dhw = record.values.get('dhw_energy_kwh') or 0
+                        k = record.values.get('k_value')
+
+                        if k is not None:
+                            k_value = k
+
+                        results.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_display': swedish_time.strftime('%Y-%m-%d'),
+                            'actual_kwh': round(actual, 1),
+                            'heating_kwh': round(heating, 1),
+                            'dhw_kwh': round(dhw, 1),
+                            'avg_temp_diff': record.values.get('avg_temp_difference'),
+                            'dhw_events': record.values.get('dhw_events'),
+                        })
+
+                        totals['actual'] += actual
+                        totals['heating'] += heating
+                        totals['dhw'] += dhw
+
+            totals = {k: round(v, 1) for k, v in totals.items()}
+
+            # Calculate percentages
+            if totals['actual'] > 0:
+                totals['heating_pct'] = round(100 * totals['heating'] / totals['actual'], 1)
+                totals['dhw_pct'] = round(100 * totals['dhw'] / totals['actual'], 1)
+            else:
+                totals['heating_pct'] = 0
+                totals['dhw_pct'] = 0
+
+            return {
+                'data': results,
+                'totals': totals,
+                'k_value': round(k_value, 4) if k_value else None,
+                'days': days
+            }
+
+        except Exception as e:
+            print(f"Failed to query energy separation data: {e}")
+            return {'data': [], 'totals': {}, 'k_value': None}
+
     def close(self):
         """Close the connection"""
         if self.client:

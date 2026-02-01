@@ -50,5 +50,14 @@
     "total_samples": 264,
     "next_update_at_samples": 96,
     "updated_at": "2026-02-01T13:00:36.506207+00:00"
+  },
+  "energy_separation": {
+    "enabled": true,
+    "method": "k_calibration",
+    "heat_loss_k": 0.0685,
+    "k_percentile": 15,
+    "calibration_date": "2026-02-01",
+    "calibration_days": 12,
+    "dhw_percentage": 16.1
   }
 }

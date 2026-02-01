@@ -49,9 +49,21 @@ class DailyEnergyAnalysis:
     degree_hours: float  # ΔT × hours with data
     estimated_heating_kwh: float  # Using calibrated k
     excess_energy_kwh: float  # actual - estimated (likely DHW)
-    dhw_events: int  # Hot water temp peaks
+    dhw_events: int  # Actual DHW usage events (transitions to hot)
+    dhw_minutes: int  # Minutes with elevated hot water temp
     data_points: int
+    data_coverage: float  # Fraction of expected data points (0.0 to 1.0)
     k_implied: float  # k that would explain this day's consumption
+
+# Minimum data coverage to include day in calibration
+MIN_DATA_COVERAGE = 0.8  # 80% = ~77 data points out of 96 expected
+EXPECTED_POINTS_PER_DAY = 96  # 24 hours × 4 samples/hour (15-min intervals)
+
+# K calibration percentiles
+# Lower percentile = find days with minimal DHW (heating-only baseline)
+# Higher percentile = accounts for some DHW in "typical" day
+K_PERCENTILE_HEATING_ONLY = 15  # 15th percentile for heating-only estimate (minimal DHW days)
+K_PERCENTILE_TYPICAL = 50  # 50th percentile (median) for typical day
 
 
 class HeatingEnergyCalibrator:
@@ -83,11 +95,12 @@ class HeatingEnergyCalibrator:
 
     def fetch_daily_energy(self, house_id: str, start_date: str = "2025-12-01") -> Dict[str, float]:
         """Fetch daily energy consumption from energy_consumption measurement."""
+        # Use regex anchors for exact match to avoid matching multiple houses
         query = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] =~ /^.*{house_id}$/)
             |> filter(fn: (r) => r["_field"] == "value")
             |> aggregateWindow(every: 1d, fn: sum, createEmpty: false)
             |> sort(columns: ["_time"])
@@ -101,16 +114,16 @@ class HeatingEnergyCalibrator:
                 date = record.get_time().strftime('%Y-%m-%d')
                 daily_energy[date] = record.get_value()
 
-        print(f"Fetched {len(daily_energy)} days of energy data")
         return daily_energy
 
     def fetch_heating_data(self, house_id: str, start_date: str = "2025-12-01") -> List[Dict]:
         """Fetch heating system data."""
+        # Use regex anchors for exact match to avoid matching multiple houses
         query = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "heating_system")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] =~ /^.*{house_id}$/)
             |> filter(fn: (r) =>
                 r["_field"] == "room_temperature" or
                 r["_field"] == "outdoor_temperature" or
@@ -122,26 +135,41 @@ class HeatingEnergyCalibrator:
 
         tables = self.query_api.query(query, org=self.influx_org)
 
+        # Deduplicate by rounded timestamp (to nearest minute)
+        # Some data has 1-second duplicate entries
+        seen_times = set()
         results = []
+        duplicates = 0
+
         for table in tables:
             for record in table.records:
+                ts = record.get_time()
+                # Round to nearest minute for deduplication
+                rounded_ts = ts.replace(second=0, microsecond=0)
+                ts_key = rounded_ts.isoformat()
+
+                if ts_key in seen_times:
+                    duplicates += 1
+                    continue
+
+                seen_times.add(ts_key)
                 results.append({
-                    'timestamp': record.get_time(),
+                    'timestamp': ts,
                     'room_temperature': record.values.get('room_temperature'),
                     'outdoor_temperature': record.values.get('outdoor_temperature'),
                     'hot_water_temp': record.values.get('hot_water_temp'),
                 })
 
-        print(f"Fetched {len(results)} heating data points")
-        return results
+        return results, duplicates
 
     def fetch_weather_data(self, house_id: str, start_date: str = "2025-12-01") -> Dict[str, Dict]:
         """Fetch weather observation data."""
+        # Use regex anchors for exact match to avoid matching multiple houses
         query = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "weather_observation")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] =~ /^.*{house_id}$/)
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
         '''
@@ -186,7 +214,10 @@ class HeatingEnergyCalibrator:
         self,
         house_id: str,
         start_date: str = "2025-12-01",
-        calibrated_k: float = None
+        calibrated_k: float = None,
+        k_percentile: int = K_PERCENTILE_HEATING_ONLY,
+        debug: bool = False,
+        quiet: bool = False
     ) -> Tuple[List[DailyEnergyAnalysis], float]:
         """
         Analyze energy consumption and correlate with temperatures.
@@ -196,15 +227,21 @@ class HeatingEnergyCalibrator:
         """
         # Fetch all data
         daily_energy = self.fetch_daily_energy(house_id, start_date)
-        heating_data = self.fetch_heating_data(house_id, start_date)
+        heating_data, duplicates_removed = self.fetch_heating_data(house_id, start_date)
         weather_data = self.fetch_weather_data(house_id, start_date)
 
+        if not quiet:
+            print(f"Fetched {len(daily_energy)} days of energy data")
+            print(f"Fetched {len(heating_data)} heating data points (removed {duplicates_removed} duplicates)")
+
         if not daily_energy:
-            print("No energy data available")
+            if not quiet:
+                print("No energy data available")
             return [], 0.0
 
         if not heating_data:
-            print("No heating data available")
+            if not quiet:
+                print("No heating data available")
             return [], 0.0
 
         # Calculate hot water baseline
@@ -215,7 +252,8 @@ class HeatingEnergyCalibrator:
         else:
             hw_baseline = 25.0
 
-        print(f"Hot water baseline: {hw_baseline:.1f}°C")
+        if not quiet:
+            print(f"Hot water baseline: {hw_baseline:.1f}°C")
 
         # Group heating data by day
         daily_heating = {}
@@ -224,6 +262,14 @@ class HeatingEnergyCalibrator:
             if date not in daily_heating:
                 daily_heating[date] = []
             daily_heating[date].append(d)
+
+        if debug and not quiet:
+            print("\nDEBUG: Data points per day:")
+            for date in sorted(daily_heating.keys()):
+                count = len(daily_heating[date])
+                coverage = count / EXPECTED_POINTS_PER_DAY * 100
+                flag = " ← OVER!" if count > EXPECTED_POINTS_PER_DAY else ""
+                print(f"  {date}: {count} points ({coverage:.0f}%){flag}")
 
         # Calculate daily analyses
         analyses = []
@@ -241,6 +287,11 @@ class HeatingEnergyCalibrator:
             outdoor_temps = []
             effective_temps = []
             dhw_events = 0
+
+            # Track DHW state for transition detection
+            dhw_threshold = hw_baseline + 5.0
+            prev_dhw_active = False
+            dhw_minutes = 0
 
             for d in day_data:
                 indoor = d.get('room_temperature')
@@ -266,9 +317,15 @@ class HeatingEnergyCalibrator:
                 )
                 effective_temps.append(eff_temp)
 
-                # Count DHW events
-                if hw_temp and hw_temp > (hw_baseline + 5.0):
-                    dhw_events += 1
+                # Count DHW events (transitions from cold to hot)
+                # and track minutes with elevated hot water temp
+                if hw_temp and hw_temp > dhw_threshold:
+                    dhw_minutes += 15  # Each sample = 15 minutes
+                    if not prev_dhw_active:
+                        dhw_events += 1  # New DHW usage event started
+                        prev_dhw_active = True
+                else:
+                    prev_dhw_active = False
 
             if not indoor_temps:
                 continue
@@ -278,6 +335,9 @@ class HeatingEnergyCalibrator:
             avg_effective = statistics.mean(effective_temps)
             avg_diff = avg_indoor - avg_effective
 
+            # Calculate data coverage (what fraction of expected points we have)
+            data_coverage = len(day_data) / EXPECTED_POINTS_PER_DAY
+
             # Degree-hours (ΔT × hours of data)
             hours_of_data = len(day_data) * 0.25  # 15-min intervals
             degree_hours = avg_diff * hours_of_data
@@ -286,7 +346,9 @@ class HeatingEnergyCalibrator:
             # k = Energy / degree_hours
             if degree_hours > 0:
                 k_implied = actual_energy / degree_hours
-                k_values.append(k_implied)
+                # Only use days with sufficient data coverage for k calibration
+                if data_coverage >= MIN_DATA_COVERAGE:
+                    k_values.append(k_implied)
             else:
                 k_implied = 0
 
@@ -301,14 +363,23 @@ class HeatingEnergyCalibrator:
                 estimated_heating_kwh=0,  # Will be filled after k calibration
                 excess_energy_kwh=0,
                 dhw_events=dhw_events,
+                dhw_minutes=dhw_minutes,
                 data_points=len(day_data),
+                data_coverage=round(data_coverage, 2),
                 k_implied=round(k_implied, 4)
             ))
 
-        # Calibrate k using median of implied values (robust to outliers)
+        # Calibrate k using percentile of implied values
+        # Lower percentile (25th) approximates heating-only days
+        # Higher percentile (50th median) represents typical day including some DHW
         if k_values:
             if calibrated_k is None:
-                calibrated_k = statistics.median(k_values)
+                sorted_k = sorted(k_values)
+                percentile_idx = int(len(sorted_k) * k_percentile / 100)
+                calibrated_k = sorted_k[min(percentile_idx, len(sorted_k) - 1)]
+                if debug and not quiet:
+                    print(f"DEBUG: Using {k_percentile}th percentile, index {percentile_idx} of {len(sorted_k)}")
+                    print(f"DEBUG: k values (sorted): {[f'{k:.4f}' for k in sorted_k]}")
 
             # Update estimates with calibrated k
             for a in analyses:
@@ -317,15 +388,15 @@ class HeatingEnergyCalibrator:
 
         return analyses, calibrated_k
 
-    def print_results(self, analyses: List[DailyEnergyAnalysis], calibrated_k: float):
+    def print_results(self, analyses: List[DailyEnergyAnalysis], calibrated_k: float, k_percentile: int = K_PERCENTILE_HEATING_ONLY):
         """Print analysis results."""
         if not analyses:
             print("No analysis results")
             return
 
-        print("\n" + "=" * 100)
+        print("\n" + "=" * 120)
         print("HEATING ENERGY CALIBRATION RESULTS")
-        print("=" * 100)
+        print("=" * 120)
         print(f"Calibrated heat loss coefficient (k): {calibrated_k:.4f} kW/°C")
         print(f"Analysis period: {analyses[0].date} to {analyses[-1].date}")
         print(f"Days analyzed: {len(analyses)}")
@@ -339,37 +410,61 @@ class HeatingEnergyCalibrator:
         print(f"  Estimated heating:     {total_estimated:>8.1f} kWh")
         print(f"  Excess (likely DHW):   {total_excess:>8.1f} kWh ({100*total_excess/total_actual:.1f}%)")
 
-        print("\n" + "-" * 100)
-        print(f"{'Date':<12} {'Actual':>8} {'Est.Heat':>9} {'Excess':>8} {'ΔT':>6} {'Deg-Hr':>7} {'k_day':>7} {'DHW':>5} {'Indoor':>7} {'OutEff':>7}")
-        print("-" * 100)
+        # Count days used for calibration
+        days_used = sum(1 for a in analyses if a.data_coverage >= MIN_DATA_COVERAGE)
+        print(f"Days used for k calibration: {days_used} (>={MIN_DATA_COVERAGE*100:.0f}% data coverage)")
+
+        print("\n" + "-" * 120)
+        print(f"{'Date':<12} {'Actual':>8} {'Est.Heat':>9} {'Excess':>8} {'ΔT':>6} {'Deg-Hr':>7} {'k_day':>7} {'DHW':>4} {'DHW':>5} {'Cover':>6} {'Indoor':>7} {'OutEff':>7} {'Used':>5}")
+        print(f"{'':<12} {'kWh':>8} {'kWh':>9} {'kWh':>8} {'°C':>6} {'':>7} {'kW/°C':>7} {'evts':>4} {'min':>5} {'%':>6} {'°C':>7} {'°C':>7} {'':<5}")
+        print("-" * 120)
 
         for a in analyses:
             excess_pct = f"{a.excess_energy_kwh:+.1f}"
+            used_marker = "✓" if a.data_coverage >= MIN_DATA_COVERAGE else ""
             print(f"{a.date:<12} {a.actual_energy_kwh:>8.1f} {a.estimated_heating_kwh:>9.1f} {excess_pct:>8} "
                   f"{a.avg_temp_difference:>6.1f} {a.degree_hours:>7.1f} {a.k_implied:>7.4f} "
-                  f"{a.dhw_events:>5} {a.avg_indoor_temp:>7.1f} {a.avg_effective_outdoor_temp:>7.1f}")
+                  f"{a.dhw_events:>4} {a.dhw_minutes:>5} {a.data_coverage*100:>5.0f}% "
+                  f"{a.avg_indoor_temp:>7.1f} {a.avg_effective_outdoor_temp:>7.1f} {used_marker:>5}")
 
-        # Summary statistics
-        k_values = [a.k_implied for a in analyses if a.k_implied > 0]
-        if k_values:
-            print("\n" + "-" * 100)
-            print("K-VALUE STATISTICS (per day):")
-            print(f"  Median:  {statistics.median(k_values):.4f} kW/°C")
-            print(f"  Mean:    {statistics.mean(k_values):.4f} kW/°C")
-            print(f"  Min:     {min(k_values):.4f} kW/°C")
-            print(f"  Max:     {max(k_values):.4f} kW/°C")
-            if len(k_values) > 1:
-                print(f"  StdDev:  {statistics.stdev(k_values):.4f} kW/°C")
+        # Summary statistics - only for days used in calibration
+        k_values_used = [a.k_implied for a in analyses if a.k_implied > 0 and a.data_coverage >= MIN_DATA_COVERAGE]
+        k_values_all = [a.k_implied for a in analyses if a.k_implied > 0]
+
+        if k_values_used:
+            sorted_k = sorted(k_values_used)
+            pct_idx = int(len(sorted_k) * k_percentile / 100)
+            k_at_pct = sorted_k[min(pct_idx, len(sorted_k) - 1)]
+            p25_idx = int(len(sorted_k) * 0.25)
+            p75_idx = int(len(sorted_k) * 0.75)
+            k_p25 = sorted_k[min(p25_idx, len(sorted_k) - 1)]
+            k_p75 = sorted_k[min(p75_idx, len(sorted_k) - 1)]
+
+            print("\n" + "-" * 120)
+            print(f"K-VALUE STATISTICS (days with >={MIN_DATA_COVERAGE*100:.0f}% coverage):")
+            print(f"  P{k_percentile}:    {k_at_pct:.4f} kW/°C  ← USED (heating-only baseline)")
+            print(f"  Median:  {statistics.median(k_values_used):.4f} kW/°C")
+            print(f"  P75:     {k_p75:.4f} kW/°C")
+            print(f"  Mean:    {statistics.mean(k_values_used):.4f} kW/°C")
+            print(f"  Min:     {min(k_values_used):.4f} kW/°C")
+            print(f"  Max:     {max(k_values_used):.4f} kW/°C")
+            if len(k_values_used) > 1:
+                print(f"  StdDev:  {statistics.stdev(k_values_used):.4f} kW/°C")
+
+        if len(k_values_all) > len(k_values_used):
+            print(f"\n  (Excluded {len(k_values_all) - len(k_values_used)} partial days from calibration)")
 
         # Interpretation
-        print("\n" + "=" * 100)
+        print("\n" + "=" * 120)
         print("INTERPRETATION:")
-        print("-" * 100)
+        print("-" * 120)
         print(f"• The calibrated k = {calibrated_k:.4f} kW/°C means:")
         print(f"  - For every 1°C difference (indoor - effective outdoor), the house needs {calibrated_k:.2f} kW")
         print(f"  - At ΔT = 25°C (typical winter), heating power ≈ {calibrated_k * 25:.1f} kW")
         print(f"\n• Days with high excess energy likely have more hot water usage")
         print(f"• Days with negative excess: k might be too high, or heating was reduced")
+        print(f"\n• DHW events = transitions from cold to hot water (actual usage events)")
+        print(f"• DHW minutes = total time hot water was elevated (may include multiple events)")
 
     def write_to_influx(self, house_id: str, analyses: List[DailyEnergyAnalysis], k: float) -> int:
         """Write separated energy values to InfluxDB."""
@@ -383,17 +478,19 @@ class HeatingEnergyCalibrator:
                 .tag("house_id", house_id) \
                 .tag("method", "k_calibration") \
                 .time(ts, WritePrecision.S) \
-                .field("actual_energy_kwh", a.actual_energy_kwh) \
-                .field("heating_energy_kwh", a.estimated_heating_kwh) \
-                .field("dhw_energy_kwh", max(0, a.excess_energy_kwh)) \
-                .field("excess_energy_kwh", a.excess_energy_kwh) \
-                .field("avg_temp_difference", a.avg_temp_difference) \
-                .field("degree_hours", a.degree_hours) \
-                .field("k_value", k) \
-                .field("k_implied", a.k_implied) \
-                .field("dhw_events", a.dhw_events) \
-                .field("avg_indoor_temp", a.avg_indoor_temp) \
-                .field("avg_effective_outdoor_temp", a.avg_effective_outdoor_temp)
+                .field("actual_energy_kwh", float(a.actual_energy_kwh)) \
+                .field("heating_energy_kwh", float(a.estimated_heating_kwh)) \
+                .field("dhw_energy_kwh", float(max(0, a.excess_energy_kwh))) \
+                .field("excess_energy_kwh", float(a.excess_energy_kwh)) \
+                .field("avg_temp_difference", float(a.avg_temp_difference)) \
+                .field("degree_hours", float(a.degree_hours)) \
+                .field("k_value", float(k)) \
+                .field("k_implied", float(a.k_implied)) \
+                .field("dhw_events", int(a.dhw_events)) \
+                .field("dhw_minutes", int(a.dhw_minutes)) \
+                .field("data_coverage", float(a.data_coverage)) \
+                .field("avg_indoor_temp", float(a.avg_indoor_temp)) \
+                .field("avg_effective_outdoor_temp", float(a.avg_effective_outdoor_temp))
 
             points.append(point)
 
@@ -413,9 +510,13 @@ def main():
     parser.add_argument('--house', type=str, default='HEM_FJV_Villa_149', help='House ID')
     parser.add_argument('--start', type=str, default='2025-12-01', help='Start date (YYYY-MM-DD)')
     parser.add_argument('--k', type=float, help='Override k value (otherwise calibrated from data)')
+    parser.add_argument('--percentile', type=int, default=15,
+                        help='Percentile for k calibration (default 15 = heating-only baseline)')
     parser.add_argument('--lat', type=float, default=58.41, help='Latitude')
     parser.add_argument('--lon', type=float, default=15.62, help='Longitude')
     parser.add_argument('--write', action='store_true', help='Write results to InfluxDB')
+    parser.add_argument('--debug', action='store_true', help='Show debug info about data points')
+    parser.add_argument('--compare', action='store_true', help='Compare different percentiles')
     args = parser.parse_args()
 
     # Get configuration
@@ -441,11 +542,41 @@ def main():
         analyses, calibrated_k = calibrator.analyze(
             house_id=args.house,
             start_date=args.start,
-            calibrated_k=args.k
+            calibrated_k=args.k,
+            k_percentile=args.percentile,
+            debug=args.debug
         )
 
         if analyses:
-            calibrator.print_results(analyses, calibrated_k)
+            calibrator.print_results(analyses, calibrated_k, args.percentile)
+
+            if args.compare:
+                print("\n" + "=" * 120)
+                print("PERCENTILE COMPARISON")
+                print("-" * 120)
+                print(f"{'Percentile':>12} {'k (kW/°C)':>10} {'Est Heat':>10} {'DHW':>10} {'DHW %':>8} {'Neg Days':>10}")
+                print("-" * 120)
+
+                for pct in [10, 15, 20, 25, 30, 40, 50]:
+                    test_analyses, test_k = calibrator.analyze(
+                        house_id=args.house,
+                        start_date=args.start,
+                        k_percentile=pct,
+                        debug=False,
+                        quiet=True
+                    )
+                    total_actual = sum(a.actual_energy_kwh for a in test_analyses)
+                    total_estimated = sum(a.estimated_heating_kwh for a in test_analyses)
+                    total_excess = total_actual - total_estimated
+                    excess_pct = 100 * total_excess / total_actual if total_actual > 0 else 0
+                    neg_days = sum(1 for a in test_analyses if a.excess_energy_kwh < 0)
+
+                    marker = " ← " if pct == args.percentile else ""
+                    print(f"{pct:>10}th {test_k:>10.4f} {total_estimated:>10.1f} {total_excess:>10.1f} {excess_pct:>7.1f}% {neg_days:>10}{marker}")
+
+                print("-" * 120)
+                print("Note: Lower percentile = less DHW estimated (purer heating baseline)")
+                print("      Aim for minimal negative excess days while maintaining realistic DHW %")
 
             if args.write:
                 calibrator.write_to_influx(args.house, analyses, calibrated_k)

@@ -62,13 +62,20 @@ class EnergySeparationConfig:
     Configuration for separating district heating energy into components.
 
     Different methods are available for different heating system setups:
+    - k_calibration: Uses calibrated heat loss coefficient (recommended)
     - homeside_ondemand_dhw: For HomeSide systems with on-demand DHW heating
-    - (future methods for other setups)
     """
     enabled: bool = False
-    method: str = "homeside_ondemand_dhw"  # Separation method to use
+    method: str = "k_calibration"  # Separation method to use
 
-    # HomeSide on-demand DHW method settings
+    # K-calibration method settings (from heating_energy_calibrator.py)
+    heat_loss_k: Optional[float] = None    # Calibrated heat loss coefficient (kW/°C)
+    k_percentile: int = 15                 # Percentile used for calibration
+    calibration_date: Optional[str] = None # Date of last calibration
+    calibration_days: int = 0              # Number of days used in calibration
+    dhw_percentage: Optional[float] = None # Estimated DHW percentage from calibration
+
+    # HomeSide on-demand DHW method settings (legacy)
     dhw_temp_threshold: float = 45.0       # Min temp to consider DHW active
     dhw_temp_rise_threshold: float = 2.0   # Min rise from baseline to detect event
     dhw_baseline_temp: float = 25.0        # Expected temp when DHW not in use

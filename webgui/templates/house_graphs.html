@@ -160,6 +160,30 @@
         <div id="energy-totals" class="metric-summary"></div>
     </div>
 
+    <!-- Energy Separation Chart (Heating vs DHW) -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Energy Breakdown (Heating vs Hot Water)</h2>
+            <div class="chart-controls">
+                <select id="separation-days-select" class="role-select" onchange="updateEnergySeparationChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Separates total energy into <strong>space heating</strong> and <strong>domestic hot water (DHW)</strong>
+            using calibrated building heat loss model.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color heating-energy"></span> Heating</span>
+                <span class="legend-item"><span class="legend-color dhw-energy"></span> Hot Water</span>
+            </span>
+        </p>
+        <div id="separation-chart" class="chart-container"></div>
+        <div id="separation-summary" class="metric-summary"></div>
+    </div>
+
     <!-- Cost Estimate Chart -->
     <div class="card">
         <div class="card-header-flex">
@@ -274,6 +298,12 @@
 }
 .legend-color.house-return {
     background: #2980b9;
+}
+.legend-color.heating-energy {
+    background: #3498db;
+}
+.legend-color.dhw-energy {
+    background: #e67e22;
 }
 /* Metric summary boxes */
 .metric-summary {
@@ -1169,6 +1199,125 @@
             });
     }
 
+    // Energy Separation Chart (Heating vs DHW)
+    function updateEnergySeparationChart() {
+        const days = document.getElementById('separation-days-select').value;
+        const chartDiv = document.getElementById('separation-chart');
+        const summaryDiv = document.getElementById('separation-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading energy separation data...</div>';
+        summaryDiv.innerHTML = '';
+
+        fetch(`/api/house/${houseId}/energy-separated?days=${days}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                const data = result.data || [];
+                const totals = result.totals || {};
+                const kValue = result.k_value;
+
+                if (data.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No energy separation data available. Run the calibrator first:<br><code>python heating_energy_calibrator.py --house ' + houseId + ' --write</code></div>';
+                    return;
+                }
+
+                const timestamps = data.map(d => d.timestamp_display);
+
+                // Stacked bar chart: Heating (bottom) + DHW (top)
+                const traces = [
+                    {
+                        x: timestamps,
+                        y: data.map(d => d.heating_kwh),
+                        type: 'bar',
+                        name: 'Heating',
+                        marker: { color: '#3498db' },
+                        hovertemplate: '%{x}<br>Heating: %{y} kWh<extra></extra>'
+                    },
+                    {
+                        x: timestamps,
+                        y: data.map(d => d.dhw_kwh),
+                        type: 'bar',
+                        name: 'Hot Water (DHW)',
+                        marker: { color: '#e67e22' },
+                        hovertemplate: '%{x}<br>Hot Water: %{y} kWh<extra></extra>'
+                    }
+                ];
+
+                // Add line for actual consumption
+                traces.push({
+                    x: timestamps,
+                    y: data.map(d => d.actual_kwh),
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Actual Total',
+                    line: { color: '#2c3e50', width: 2, dash: 'dot' },
+                    marker: { size: 6 },
+                    hovertemplate: '%{x}<br>Actual: %{y} kWh<extra></extra>'
+                });
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: 'Energy (kWh)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        rangemode: 'tozero'
+                    },
+                    barmode: 'stack',
+                    height: 400,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('separation-chart', traces, layout, chartConfig)
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Update summary
+                const kDisplay = kValue ? `${kValue} kW/°C` : 'N/A';
+                summaryDiv.innerHTML = `
+                    <div class="metric-item">
+                        <div class="metric-value">${totals.actual || 0} kWh</div>
+                        <div class="metric-label">Total Consumption</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #3498db">${totals.heating || 0} kWh</div>
+                        <div class="metric-label">Heating (${totals.heating_pct || 0}%)</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #e67e22">${totals.dhw || 0} kWh</div>
+                        <div class="metric-label">Hot Water (${totals.dhw_pct || 0}%)</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #7f8c8d; font-size: 1.2em">${kDisplay}</div>
+                        <div class="metric-label">Heat Loss Coeff (k)</div>
+                    </div>
+                `;
+            })
+            .catch(error => {
+                console.error('Failed to load energy separation data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy separation data.</div>';
+            });
+    }
+
     // Initialize all charts on page load
     document.addEventListener('DOMContentLoaded', function() {
         // Existing charts
@@ -1182,7 +1331,8 @@
         setTimeout(() => updateEfficiencyChart(), 200);
         setTimeout(() => updatePowerChart(), 300);
         setTimeout(() => updateEnergyChart(), 400);
-        setTimeout(() => updateCostChart(), 500);
+        setTimeout(() => updateEnergySeparationChart(), 500);
+        setTimeout(() => updateCostChart(), 600);
     });
 </script>
 {% endblock %}

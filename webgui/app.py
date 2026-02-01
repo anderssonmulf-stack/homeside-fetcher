@@ -773,6 +773,26 @@ def api_energy_consumption(house_id):
     return jsonify(result)
 
 
+@app.route('/api/house/<house_id>/energy-separated')
+@require_login
+def api_energy_separated(house_id):
+    """
+    API endpoint for energy separation chart (heating vs DHW).
+    Returns calibrated separation based on k × degree-hours model.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)  # Clamp between 7 and 365 days
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_energy_separation(house_id, days=days)
+
+    return jsonify(result)
+
+
 @app.route('/api/house/<house_id>/efficiency-metrics')
 @require_login
 def api_efficiency_metrics(house_id):
