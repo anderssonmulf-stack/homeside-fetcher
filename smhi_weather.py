@@ -280,6 +280,114 @@ class SMHIWeather:
             self.logger.error(f"Failed to get weather observation: {str(e)}")
             return None
 
+    def get_historical_observations(
+        self,
+        start_time: datetime,
+        end_time: datetime
+    ) -> List[Dict]:
+        """
+        Fetch historical weather observations from SMHI Metobs API.
+
+        Uses the 'latest-months' period which contains ~4 months of data.
+
+        Args:
+            start_time: Start of time range (UTC)
+            end_time: End of time range (UTC)
+
+        Returns:
+            List of observation dicts with timestamp, temperature, wind_speed, humidity
+        """
+        station = self._find_nearest_station(self.PARAM_TEMP)
+        if not station:
+            self.logger.warning("No weather station found for historical observations")
+            return []
+
+        observations = []
+
+        try:
+            # Fetch temperature history (primary)
+            temp_url = (f"{self.METOBS_BASE}/version/latest/parameter/{self.PARAM_TEMP}"
+                       f"/station/{station.id}/period/latest-months/data.json")
+
+            response = requests.get(temp_url, timeout=30)
+            response.raise_for_status()
+            temp_data = response.json()
+
+            # Build temperature lookup by timestamp
+            temp_by_time = {}
+            for value in temp_data.get('value', []):
+                ts_ms = value.get('date')
+                val = value.get('value')
+                quality = value.get('quality', 'G')
+                if ts_ms and val is not None and quality in ('G', 'Y'):
+                    ts = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                    if start_time <= ts <= end_time:
+                        temp_by_time[ts] = float(val)
+
+            if not temp_by_time:
+                self.logger.info("No historical temperature data in requested range")
+                return []
+
+            # Fetch wind speed history
+            wind_by_time = {}
+            try:
+                wind_url = (f"{self.METOBS_BASE}/version/latest/parameter/{self.PARAM_WIND_SPEED}"
+                           f"/station/{station.id}/period/latest-months/data.json")
+                response = requests.get(wind_url, timeout=30)
+                if response.status_code == 200:
+                    wind_data = response.json()
+                    for value in wind_data.get('value', []):
+                        ts_ms = value.get('date')
+                        val = value.get('value')
+                        quality = value.get('quality', 'G')
+                        if ts_ms and val is not None and quality in ('G', 'Y'):
+                            ts = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                            if start_time <= ts <= end_time:
+                                wind_by_time[ts] = float(val)
+            except Exception as e:
+                self.logger.debug(f"Wind data not available: {e}")
+
+            # Fetch humidity history
+            humidity_by_time = {}
+            try:
+                humidity_url = (f"{self.METOBS_BASE}/version/latest/parameter/{self.PARAM_HUMIDITY}"
+                               f"/station/{station.id}/period/latest-months/data.json")
+                response = requests.get(humidity_url, timeout=30)
+                if response.status_code == 200:
+                    humidity_data = response.json()
+                    for value in humidity_data.get('value', []):
+                        ts_ms = value.get('date')
+                        val = value.get('value')
+                        quality = value.get('quality', 'G')
+                        if ts_ms and val is not None and quality in ('G', 'Y'):
+                            ts = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                            if start_time <= ts <= end_time:
+                                humidity_by_time[ts] = float(val)
+            except Exception as e:
+                self.logger.debug(f"Humidity data not available: {e}")
+
+            # Combine into observation records
+            for ts in sorted(temp_by_time.keys()):
+                obs = {
+                    'timestamp': ts,
+                    'temperature': temp_by_time[ts],
+                    'wind_speed': wind_by_time.get(ts),
+                    'humidity': humidity_by_time.get(ts),
+                    'station_name': station.name,
+                    'station_id': station.id,
+                    'distance_km': station.distance_km
+                }
+                observations.append(obs)
+
+            self.logger.info(
+                f"Retrieved {len(observations)} historical observations from {station.name}"
+            )
+            return observations
+
+        except Exception as e:
+            self.logger.error(f"Failed to fetch historical observations: {e}")
+            return []
+
     # =========================================================================
     # FORECAST METHODS (SMHI PMP3G API - migrated from weather_forecast.py)
     # =========================================================================
@@ -333,7 +441,11 @@ class SMHIWeather:
                 temp = None
                 cloud_cover = None
                 wind_speed = None
+                wind_gust = None
+                wind_direction = None
                 humidity = None
+                precipitation = None
+                visibility = None
 
                 for param in time_series.get('parameters', []):
                     param_name = param.get('name')
@@ -343,8 +455,16 @@ class SMHIWeather:
                         cloud_cover = param.get('values', [None])[0]
                     elif param_name == 'ws':  # Wind speed (m/s)
                         wind_speed = param.get('values', [None])[0]
+                    elif param_name == 'gust':  # Wind gust speed (m/s)
+                        wind_gust = param.get('values', [None])[0]
+                    elif param_name == 'wd':  # Wind direction (degrees)
+                        wind_direction = param.get('values', [None])[0]
                     elif param_name == 'r':  # Relative humidity (%)
                         humidity = param.get('values', [None])[0]
+                    elif param_name == 'pmean':  # Mean precipitation (mm/h)
+                        precipitation = param.get('values', [None])[0]
+                    elif param_name == 'vis':  # Visibility (km)
+                        visibility = param.get('values', [None])[0]
 
                 if temp is not None:
                     hours_from_now = (valid_time - now).total_seconds() / 3600
@@ -358,8 +478,16 @@ class SMHIWeather:
                         forecast_point['cloud_cover'] = cloud_cover
                     if wind_speed is not None:
                         forecast_point['wind_speed'] = wind_speed
+                    if wind_gust is not None:
+                        forecast_point['wind_gust'] = wind_gust
+                    if wind_direction is not None:
+                        forecast_point['wind_direction'] = wind_direction
                     if humidity is not None:
                         forecast_point['humidity'] = humidity
+                    if precipitation is not None:
+                        forecast_point['precipitation'] = precipitation
+                    if visibility is not None:
+                        forecast_point['visibility'] = visibility
 
                     forecasts.append(forecast_point)
 

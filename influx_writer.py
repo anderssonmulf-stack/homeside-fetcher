@@ -186,6 +186,14 @@ class InfluxDBWriter:
             if 'supply_setpoint' in data:
                 point.field("supply_setpoint", round(float(data['supply_setpoint']), 2))
 
+            # Effective temperature fields (for ML analysis)
+            if 'effective_temp' in data:
+                point.field("effective_temp", round(float(data['effective_temp']), 2))
+            if 'effective_temp_wind_effect' in data:
+                point.field("effective_temp_wind_effect", round(float(data['effective_temp_wind_effect']), 2))
+            if 'effective_temp_solar_effect' in data:
+                point.field("effective_temp_solar_effect", round(float(data['effective_temp_solar_effect']), 2))
+
             # Add boolean status fields (convert to int for easier graphing)
             if 'electric_heater' in data:
                 point.field("electric_heater", 1 if data['electric_heater'] else 0)
@@ -252,6 +260,127 @@ class InfluxDBWriter:
         except Exception as e:
             self.logger.error(f"Failed to write forecast to InfluxDB: {str(e)}")
             self._log_influx_error("Forecast write failed", e, "write_forecast_data")
+            return False
+
+    def write_weather_forecast_points(self, forecast_data: List[Dict]) -> bool:
+        """
+        Write detailed hourly weather forecast points to InfluxDB.
+
+        Stores the raw SMHI forecast data for historical analysis, allowing
+        us to see what weather data predictions were based on.
+
+        Args:
+            forecast_data: List of forecast dictionaries from SMHI:
+                [
+                    {
+                        'time': str (ISO timestamp),
+                        'temp': float,
+                        'hour': float (hours from now),
+                        'cloud_cover': float (optional, 0-8 octas),
+                        'wind_speed': float (optional, m/s),
+                        'wind_gust': float (optional, m/s),
+                        'wind_direction': float (optional, degrees),
+                        'humidity': float (optional, %),
+                        'precipitation': float (optional, mm/h),
+                        'visibility': float (optional, km)
+                    },
+                    ...
+                ]
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not forecast_data:
+            return False
+
+        try:
+            points = []
+            for data in forecast_data:
+                time_str = data.get('time')
+                if not time_str:
+                    continue
+
+                # Parse forecast target time
+                target_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+
+                # No forecast_generated_at tag - points with same timestamp will overwrite
+                # This gives us: history (past forecasts kept) + latest future forecast
+                point = Point("weather_forecast_hourly") \
+                    .tag("house_id", self.house_id) \
+                    .field("temperature", round(float(data['temp']), 2)) \
+                    .field("lead_time_hours", round(float(data.get('hour', 0)), 1)) \
+                    .time(target_time, WritePrecision.S)
+
+                # Add optional fields
+                if data.get('cloud_cover') is not None:
+                    point.field("cloud_cover", round(float(data['cloud_cover']), 1))
+                if data.get('wind_speed') is not None:
+                    point.field("wind_speed", round(float(data['wind_speed']), 1))
+                if data.get('wind_gust') is not None:
+                    point.field("wind_gust", round(float(data['wind_gust']), 1))
+                if data.get('wind_direction') is not None:
+                    point.field("wind_direction", round(float(data['wind_direction']), 0))
+                if data.get('humidity') is not None:
+                    point.field("humidity", round(float(data['humidity']), 0))
+                if data.get('precipitation') is not None:
+                    point.field("precipitation", round(float(data['precipitation']), 2))
+                if data.get('visibility') is not None:
+                    point.field("visibility", round(float(data['visibility']), 1))
+
+                points.append(point)
+
+            if points:
+                self.write_api.write(bucket=self.bucket, org=self.org, record=points)
+                self.logger.info(f"Wrote {len(points)} weather forecast points to InfluxDB")
+                return True
+
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Failed to write weather forecast points: {str(e)}")
+            return False
+
+    def delete_future_weather_forecasts(self) -> bool:
+        """
+        Delete only FUTURE weather forecast points for this house.
+
+        Past forecast points are kept as history (one per hour).
+        Future points are deleted before writing fresh forecast data.
+
+        This gives us:
+        - Historical record of what forecasts predicted for past times
+        - Always the latest forecast for future times
+        - No accumulation of multiple overlapping forecast series
+
+        Returns:
+            True if delete succeeded, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            delete_api = self.client.delete_api()
+
+            # Only delete future forecasts (from now to +7 days)
+            # Past forecasts remain as historical record
+            start = datetime.now(timezone.utc)
+            stop = datetime.now(timezone.utc) + timedelta(days=7)
+
+            predicate = f'_measurement="weather_forecast_hourly" AND house_id="{self.house_id}"'
+
+            delete_api.delete(
+                start=start,
+                stop=stop,
+                predicate=predicate,
+                bucket=self.bucket,
+                org=self.org
+            )
+
+            self.logger.info("Deleted future forecast points (past forecasts kept as history)")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to delete future weather forecasts: {str(e)}")
             return False
 
     def write_control_decision(self, decision: Dict) -> bool:
@@ -725,10 +854,10 @@ class InfluxDBWriter:
             point = Point("forecast_accuracy") \
                 .tag("house_id", self.house_id) \
                 .tag("hour", f"{hour:02d}") \
-                .field("predicted", round(predicted, 2)) \
-                .field("actual", round(actual, 2)) \
-                .field("error", round(error, 3)) \
-                .field("outdoor", round(outdoor, 1)) \
+                .field("predicted", round(float(predicted), 2)) \
+                .field("actual", round(float(actual), 2)) \
+                .field("error", round(float(error), 3)) \
+                .field("outdoor", round(float(outdoor), 1)) \
                 .time(datetime.now(timezone.utc), WritePrecision.S)
 
             self.write_api.write(bucket=self.bucket, org=self.org, record=point)
@@ -738,6 +867,83 @@ class InfluxDBWriter:
         except Exception as e:
             self.logger.error(f"Failed to write forecast accuracy: {str(e)}")
             self._log_influx_error("Forecast accuracy write failed", e, "write_forecast_accuracy")
+            return False
+
+    def write_energy_forecast(self, forecast_points: list) -> bool:
+        """
+        Write energy forecast points to InfluxDB.
+
+        Args:
+            forecast_points: List of EnergyForecastPoint objects with:
+                - timestamp: Target time for this prediction
+                - heating_power_kw: Predicted heating power
+                - heating_energy_kwh: Predicted energy for this hour
+                - outdoor_temp, effective_temp, wind_effect, solar_effect
+                - lead_time_hours: Hours from forecast generation
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not forecast_points:
+            return False
+
+        try:
+            points = []
+            for fp in forecast_points:
+                point = Point("energy_forecast") \
+                    .tag("house_id", self.house_id) \
+                    .field("heating_power_kw", round(float(fp.heating_power_kw), 3)) \
+                    .field("heating_energy_kwh", round(float(fp.heating_energy_kwh), 3)) \
+                    .field("outdoor_temp", round(float(fp.outdoor_temp), 1)) \
+                    .field("effective_temp", round(float(fp.effective_temp), 1)) \
+                    .field("wind_effect", round(float(fp.wind_effect), 2)) \
+                    .field("solar_effect", round(float(fp.solar_effect), 2)) \
+                    .field("lead_time_hours", round(float(fp.lead_time_hours), 1)) \
+                    .time(fp.timestamp, WritePrecision.S)
+
+                points.append(point)
+
+            if points:
+                self.write_api.write(bucket=self.bucket, org=self.org, record=points)
+                self.logger.info(f"Wrote {len(points)} energy forecast points to InfluxDB")
+                return True
+
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Failed to write energy forecast: {str(e)}")
+            return False
+
+    def delete_future_energy_forecasts(self) -> bool:
+        """
+        Delete future energy forecast points (keep history, update future).
+
+        Returns:
+            True if delete succeeded, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            delete_api = self.client.delete_api()
+
+            start = datetime.now(timezone.utc)
+            stop = datetime.now(timezone.utc) + timedelta(days=7)
+
+            predicate = f'_measurement="energy_forecast" AND house_id="{self.house_id}"'
+
+            delete_api.delete(
+                start=start,
+                stop=stop,
+                predicate=predicate,
+                bucket=self.bucket,
+                org=self.org
+            )
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to delete energy forecasts: {str(e)}")
             return False
 
     def read_thermal_history(self, days: int = 7) -> list:
@@ -810,6 +1016,68 @@ class InfluxDBWriter:
         except Exception as e:
             self.logger.error(f"Failed to read thermal history: {str(e)}")
             return []
+
+    def get_last_data_timestamps(self) -> Dict[str, Optional[datetime]]:
+        """
+        Get the timestamp of the last data point for each measurement type.
+
+        Used on startup to check for stale data.
+
+        Returns:
+            Dictionary with measurement names as keys and last timestamp as values:
+            {
+                'heating_system': datetime or None,
+                'weather_forecast': datetime or None,
+                'temperature_forecast': datetime or None
+            }
+        """
+        if not self.enabled:
+            return {
+                'heating_system': None,
+                'weather_forecast': None,
+                'temperature_forecast': None
+            }
+
+        results = {}
+        measurements = ['heating_system', 'weather_forecast', 'temperature_forecast']
+
+        try:
+            query_api = self.client.query_api()
+            # Escape forward slashes for Flux regex
+            escaped_house_id = self.house_id.replace('/', '\\/')
+
+            for measurement in measurements:
+                try:
+                    query = f'''
+                        from(bucket: "{self.bucket}")
+                        |> range(start: -30d)
+                        |> filter(fn: (r) => r["_measurement"] == "{measurement}")
+                        |> filter(fn: (r) => r["house_id"] =~ /{escaped_house_id}/)
+                        |> filter(fn: (r) => r["_field"] == "room_temperature" or r["_field"] == "temperature")
+                        |> sort(columns: ["_time"], desc: true)
+                        |> first()
+                    '''
+
+                    tables = query_api.query(query, org=self.org)
+
+                    last_time = None
+                    for table in tables:
+                        for record in table.records:
+                            record_time = record.get_time()
+                            if record_time and (last_time is None or record_time > last_time):
+                                last_time = record_time
+
+                    results[measurement] = last_time
+
+                except Exception as e:
+                    self.logger.warning(f"Failed to get last timestamp for {measurement}: {e}")
+                    results[measurement] = None
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Failed to get last data timestamps: {str(e)}")
+            return {m: None for m in measurements}
 
     def close(self):
         """Close InfluxDB client connection"""

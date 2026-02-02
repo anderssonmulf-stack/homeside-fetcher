@@ -12,6 +12,95 @@ from heat_curve_controller import HeatCurveController
 from seq_logger import SeqLogger
 from customer_profile import CustomerProfile, find_profile_for_client_id
 from temperature_forecaster import TemperatureForecaster
+from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
+from gap_filler import fill_gaps_on_startup
+from energy_forecaster import EnergyForecaster, format_energy_forecast
+from k_recalibrator import recalibrate_house
+
+
+def check_data_staleness(influx, settings: dict, logger) -> dict:
+    """
+    Check if data in InfluxDB is stale compared to expected intervals.
+
+    Args:
+        influx: InfluxDBWriter instance
+        settings: Application settings with data_collection intervals
+        logger: Logger instance
+
+    Returns:
+        Dictionary with staleness info for each measurement type
+    """
+    if not influx:
+        return {}
+
+    data_settings = settings.get('data_collection', {})
+    intervals = {
+        'heating_system': data_settings.get('heating_data_interval_minutes', 15),
+        'weather_forecast': data_settings.get('weather_forecast_interval_minutes', 120),
+        'temperature_forecast': data_settings.get('ml_forecast_interval_minutes', 120)
+    }
+
+    friendly_names = {
+        'heating_system': 'Heating data',
+        'weather_forecast': 'Weather forecast',
+        'temperature_forecast': 'ML temperature forecast'
+    }
+
+    now = datetime.now(timezone.utc)
+    staleness_info = {}
+
+    try:
+        last_timestamps = influx.get_last_data_timestamps()
+
+        for measurement, last_time in last_timestamps.items():
+            expected_interval = intervals.get(measurement, 15)
+            friendly_name = friendly_names.get(measurement, measurement)
+
+            if last_time is None:
+                logger.info(f"[STALENESS] {friendly_name}: No historical data found")
+                print(f"ℹ️  {friendly_name}: No historical data found")
+                staleness_info[measurement] = {
+                    'last_time': None,
+                    'age_minutes': None,
+                    'expected_interval': expected_interval,
+                    'is_stale': True,
+                    'missing': True
+                }
+            else:
+                # Ensure timezone awareness
+                if last_time.tzinfo is None:
+                    last_time = last_time.replace(tzinfo=timezone.utc)
+
+                age = now - last_time
+                age_minutes = age.total_seconds() / 60
+                is_stale = age_minutes > expected_interval * 2  # Stale if > 2x expected interval
+
+                staleness_info[measurement] = {
+                    'last_time': last_time,
+                    'age_minutes': age_minutes,
+                    'expected_interval': expected_interval,
+                    'is_stale': is_stale,
+                    'missing': False
+                }
+
+                if is_stale:
+                    hours = int(age_minutes // 60)
+                    mins = int(age_minutes % 60)
+                    age_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+                    logger.info(
+                        f"[STALENESS] {friendly_name}: Last data {age_str} ago "
+                        f"(expected every {expected_interval}m)"
+                    )
+                    print(f"ℹ️  {friendly_name}: Last data {age_str} ago (expected every {expected_interval}m)")
+                else:
+                    mins = int(age_minutes)
+                    print(f"✓ {friendly_name}: Last data {mins}m ago (OK)")
+
+    except Exception as e:
+        logger.warning(f"Failed to check data staleness: {e}")
+        print(f"⚠ Failed to check data staleness: {e}")
+
+    return staleness_info
 
 
 def load_settings(settings_path: str = 'settings.json') -> dict:
@@ -29,6 +118,12 @@ def load_settings(settings_path: str = 'settings.json') -> dict:
         'heating': {
             'target_indoor_temp': 22.0,
             'temp_margin': 0.5
+        },
+        'data_collection': {
+            'heating_data_interval_minutes': 15,
+            'weather_forecast_interval_minutes': 120,
+            'ml_forecast_interval_minutes': 120,
+            'failure_error_threshold_minutes': 120
         }
     }
 
@@ -60,12 +155,13 @@ def generate_forecast_points(
     thermal,
     current_indoor: float,
     current_outdoor: float,
-    logger
+    logger,
+    forecast_hours: int = 72
 ) -> list:
     """
     Generate forecast points for visualization in Grafana.
 
-    Creates hourly forecast data for the next 24 hours:
+    Creates hourly forecast data for the configured forecast horizon:
     - outdoor_temp: From SMHI weather forecast
     - supply_temp_baseline: Expected supply temp from original heat curve
     - supply_temp_ml: Expected supply temp from ML-adjusted curve
@@ -90,7 +186,7 @@ def generate_forecast_points(
     if not weather:
         return forecast_points
 
-    hourly_forecasts = weather.get_forecast(hours_ahead=24)
+    hourly_forecasts = weather.get_forecast(hours_ahead=forecast_hours)
     if not hourly_forecasts:
         logger.warning("No weather forecast available for forecast generation")
         return forecast_points
@@ -224,6 +320,7 @@ def monitor_heating_system(config):
     # Load application settings
     settings = load_settings()
     forecast_interval_minutes = settings['weather']['forecast_interval_minutes']
+    forecast_hours = settings['weather'].get('forecast_hours', 72)
     observation_enabled = settings['weather'].get('observation_enabled', True)
     target_indoor_temp = settings['heating']['target_indoor_temp']
     temp_margin = settings['heating']['temp_margin']
@@ -239,7 +336,7 @@ def monitor_heating_system(config):
         )
         print(f"✓ Weather enabled (lat: {config['latitude']}, lon: {config['longitude']})")
         print(f"  - Observations: every {config['interval_minutes']} min")
-        print(f"  - Forecast: every {forecast_interval_minutes} min")
+        print(f"  - Forecast: {forecast_hours}h horizon, every {forecast_interval_minutes} min")
     else:
         print("⚠ Weather disabled (no location configured)")
 
@@ -268,6 +365,36 @@ def monitor_heating_system(config):
             seq_logger=seq_logger
         )
         print(f"✓ InfluxDB enabled: {config.get('influxdb_url')}")
+
+        # Check for stale data on startup
+        print("\n--- Checking data freshness ---")
+        staleness_info = check_data_staleness(influx, settings, logger)
+        if any(info.get('is_stale') or info.get('missing') for info in staleness_info.values()):
+            print("→ Starting immediate data collection due to stale/missing data")
+        print()
+
+        # Attempt to fill gaps in historical data
+        print("--- Checking for data gaps ---")
+        try:
+            success = fill_gaps_on_startup(
+                influx_url=config.get('influxdb_url'),
+                influx_token=config.get('influxdb_token'),
+                influx_org=config.get('influxdb_org'),
+                influx_bucket=config.get('influxdb_bucket'),
+                house_id=api.clientid,
+                username=config.get('username'),
+                password=config.get('password'),
+                settings=settings,
+                logger=logger,
+                latitude=config.get('latitude'),
+                longitude=config.get('longitude')
+            )
+            if success:
+                print("✓ Gap filler completed")
+        except Exception as e:
+            logger.warning(f"Gap filler failed (non-critical): {e}")
+            print(f"⚠ Gap filler skipped: {e}")
+        print()
     else:
         print("⚠ InfluxDB disabled (INFLUXDB_ENABLED=false)")
 
@@ -278,9 +405,10 @@ def monitor_heating_system(config):
     else:
         print("✓ Thermal analyzer initialized")
 
-    # Load customer profile and initialize forecaster
+    # Load customer profile and initialize forecasters
     customer_profile = None
     forecaster = None
+    energy_forecaster = None
     try:
         customer_profile = find_profile_for_client_id(api.clientid, profiles_dir="profiles")
         if customer_profile:
@@ -289,6 +417,20 @@ def monitor_heating_system(config):
             status = customer_profile.get_status()
             print(f"  - Target temp: {status['target_temp']}°C")
             print(f"  - Learning: {status['learning_status']}")
+
+            # Initialize energy forecaster if k-value is calibrated
+            heat_loss_k = customer_profile.energy_separation.heat_loss_k
+            if heat_loss_k:
+                energy_forecaster = EnergyForecaster(
+                    heat_loss_k=heat_loss_k,
+                    target_indoor_temp=customer_profile.comfort.target_indoor_temp,
+                    latitude=config.get('latitude', 58.41),
+                    longitude=config.get('longitude', 15.62),
+                    logger=logger
+                )
+                print(f"  - Energy forecast: k={heat_loss_k:.4f} kW/°C")
+            else:
+                print("  - Energy forecast: Not calibrated (run heating_energy_calibrator.py)")
         else:
             print("⚠ No customer profile found, using legacy forecaster")
     except Exception as e:
@@ -325,6 +467,17 @@ def monitor_heating_system(config):
     # Track last prediction for accuracy measurement
     last_indoor_prediction = None  # (timestamp, predicted_value, outdoor_temp)
 
+    # Track consecutive failures for error escalation
+    first_failure_time = None  # Timestamp when consecutive failures started
+    failure_error_threshold = settings.get('data_collection', {}).get('failure_error_threshold_minutes', 120)
+
+    # Track k-value recalibration timing (every 72h by default)
+    last_recalibration_time = None
+    calibration_settings = settings.get('calibration', {})
+    recalibration_hours = calibration_settings.get('k_recalibration_hours', 72)
+    recalibration_days = calibration_settings.get('k_calibration_days', 30)
+    recalibration_enabled = calibration_settings.get('enabled', True)
+
     iteration = 0
     try:
         while True:
@@ -333,6 +486,9 @@ def monitor_heating_system(config):
             print(f"\n--- Data Collection #{iteration} ---")
             if debug_mode:
                 logger.info(f"Starting data collection #{iteration}")
+
+            # Track if this iteration succeeds
+            collection_succeeded = False
 
             # Fetch raw data
             raw_data = api.get_heating_data()
@@ -404,17 +560,14 @@ def monitor_heating_system(config):
                                 f"actual={actual:.1f}, error={error:+.2f}"
                             )
 
-                    # Calculate expected supply temps from heat curve based on outdoor temp
-                    # - supply_temp_heat_curve: From baseline (original) curve
-                    # - supply_temp_heat_curve_ml: From current (possibly ML-adjusted) curve
+                    # Calculate baseline supply temp from heat curve based on raw outdoor temp
+                    # (ML supply temp using effective_temp calculated after weather fetch)
                     if heat_curve and 'outdoor_temperature' in extracted_data:
-                        baseline_supply, current_supply = heat_curve.get_supply_temps_for_outdoor(
+                        baseline_supply, _ = heat_curve.get_supply_temps_for_outdoor(
                             extracted_data['outdoor_temperature']
                         )
                         if baseline_supply is not None:
                             extracted_data['supply_temp_heat_curve'] = round(baseline_supply, 2)
-                        if current_supply is not None:
-                            extracted_data['supply_temp_heat_curve_ml'] = round(current_supply, 2)
 
                     # Add data to thermal analyzer for learning
                     thermal.add_data_point(extracted_data)
@@ -466,6 +619,47 @@ def monitor_heating_system(config):
                             print(f"\n🌡️ Current Weather: {weather_obs.temperature:.1f}°C (from {weather_obs.station.name})")
 
                     # =====================================================
+                    # EFFECTIVE TEMP: Calculate ML supply temp using effective temperature
+                    # =====================================================
+                    # Use effective_temp (accounts for wind, humidity, solar) for ML supply temp
+                    # This gives a more accurate "perceived" outdoor temperature for heating control
+                    if heat_curve and 'outdoor_temperature' in extracted_data:
+                        outdoor_temp = extracted_data['outdoor_temperature']
+                        effective_temp = outdoor_temp  # Default to raw outdoor temp
+
+                        # Calculate effective temperature if we have weather observation data
+                        if weather_obs and weather_obs.temperature is not None:
+                            weather_model = SimpleWeatherModel()
+                            conditions = WeatherConditions(
+                                timestamp=now,
+                                temperature=outdoor_temp,  # Use HomeSide outdoor temp as base
+                                wind_speed=weather_obs.wind_speed if weather_obs.wind_speed else 3.0,
+                                humidity=weather_obs.humidity if weather_obs.humidity else 60.0,
+                                cloud_cover=4.0,  # Default: partly cloudy (could be improved with forecast data)
+                                latitude=config.get('latitude'),
+                                longitude=config.get('longitude')
+                            )
+                            eff_result = weather_model.effective_temperature(conditions)
+                            effective_temp = eff_result.effective_temp
+
+                            # Store effective temp and its breakdown for analysis
+                            extracted_data['effective_temp'] = round(effective_temp, 2)
+                            extracted_data['effective_temp_wind_effect'] = round(eff_result.wind_effect, 2)
+                            extracted_data['effective_temp_solar_effect'] = round(eff_result.solar_effect, 2)
+
+                            if debug_mode:
+                                logger.debug(
+                                    f"Effective temp: {effective_temp:.1f}°C "
+                                    f"(base: {outdoor_temp:.1f}°C, wind: {eff_result.wind_effect:+.1f}°C, "
+                                    f"solar: {eff_result.solar_effect:+.1f}°C)"
+                                )
+
+                        # Calculate ML supply temp using effective temperature
+                        _, current_supply = heat_curve.get_supply_temps_for_outdoor(effective_temp)
+                        if current_supply is not None:
+                            extracted_data['supply_temp_heat_curve_ml'] = round(current_supply, 2)
+
+                    # =====================================================
                     # WEATHER: Forecast (every forecast_interval_minutes)
                     # =====================================================
                     forecast_trend = cached_forecast_trend
@@ -479,7 +673,7 @@ def monitor_heating_system(config):
                     )
 
                     if should_fetch_forecast:
-                        forecast_trend = weather.get_temp_trend(hours_ahead=24)
+                        forecast_trend = weather.get_temp_trend(hours_ahead=forecast_hours)
                         if forecast_trend:
                             last_forecast_time = now
                             cached_forecast_trend = forecast_trend
@@ -490,12 +684,30 @@ def monitor_heating_system(config):
 
                                 # Generate and write detailed forecast points for Grafana
                                 influx.delete_old_forecasts()
+                                influx.delete_future_weather_forecasts()
 
                                 # Use new forecaster if available, otherwise legacy
                                 if forecaster:
-                                    # Get hourly weather forecast (24h for lead-time accuracy tracking)
-                                    hourly_forecast = weather.get_forecast(hours_ahead=24)
+                                    # Get hourly weather forecast for configured horizon
+                                    hourly_forecast = weather.get_forecast(hours_ahead=forecast_hours)
                                     if hourly_forecast:
+                                        # Store raw weather forecast for historical analysis
+                                        influx.write_weather_forecast_points(hourly_forecast)
+
+                                        # Generate energy forecast if calibrated
+                                        if energy_forecaster:
+                                            influx.delete_future_energy_forecasts()
+                                            energy_points = energy_forecaster.generate_forecast(
+                                                weather_forecast=hourly_forecast,
+                                                current_indoor_temp=extracted_data.get('room_temperature')
+                                            )
+                                            if energy_points:
+                                                influx.write_energy_forecast(energy_points)
+                                                # Display summary
+                                                summary_24h = energy_forecaster.get_summary(energy_points, hours=24)
+                                                summary_72h = energy_forecaster.get_summary(energy_points, hours=72)
+                                                print(format_energy_forecast(energy_points, summary_24h, summary_72h))
+
                                         forecast_points = forecaster.generate_forecast(
                                             current_indoor=extracted_data.get('room_temperature', 22.0),
                                             current_outdoor=extracted_data.get('outdoor_temperature', 0.0),
@@ -521,13 +733,32 @@ def monitor_heating_system(config):
                                                 )
                                 else:
                                     # Legacy forecaster (fallback)
+                                    # First store raw weather forecast for historical analysis
+                                    hourly_forecast = weather.get_forecast(hours_ahead=forecast_hours)
+                                    if hourly_forecast:
+                                        influx.write_weather_forecast_points(hourly_forecast)
+
+                                        # Generate energy forecast if calibrated
+                                        if energy_forecaster:
+                                            influx.delete_future_energy_forecasts()
+                                            energy_points = energy_forecaster.generate_forecast(
+                                                weather_forecast=hourly_forecast,
+                                                current_indoor_temp=extracted_data.get('room_temperature')
+                                            )
+                                            if energy_points:
+                                                influx.write_energy_forecast(energy_points)
+                                                summary_24h = energy_forecaster.get_summary(energy_points, hours=24)
+                                                summary_72h = energy_forecaster.get_summary(energy_points, hours=72)
+                                                print(format_energy_forecast(energy_points, summary_24h, summary_72h))
+
                                     forecast_points = generate_forecast_points(
                                         weather=weather,
                                         heat_curve=heat_curve,
                                         thermal=thermal,
                                         current_indoor=extracted_data.get('room_temperature', 22.0),
                                         current_outdoor=extracted_data.get('outdoor_temperature', 0.0),
-                                        logger=logger
+                                        logger=logger,
+                                        forecast_hours=forecast_hours
                                     )
                                     if forecast_points:
                                         influx.write_forecast_points(forecast_points)
@@ -649,6 +880,70 @@ def monitor_heating_system(config):
                             'updated_at': api.session_token_updated_at
                         }
                     )
+
+                    # Mark this iteration as successful
+                    collection_succeeded = True
+
+            # Track consecutive failures
+            if collection_succeeded:
+                if first_failure_time is not None:
+                    logger.info("Data collection recovered after previous failures")
+                    print("✓ Data collection recovered")
+                first_failure_time = None
+            else:
+                if first_failure_time is None:
+                    first_failure_time = now
+                    logger.warning("Data collection failed - starting failure tracking")
+                    print("⚠ Data collection failed")
+                else:
+                    failure_duration = (now - first_failure_time).total_seconds() / 60
+                    if failure_duration >= failure_error_threshold:
+                        logger.error(
+                            f"Data collection has been failing for {failure_duration:.0f} minutes "
+                            f"(threshold: {failure_error_threshold} minutes)"
+                        )
+                        print(f"❌ ERROR: Data collection failing for {failure_duration:.0f} minutes!")
+                    else:
+                        logger.warning(
+                            f"Data collection failed - consecutive failures for {failure_duration:.0f} minutes"
+                        )
+                        print(f"⚠ Data collection failed ({failure_duration:.0f}m of consecutive failures)")
+
+            # Check if k-value recalibration is due (every 72h)
+            if (recalibration_enabled and customer_profile and
+                customer_profile.energy_separation.enabled and
+                (last_recalibration_time is None or
+                 (now - last_recalibration_time).total_seconds() >= recalibration_hours * 3600)):
+                try:
+                    print("\n🔧 Running k-value recalibration...")
+                    result = recalibrate_house(
+                        house_id=customer_profile.customer_id,
+                        influx_url=config['influxdb_url'],
+                        influx_token=config['influxdb_token'],
+                        influx_org=config['influxdb_org'],
+                        influx_bucket=config['influxdb_bucket'],
+                        profiles_dir="profiles",
+                        days=recalibration_days,
+                        update_profile=True
+                    )
+                    if result:
+                        old_k = customer_profile.energy_separation.heat_loss_k
+                        # Reload profile to get updated k
+                        customer_profile = find_profile_for_client_id(api.clientid, profiles_dir="profiles")
+                        new_k = customer_profile.energy_separation.heat_loss_k
+                        print(f"✓ k-value recalibrated: {old_k:.4f} → {new_k:.4f} kW/°C")
+                        print(f"  ({result.days_used} days, {result.confidence:.0%} confidence)")
+                        # Update energy forecaster with new k
+                        if energy_forecaster:
+                            energy_forecaster.heat_loss_k = new_k
+                        logger.info(f"Recalibrated k: {old_k:.4f} → {new_k:.4f} ({result.days_used} days)")
+                    else:
+                        print("⚠ Recalibration skipped (insufficient data)")
+                    last_recalibration_time = now
+                except Exception as e:
+                    logger.warning(f"Recalibration failed: {e}")
+                    print(f"⚠ Recalibration error: {e}")
+                    last_recalibration_time = now  # Don't retry immediately
 
             # Wait until next scheduled interval (fixed schedule, not relative)
             now = datetime.now(timezone.utc)

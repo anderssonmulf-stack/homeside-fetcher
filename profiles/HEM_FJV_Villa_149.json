@@ -53,11 +53,17 @@
   },
   "energy_separation": {
     "enabled": true,
-    "method": "k_calibration",
-    "heat_loss_k": 0.0685,
+    "method": "homeside_ondemand_dhw",
+    "heat_loss_k": 0.06012,
     "k_percentile": 15,
-    "calibration_date": "2026-02-01",
-    "calibration_days": 12,
-    "dhw_percentage": 16.1
+    "calibration_date": "2026-02-02",
+    "calibration_days": 23,
+    "dhw_percentage": 16.1,
+    "dhw_temp_threshold": 45.0,
+    "dhw_temp_rise_threshold": 2.0,
+    "dhw_baseline_temp": 25.0,
+    "avg_dhw_power_kw": 25.0,
+    "cold_water_temp": 8.0,
+    "hot_water_target_temp": 55.0
   }
 }

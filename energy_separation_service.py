@@ -138,12 +138,14 @@ class EnergySeparationService:
         hours: int = 24
     ) -> List[Dict]:
         """Fetch energy consumption data from InfluxDB."""
+        # Try energy_consumption measurement first (has more historical data)
+        # Falls back to energy_meter if needed
         query = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{hours}h)
-            |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+            |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
             |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
-            |> filter(fn: (r) => r["_field"] == "consumption")
+            |> filter(fn: (r) => r["_field"] == "value")
             |> sort(columns: ["_time"])
         '''
 
