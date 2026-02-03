@@ -6,11 +6,14 @@ Imports energy data files from Dropbox into InfluxDB.
 Files are expected to be semicolon-separated with a header row.
 
 Usage:
-    python energy_importer.py              # Process all files in incoming/
+    python energy_importer.py              # Process all files in /data/
     python energy_importer.py --dry-run    # Show what would be imported without writing
 
 Environment variables:
-    DROPBOX_ACCESS_TOKEN  - Dropbox API token (required)
+    DROPBOX_APP_KEY       - Dropbox app key (for refresh token auth)
+    DROPBOX_APP_SECRET    - Dropbox app secret (for refresh token auth)
+    DROPBOX_REFRESH_TOKEN - Dropbox refresh token (recommended)
+    DROPBOX_ACCESS_TOKEN  - Dropbox API token (legacy, deprecated)
     INFLUXDB_URL          - InfluxDB URL (default: http://localhost:8086)
     INFLUXDB_TOKEN        - InfluxDB token (required)
     INFLUXDB_ORG          - InfluxDB org (default: homeside)
@@ -31,6 +34,8 @@ from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
 from customer_profile import build_meter_mapping
+from dropbox_client import DropboxClient, create_client_from_env
+from seq_logger import SeqLogger
 
 
 # Configure logging
@@ -48,6 +53,7 @@ COLUMN_MAPPINGS = {
     'id': 'meter_id',
     'meter_id': 'meter_id',
     'meterid': 'meter_id',
+    'serviceid': 'meter_id',  # SvenskEB export format
 
     # Timestamp columns
     'timestamp': 'timestamp',
@@ -56,40 +62,40 @@ COLUMN_MAPPINGS = {
     'datum': 'timestamp',
     'tidpunkt': 'timestamp',
 
-    # Meter reading (cumulative)
+    # Meter reading (cumulative kWh)
     'meterstand': 'meter_reading',
     'meter_reading': 'meter_reading',
     'meterreading': 'meter_reading',
     'cumulative': 'meter_reading',
     'total': 'meter_reading',
 
-    # Consumption (hourly energy)
+    # Consumption (hourly energy kWh)
     'consumption': 'consumption',
     'energy': 'consumption',
     'kwh': 'consumption',
     'mwh': 'consumption',
     'forbrukning': 'consumption',
 
-    # Flow (volume flow rate)
-    'flow': 'flow',
-    'flode': 'flow',
-    'volume_flow': 'flow',
-    'm3h': 'flow',
+    # Volume (m³ per hour)
+    'volume': 'volume',
+    'flow': 'volume',
+    'flode': 'volume',
+    'volume_flow': 'volume',
+    'm3h': 'volume',
+    'm3': 'volume',
 
-    # Temperature in (supply/forward)
-    'tempin': 'temp_in',
-    'temp_in': 'temp_in',
-    'supply_temp': 'temp_in',
-    'forward_temp': 'temp_in',
-    'framledning': 'temp_in',
-    't_in': 'temp_in',
-
-    # Temperature out (return)
-    'tempout': 'temp_out',
-    'temp_out': 'temp_out',
-    'return_temp': 'temp_out',
-    'returledning': 'temp_out',
-    't_out': 'temp_out',
+    # PRIMARY side temperatures (from district heating utility, NOT house side)
+    # These are the temps at the heat exchanger utility side
+    'temperaturein': 'primary_temp_in',   # Hot water from utility
+    'temperatureout': 'primary_temp_out', # Cooled water back to utility
+    'tempin': 'primary_temp_in',
+    'tempout': 'primary_temp_out',
+    'temp_in': 'primary_temp_in',
+    'temp_out': 'primary_temp_out',
+    't_in': 'primary_temp_in',
+    't_out': 'primary_temp_out',
+    'framledning_primar': 'primary_temp_in',
+    'returledning_primar': 'primary_temp_out',
 
     # Power
     'power': 'power',
@@ -98,24 +104,30 @@ COLUMN_MAPPINGS = {
     'mw': 'power',
 }
 
+# Values that represent missing/null data
+MISSING_VALUES = {'-', '', 'null', 'NULL', 'None', 'N/A', 'n/a', '#N/A'}
+
 
 class EnergyImporter:
     """Imports energy files from Dropbox to InfluxDB."""
 
     def __init__(
         self,
-        dropbox_token: str,
-        influx_url: str,
-        influx_token: str,
-        influx_org: str,
-        influx_bucket: str,
+        dropbox_client: Optional[DropboxClient] = None,
+        dropbox_token: str = None,  # Legacy: deprecated, use dropbox_client
+        influx_url: str = None,
+        influx_token: str = None,
+        influx_org: str = None,
+        influx_bucket: str = None,
         profiles_dir: str = 'profiles',
         separator: str = ';',
-        dry_run: bool = False
+        dry_run: bool = False,
+        seq_logger: Optional[SeqLogger] = None
     ):
         self.separator = separator
         self.dry_run = dry_run
         self.profiles_dir = profiles_dir
+        self.seq = seq_logger
 
         # Load meter_id -> customer_id mapping from profiles
         self.meter_mapping = build_meter_mapping(profiles_dir)
@@ -125,7 +137,18 @@ class EnergyImporter:
             logger.warning("No meter mappings found - unknown meters will be rejected")
 
         # Initialize Dropbox client
-        self.dbx = dropbox.Dropbox(dropbox_token)
+        # Prefer new DropboxClient with refresh token
+        if dropbox_client:
+            self._dropbox_client = dropbox_client
+            self.dbx = dropbox_client.dbx
+            logger.info("Using DropboxClient with refresh token")
+        elif dropbox_token:
+            # Legacy: use access token directly (deprecated)
+            self._dropbox_client = None
+            self.dbx = dropbox.Dropbox(dropbox_token)
+            logger.warning("Using legacy DROPBOX_ACCESS_TOKEN - consider using refresh token auth")
+        else:
+            raise ValueError("Either dropbox_client or dropbox_token must be provided")
         logger.info("Connected to Dropbox")
 
         # Initialize InfluxDB client
@@ -145,19 +168,19 @@ class EnergyImporter:
             logger.info("Dry run mode - no data will be written")
 
     def list_incoming_files(self) -> List[FileMetadata]:
-        """List files in the incoming folder."""
+        """List energy data files (.txt) in /data/ folder."""
         try:
-            result = self.dbx.files_list_folder('/incoming')
+            result = self.dbx.files_list_folder('/data')
             files = [
                 entry for entry in result.entries
                 if isinstance(entry, FileMetadata) and entry.name.endswith('.txt')
             ]
-            logger.info(f"Found {len(files)} file(s) in /incoming")
+            logger.info(f"Found {len(files)} energy file(s) in /data")
             return files
         except dropbox.exceptions.ApiError as e:
             if 'not_found' in str(e):
-                logger.warning("Folder /incoming not found, creating it...")
-                self.dbx.files_create_folder_v2('/incoming')
+                logger.warning("Folder /data not found, creating it...")
+                self.dbx.files_create_folder_v2('/data')
                 self.dbx.files_create_folder_v2('/processed')
                 self.dbx.files_create_folder_v2('/failed')
                 return []
@@ -219,7 +242,9 @@ class EnergyImporter:
                         elif field_name == 'meter_id':
                             record['meter_id'] = value
                         else:
-                            # Numeric field
+                            # Numeric field - skip missing values
+                            if value in MISSING_VALUES:
+                                continue  # Skip this field, don't include in record
                             try:
                                 # Handle both . and , as decimal separator
                                 value = value.replace(',', '.')
@@ -239,12 +264,16 @@ class EnergyImporter:
 
     def _parse_timestamp(self, value: str) -> datetime:
         """Parse timestamp string to datetime."""
+        # Handle ISO format with Z suffix (UTC)
+        if value.endswith('Z'):
+            value = value[:-1]  # Strip Z suffix
+
         # Try various formats
         formats = [
+            '%Y-%m-%dT%H:%M:%S',  # ISO format (most common from exports)
+            '%Y-%m-%dT%H:%M',     # ISO without seconds
             '%Y-%m-%d %H:%M:%S',  # 2026-01-28 14:00:00
             '%Y-%m-%d %H:%M',     # 2026-01-28 14:00
-            '%Y-%m-%dT%H:%M:%S',  # ISO format
-            '%Y-%m-%dT%H:%M',     # ISO without seconds
             '%d/%m/%Y %H:%M:%S',  # European
             '%d/%m/%Y %H:%M',     # European without seconds
             '%Y%m%d%H%M%S',       # Compact
@@ -254,8 +283,6 @@ class EnergyImporter:
         for fmt in formats:
             try:
                 dt = datetime.strptime(value, fmt)
-                # Assume Swedish time (CET/CEST) if no timezone
-                # For simplicity, store as-is (local time interpretation)
                 return dt.replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
@@ -306,22 +333,13 @@ class EnergyImporter:
 
         return len(points), []
 
-    def move_file(self, from_path: str, to_folder: str):
-        """Move file to another folder."""
-        filename = from_path.split('/')[-1]
-        to_path = f"/{to_folder}/{filename}"
-
-        # Add timestamp to avoid conflicts
-        if to_folder in ('processed', 'failed'):
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            name, ext = filename.rsplit('.', 1)
-            to_path = f"/{to_folder}/{name}_{timestamp}.{ext}"
-
+    def delete_file(self, path: str):
+        """Delete file from Dropbox after successful import."""
         try:
-            self.dbx.files_move_v2(from_path, to_path)
-            logger.info(f"Moved {from_path} -> {to_path}")
+            self.dbx.files_delete_v2(path)
+            logger.info(f"Deleted {path}")
         except dropbox.exceptions.ApiError as e:
-            logger.error(f"Failed to move file: {e}")
+            logger.error(f"Failed to delete file {path}: {e}")
 
     def process_file(self, file_meta: FileMetadata) -> Tuple[int, List[str]]:
         """Process a single file."""
@@ -340,8 +358,7 @@ class EnergyImporter:
 
         if not records:
             logger.warning(f"No valid records in {file_meta.name}")
-            if not self.dry_run:
-                self.move_file(path, 'failed')
+            # Don't delete - leave file for investigation
             return 0, errors
 
         # Get meter ID from first record, or use filename
@@ -351,18 +368,22 @@ class EnergyImporter:
         count, write_errors = self.write_to_influx(records, meter_id)
         errors.extend(write_errors)
 
-        # Move to appropriate folder
-        if not self.dry_run:
-            if count > 0:
-                self.move_file(path, 'processed')
-            else:
-                # No records written (unknown meter) - move to failed
-                self.move_file(path, 'failed')
+        # Delete file after successful import
+        if not self.dry_run and count > 0:
+            self.delete_file(path)
 
         return count, errors
 
-    def run(self) -> Dict:
-        """Process all incoming files."""
+    def run(self, sync_meters: bool = True) -> Dict:
+        """
+        Process all incoming files.
+
+        Args:
+            sync_meters: If True, sync meter request file to Dropbox after import
+
+        Returns:
+            Dict with files, records, and errors counts
+        """
         files = self.list_incoming_files()
 
         if not files:
@@ -376,6 +397,21 @@ class EnergyImporter:
             count, errors = self.process_file(file_meta)
             total_records += count
             all_errors.extend(errors)
+
+        # Sync meters to Dropbox after successful import
+        # This updates the from_date for imported meters
+        if sync_meters and total_records > 0 and not self.dry_run:
+            try:
+                from dropbox_sync import MeterRequestManager
+                manager = MeterRequestManager(
+                    dropbox_client=self._dropbox_client,
+                    profiles_dir=self.profiles_dir
+                )
+                manager.sync_meters_to_dropbox()
+                manager.close()
+                logger.info("Synced meter requests to Dropbox")
+            except Exception as e:
+                logger.warning(f"Failed to sync meters to Dropbox: {e}")
 
         return {
             'files': len(files),
@@ -394,12 +430,22 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Show what would be imported without writing')
     parser.add_argument('--separator', default=';', help='Column separator (default: ;)')
     parser.add_argument('--profiles-dir', default='profiles', help='Directory containing customer profiles (default: profiles)')
+    parser.add_argument('--no-sync', action='store_true', help='Skip syncing meter requests to Dropbox after import')
     args = parser.parse_args()
 
+    # Initialize Seq logger
+    seq = SeqLogger(
+        component='EnergyImporter',
+        friendly_name='EnergyImport'
+    )
+
     # Get configuration from environment
+    # Prefer new refresh token auth, fall back to legacy access token
+    dropbox_client = create_client_from_env()
     dropbox_token = os.getenv('DROPBOX_ACCESS_TOKEN')
-    if not dropbox_token:
-        print("ERROR: DROPBOX_ACCESS_TOKEN environment variable not set")
+
+    if not dropbox_client and not dropbox_token:
+        seq.log("Dropbox not configured - missing credentials", level='Error')
         sys.exit(1)
 
     influx_url = os.getenv('INFLUXDB_URL', 'http://localhost:8086')
@@ -408,26 +454,57 @@ def main():
     influx_bucket = os.getenv('INFLUXDB_BUCKET', 'heating')
 
     if not args.dry_run and not influx_token:
-        print("ERROR: INFLUXDB_TOKEN environment variable not set")
+        seq.log("InfluxDB token not configured", level='Error')
         sys.exit(1)
 
     # Run importer
     importer = EnergyImporter(
-        dropbox_token=dropbox_token,
+        dropbox_client=dropbox_client,
+        dropbox_token=dropbox_token if not dropbox_client else None,
         influx_url=influx_url,
         influx_token=influx_token or '',
         influx_org=influx_org,
         influx_bucket=influx_bucket,
         profiles_dir=args.profiles_dir,
         separator=args.separator,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        seq_logger=seq
     )
 
     try:
-        result = importer.run()
-        print(f"\nProcessed {result['files']} file(s), {result['records']} record(s)")
-        if result['errors']:
-            print(f"Warnings: {len(result['errors'])}")
+        result = importer.run(sync_meters=not args.no_sync)
+
+        if result['records'] > 0:
+            seq.log(
+                "Energy import completed: {Files} file(s), {Records} record(s)",
+                level='Information',
+                properties={
+                    'Files': result['files'],
+                    'Records': result['records'],
+                    'Errors': len(result['errors']),
+                    'DryRun': args.dry_run
+                }
+            )
+        elif result['files'] == 0:
+            # No files to process - this is normal, don't log as error
+            logger.info("No energy files to import")
+        else:
+            seq.log(
+                "Energy import failed: {Files} file(s), 0 records imported",
+                level='Warning',
+                properties={
+                    'Files': result['files'],
+                    'Errors': result['errors']
+                }
+            )
+
+    except Exception as e:
+        seq.log(
+            "Energy import error: {Error}",
+            level='Error',
+            properties={'Error': str(e)}
+        )
+        raise
     finally:
         importer.close()
 

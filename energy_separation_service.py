@@ -138,9 +138,36 @@ class EnergySeparationService:
         hours: int = 24
     ) -> List[Dict]:
         """Fetch energy consumption data from InfluxDB."""
-        # Try energy_consumption measurement first (has more historical data)
-        # Falls back to energy_meter if needed
-        query = f'''
+        results = []
+
+        # Try energy_meter measurement first (from Dropbox energy importer)
+        query_energy_meter = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: -{hours}h)
+            |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["_field"] == "consumption")
+            |> sort(columns: ["_time"])
+        '''
+
+        try:
+            tables = self.query_api.query(query_energy_meter, org=self.influx_org)
+            for table in tables:
+                for record in table.records:
+                    results.append({
+                        'timestamp': record.get_time(),
+                        'consumption': record.get_value()
+                    })
+
+            if results:
+                logger.info(f"Fetched {len(results)} energy readings from energy_meter for {house_id}")
+                return results
+
+        except Exception as e:
+            logger.warning(f"Failed to query energy_meter: {e}")
+
+        # Fallback: try energy_consumption measurement (legacy)
+        query_energy_consumption = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{hours}h)
             |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
@@ -150,9 +177,7 @@ class EnergySeparationService:
         '''
 
         try:
-            tables = self.query_api.query(query, org=self.influx_org)
-
-            results = []
+            tables = self.query_api.query(query_energy_consumption, org=self.influx_org)
             for table in tables:
                 for record in table.records:
                     results.append({
@@ -160,7 +185,7 @@ class EnergySeparationService:
                         'consumption': record.get_value()
                     })
 
-            logger.info(f"Fetched {len(results)} energy readings for {house_id}")
+            logger.info(f"Fetched {len(results)} energy readings from energy_consumption for {house_id}")
             return results
 
         except Exception as e:

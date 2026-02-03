@@ -16,6 +16,9 @@ from energy_models.weather_energy_model import SimpleWeatherModel, WeatherCondit
 from gap_filler import fill_gaps_on_startup
 from energy_forecaster import EnergyForecaster, format_energy_forecast
 from k_recalibrator import recalibrate_house
+from energy_importer import EnergyImporter
+from energy_separation_service import EnergySeparationService
+from dropbox_client import create_client_from_env
 
 
 def check_data_staleness(influx, settings: dict, logger) -> dict:
@@ -262,6 +265,310 @@ def generate_forecast_points(
     return forecast_points
 
 
+def run_energy_pipeline(
+    config: dict,
+    customer_profile,
+    seq_logger,
+    logger,
+    profiles_dir: str = "profiles",
+    calibration_days: int = 30
+) -> dict:
+    """
+    Run the daily energy data pipeline:
+    1. Import energy data from Dropbox
+    2. Separate heating vs DHW energy
+    3. Recalibrate k-values
+
+    Args:
+        config: Application config with InfluxDB settings
+        customer_profile: CustomerProfile instance (or None for all houses)
+        seq_logger: SeqLogger instance
+        logger: Python logger
+        profiles_dir: Directory containing customer profiles
+        calibration_days: Days of data for k-value calibration
+
+    Returns:
+        Dict with results from each step
+    """
+    results = {
+        'import': {'success': False, 'files': 0, 'records': 0},
+        'separation': {'success': False, 'houses': 0, 'records': 0},
+        'calibration': {'success': False, 'houses': 0}
+    }
+
+    print("\n" + "="*50)
+    print("🔄 DAILY ENERGY PIPELINE")
+    print("="*50)
+
+    # Step 1: Import energy data from Dropbox
+    print("\n📥 Step 1: Importing energy data from Dropbox...")
+    try:
+        dropbox_client = create_client_from_env()
+        if not dropbox_client:
+            print("⚠ Dropbox not configured - skipping import")
+            seq_logger.log(
+                "Energy pipeline: Dropbox not configured",
+                level='Warning'
+            )
+        else:
+            importer = EnergyImporter(
+                dropbox_client=dropbox_client,
+                influx_url=config.get('influxdb_url'),
+                influx_token=config.get('influxdb_token'),
+                influx_org=config.get('influxdb_org'),
+                influx_bucket=config.get('influxdb_bucket'),
+                profiles_dir=profiles_dir,
+                dry_run=False
+            )
+            import_result = importer.run(sync_meters=True)
+            importer.close()
+
+            results['import'] = {
+                'success': True,
+                'files': import_result.get('files', 0),
+                'records': import_result.get('records', 0),
+                'errors': import_result.get('errors', [])
+            }
+
+            if import_result.get('records', 0) > 0:
+                print(f"✓ Imported {import_result['records']} records from {import_result['files']} file(s)")
+                seq_logger.log(
+                    "Energy import: {Records} records from {Files} file(s)",
+                    level='Information',
+                    properties={
+                        'Records': import_result['records'],
+                        'Files': import_result['files']
+                    }
+                )
+            else:
+                print("ℹ No new energy files to import")
+
+    except Exception as e:
+        logger.error(f"Energy import failed: {e}")
+        print(f"❌ Import failed: {e}")
+        seq_logger.log(
+            "Energy import failed: {Error}",
+            level='Error',
+            properties={'Error': str(e)}
+        )
+
+    # Step 2: Run energy separation (heating vs DHW)
+    print("\n⚡ Step 2: Separating heating vs DHW energy...")
+    try:
+        separation_service = EnergySeparationService(
+            influx_url=config.get('influxdb_url'),
+            influx_token=config.get('influxdb_token'),
+            influx_org=config.get('influxdb_org'),
+            influx_bucket=config.get('influxdb_bucket'),
+            profiles_dir=profiles_dir,
+            dry_run=False
+        )
+
+        # Process last 48 hours to catch any missed data
+        sep_result = separation_service.run(hours=48)
+        separation_service.close()
+
+        results['separation'] = {
+            'success': True,
+            'houses': sep_result.get('houses', 0),
+            'records': sep_result.get('records', 0)
+        }
+
+        if sep_result.get('records', 0) > 0:
+            print(f"✓ Separated energy for {sep_result['houses']} house(s), {sep_result['records']} record(s)")
+            seq_logger.log(
+                "Energy separation: {Records} records for {Houses} house(s)",
+                level='Information',
+                properties={
+                    'Records': sep_result['records'],
+                    'Houses': sep_result['houses']
+                }
+            )
+        else:
+            print("ℹ No energy data to separate")
+
+    except Exception as e:
+        logger.error(f"Energy separation failed: {e}")
+        print(f"❌ Separation failed: {e}")
+        seq_logger.log(
+            "Energy separation failed: {Error}",
+            level='Error',
+            properties={'Error': str(e)}
+        )
+
+    # Step 3: Recalibrate k-values (only if separation succeeded)
+    print("\n📊 Step 3: Recalibrating k-values...")
+    if results['separation']['success'] and results['separation']['records'] > 0:
+        calibrated_count = 0
+        try:
+            # Get all enabled houses
+            for filename in os.listdir(profiles_dir):
+                if not filename.endswith('.json'):
+                    continue
+                try:
+                    from customer_profile import CustomerProfile
+                    profile = CustomerProfile.load_by_path(
+                        os.path.join(profiles_dir, filename)
+                    )
+                    if not profile.energy_separation.enabled:
+                        continue
+
+                    result = recalibrate_house(
+                        house_id=profile.customer_id,
+                        influx_url=config['influxdb_url'],
+                        influx_token=config['influxdb_token'],
+                        influx_org=config['influxdb_org'],
+                        influx_bucket=config['influxdb_bucket'],
+                        profiles_dir=profiles_dir,
+                        days=calibration_days,
+                        update_profile=True
+                    )
+                    if result:
+                        calibrated_count += 1
+                        print(f"  ✓ {profile.friendly_name}: k={result.k_value:.4f} kW/°C ({result.confidence:.0%} confidence)")
+                        seq_logger.log(
+                            "K-value calibrated for {House}: {KValue} kW/°C",
+                            level='Information',
+                            properties={
+                                'House': profile.friendly_name,
+                                'HouseId': profile.customer_id,
+                                'KValue': round(result.k_value, 5),
+                                'Confidence': round(result.confidence, 2),
+                                'DaysUsed': result.days_used
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to calibrate {filename}: {e}")
+
+            results['calibration'] = {
+                'success': True,
+                'houses': calibrated_count
+            }
+
+            if calibrated_count > 0:
+                print(f"✓ Calibrated k-values for {calibrated_count} house(s)")
+            else:
+                print("ℹ No houses ready for k-value calibration")
+
+        except Exception as e:
+            logger.error(f"K-value calibration failed: {e}")
+            print(f"❌ Calibration failed: {e}")
+            seq_logger.log(
+                "K-value calibration failed: {Error}",
+                level='Error',
+                properties={'Error': str(e)}
+            )
+    else:
+        print("⏭ Skipping calibration (no new separation data)")
+
+    # Summary
+    print("\n" + "-"*50)
+    print("📋 Pipeline Summary:")
+    print(f"  Import:      {results['import']['records']} records")
+    print(f"  Separation:  {results['separation']['records']} records")
+    print(f"  Calibration: {results['calibration'].get('houses', 0)} house(s)")
+    print("="*50 + "\n")
+
+    # Log overall pipeline result
+    seq_logger.log(
+        "Energy pipeline completed: import={ImportRecords}, separation={SepRecords}, calibration={CalHouses}",
+        level='Information',
+        properties={
+            'ImportRecords': results['import']['records'],
+            'ImportFiles': results['import']['files'],
+            'SepRecords': results['separation']['records'],
+            'SepHouses': results['separation']['houses'],
+            'CalHouses': results['calibration'].get('houses', 0),
+            'PipelineSuccess': all([
+                results['import']['success'] or results['import']['records'] == 0,
+                results['separation']['success'],
+                results['calibration']['success']
+            ])
+        }
+    )
+
+    return results
+
+
+def check_daily_tasks(
+    settings: dict,
+    last_run_dates: dict,
+    config: dict,
+    customer_profile,
+    seq_logger,
+    logger
+) -> dict:
+    """
+    Check if any daily tasks are due and run them.
+
+    Args:
+        settings: Application settings with daily_tasks config
+        last_run_dates: Dict tracking last run date for each task
+        config: Application config
+        customer_profile: CustomerProfile instance
+        seq_logger: SeqLogger instance
+        logger: Python logger
+
+    Returns:
+        Updated last_run_dates dict
+    """
+    from datetime import datetime, timezone
+    import pytz
+
+    daily_tasks = settings.get('daily_tasks', {})
+    if not daily_tasks:
+        return last_run_dates
+
+    # Use local timezone for task scheduling
+    try:
+        local_tz = pytz.timezone('Europe/Stockholm')
+    except:
+        local_tz = timezone.utc
+
+    now = datetime.now(local_tz)
+    today = now.date()
+
+    for task_name, task_config in daily_tasks.items():
+        if not task_config.get('enabled', False):
+            continue
+
+        # Check if already run today
+        last_run = last_run_dates.get(task_name)
+        if last_run == today:
+            continue
+
+        # Parse scheduled time
+        scheduled_time_str = task_config.get('time', '08:00')
+        try:
+            hour, minute = map(int, scheduled_time_str.split(':'))
+            scheduled_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        except ValueError:
+            logger.warning(f"Invalid time format for task {task_name}: {scheduled_time_str}")
+            continue
+
+        # Check if it's time to run
+        if now >= scheduled_time:
+            logger.info(f"Running daily task: {task_name}")
+            print(f"\n⏰ Daily task due: {task_name} (scheduled {scheduled_time_str})")
+
+            if task_name == 'energy_pipeline':
+                calibration_days = settings.get('calibration', {}).get('k_calibration_days', 30)
+                run_energy_pipeline(
+                    config=config,
+                    customer_profile=customer_profile,
+                    seq_logger=seq_logger,
+                    logger=logger,
+                    profiles_dir="profiles",
+                    calibration_days=calibration_days
+                )
+
+            # Mark as run for today
+            last_run_dates[task_name] = today
+            logger.info(f"Completed daily task: {task_name}")
+
+    return last_run_dates
+
+
 def monitor_heating_system(config):
     """Main monitoring function"""
 
@@ -477,6 +784,18 @@ def monitor_heating_system(config):
     recalibration_hours = calibration_settings.get('k_recalibration_hours', 72)
     recalibration_days = calibration_settings.get('k_calibration_days', 30)
     recalibration_enabled = calibration_settings.get('enabled', True)
+
+    # Track daily task execution (by date)
+    daily_task_last_run = {}
+
+    # Show daily task schedule
+    daily_tasks = settings.get('daily_tasks', {})
+    if daily_tasks:
+        print("Daily tasks configured:")
+        for task_name, task_config in daily_tasks.items():
+            status = "enabled" if task_config.get('enabled') else "disabled"
+            print(f"  - {task_name}: {task_config.get('time', '08:00')} ({status})")
+        print()
 
     iteration = 0
     try:
@@ -909,7 +1228,17 @@ def monitor_heating_system(config):
                         )
                         print(f"⚠ Data collection failed ({failure_duration:.0f}m of consecutive failures)")
 
-            # Check if k-value recalibration is due (every 72h)
+            # Check and run daily scheduled tasks (energy pipeline)
+            daily_task_last_run = check_daily_tasks(
+                settings=settings,
+                last_run_dates=daily_task_last_run,
+                config=config,
+                customer_profile=customer_profile,
+                seq_logger=seq_logger,
+                logger=logger
+            )
+
+            # Check if k-value recalibration is due (every 72h) - fallback if daily pipeline hasn't run
             if (recalibration_enabled and customer_profile and
                 customer_profile.energy_separation.enabled and
                 (last_recalibration_time is None or

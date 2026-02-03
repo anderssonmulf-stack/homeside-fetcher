@@ -19,5 +19,12 @@
     "k_recalibration_hours": 72,
     "k_calibration_days": 30,
     "enabled": true
+  },
+  "daily_tasks": {
+    "energy_pipeline": {
+      "time": "08:00",
+      "enabled": true,
+      "description": "Import energy data, separate heating/DHW, recalibrate k-values"
+    }
   }
 }
