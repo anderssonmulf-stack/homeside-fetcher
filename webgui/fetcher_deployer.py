@@ -13,7 +13,7 @@ import json
 import subprocess
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import docker
 from docker.errors import NotFound, APIError
@@ -40,7 +40,8 @@ class FetcherDeployer:
         homeside_username: str,
         homeside_password: str,
         latitude: float = 56.67,
-        longitude: float = 12.86
+        longitude: float = 12.86,
+        meter_ids: List[str] = None
     ) -> Dict[str, Any]:
         """
         Deploy a new fetcher container for a customer.
@@ -52,6 +53,7 @@ class FetcherDeployer:
             homeside_password: HomeSide login password
             latitude: Location latitude for weather (default: Halmstad)
             longitude: Location longitude for weather
+            meter_ids: List of energy meter IDs for this house
 
         Returns:
             Dict with status and details
@@ -65,7 +67,7 @@ class FetcherDeployer:
 
         try:
             # Step 1: Create customer profile
-            profile_created = self._create_customer_profile(customer_id, friendly_name)
+            profile_created = self._create_customer_profile(customer_id, friendly_name, meter_ids=meter_ids or [])
             result['steps'].append({
                 'step': 'create_profile',
                 'success': profile_created,
@@ -110,19 +112,33 @@ class FetcherDeployer:
 
         return result
 
-    def _create_customer_profile(self, customer_id: str, friendly_name: str) -> bool:
+    def _create_customer_profile(self, customer_id: str, friendly_name: str, meter_ids: List[str] = None) -> bool:
         """Create a new customer profile with default settings."""
         profile_path = os.path.join(self.profiles_dir, f'{customer_id}.json')
 
         # Don't overwrite existing profile
         if os.path.exists(profile_path):
             logger.info(f"Profile already exists for {customer_id}")
+            # Update meter_ids if provided and profile exists
+            if meter_ids:
+                try:
+                    with open(profile_path, 'r') as f:
+                        existing = json.load(f)
+                    # Only update if meter_ids not already set
+                    if not existing.get('meter_ids'):
+                        existing['meter_ids'] = meter_ids
+                        with open(profile_path, 'w') as f:
+                            json.dump(existing, f, indent=2)
+                        logger.info(f"Updated meter_ids for {customer_id}: {meter_ids}")
+                except Exception as e:
+                    logger.warning(f"Failed to update meter_ids for {customer_id}: {e}")
             return True
 
         profile = {
             "schema_version": 1,
             "customer_id": customer_id,
             "friendly_name": friendly_name,
+            "meter_ids": meter_ids or [],
             "building": {
                 "description": "",
                 "thermal_response": "medium"

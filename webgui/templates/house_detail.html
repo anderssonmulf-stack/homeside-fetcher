@@ -137,6 +137,15 @@
                            {% if not can_edit %}disabled{% endif %}>
                 </div>
 
+                <div class="form-group">
+                    <label for="meter_ids">Energy Meter IDs</label>
+                    <input type="text" id="meter_ids" name="meter_ids"
+                           value="{{ profile.meter_ids|join(', ') if profile.meter_ids else '' }}"
+                           placeholder="e.g., 12345678, 87654321"
+                           {% if not can_edit %}disabled{% endif %}>
+                    <small class="help-text">District heating meter number(s), comma-separated. Required for automatic energy data import.</small>
+                </div>
+
                 {% if can_edit %}
                 <button type="submit" class="btn btn-primary btn-small">Save Building Info</button>
                 {% endif %}

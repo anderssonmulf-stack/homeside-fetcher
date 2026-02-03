@@ -188,6 +188,7 @@ def register():
         homeside_username = request.form.get('homeside_username', '').strip()
         homeside_password = request.form.get('homeside_password', '').strip()
         house_friendly_name = request.form.get('house_friendly_name', '').strip()
+        meter_number = request.form.get('meter_number', '').strip()
 
         # Validation
         errors = []
@@ -226,7 +227,8 @@ def register():
                                    username=username, name=name, email=email, note=note,
                                    homeside_username=homeside_username,
                                    homeside_password=homeside_password,
-                                   house_friendly_name=house_friendly_name)
+                                   house_friendly_name=house_friendly_name,
+                                   meter_number=meter_number)
 
         # Create pending user with verified customer_id
         verified_customer_id = ''
@@ -244,7 +246,8 @@ def register():
             homeside_username=homeside_username,
             homeside_password=homeside_password,
             house_friendly_name=house_friendly_name,
-            verified_customer_id=verified_customer_id
+            verified_customer_id=verified_customer_id,
+            meter_number=meter_number
         )
 
         audit_logger.log('UserRegistered', username, {'email': email, 'house_name': house_friendly_name})
@@ -1020,6 +1023,19 @@ def update_house_settings(house_id):
         }
         profile.comfort.acceptable_deviation = new_deviation
 
+    # Update meter_ids (comma-separated input)
+    new_meter_ids_str = request.form.get('meter_ids', '').strip()
+    if new_meter_ids_str is not None:
+        # Parse comma-separated meter IDs, strip whitespace, filter empty
+        new_meter_ids = [m.strip() for m in new_meter_ids_str.split(',') if m.strip()]
+        old_meter_ids = profile.meter_ids or []
+        if set(new_meter_ids) != set(old_meter_ids):
+            changes['meter_ids'] = {
+                'old': old_meter_ids,
+                'new': new_meter_ids
+            }
+            profile.meter_ids = new_meter_ids
+
     if changes:
         profile.save()
 
@@ -1032,6 +1048,15 @@ def update_house_settings(house_id):
                 'new_value': values['new'],
                 'source': 'gui'
             })
+
+        # If meter_ids changed, sync to Dropbox
+        if 'meter_ids' in changes:
+            try:
+                from dropbox_sync import sync_meters
+                sync_meters()
+            except Exception as e:
+                # Don't fail the request if sync fails
+                logger.warning(f"Failed to sync meters to Dropbox: {e}")
 
         flash('Settings updated successfully.', 'success')
     else:
@@ -1277,11 +1302,17 @@ def admin_approve_user(username):
         deploy_result = None
         if customer_id and user.get('homeside_username') and user.get('homeside_password'):
             deployer = FetcherDeployer()
+            # Get meter_number if provided during registration
+            meter_ids = []
+            if user.get('meter_number'):
+                meter_ids = [user.get('meter_number')]
+
             deploy_result = deployer.deploy_fetcher(
                 customer_id=customer_id,
                 friendly_name=user.get('house_friendly_name', customer_id),
                 homeside_username=user.get('homeside_username'),
-                homeside_password=user.get('homeside_password')
+                homeside_password=user.get('homeside_password'),
+                meter_ids=meter_ids
             )
 
             if deploy_result.get('success'):

@@ -18,7 +18,7 @@ A Python application that fetches heating system data from HomeSide district hea
 | `seq_logger.py` | Centralized Seq structured logging with automatic client_id tagging for multi-site deployments. |
 | `customer_profile.py` | Manages customer-specific settings and learned parameters. Each customer has a JSON profile in `profiles/`. |
 | `temperature_forecaster.py` | Model C hybrid forecaster: combines physics-based prediction with historical learning for accurate temperature forecasts. |
-| `dropbox_client.py` | Dropbox OAuth client with refresh token support for long-lived access. |
+| `dropbox_client.py` | Dropbox OAuth client with automatic token refresh (uses refresh token to renew short-lived access tokens). |
 | `dropbox_sync.py` | Manages meter request file (`/data/SvenskEB_DH.csv`) - syncs meter IDs and from-dates to Dropbox. |
 | `energy_importer.py` | Imports energy data files from Dropbox into InfluxDB. Deletes files after successful import. |
 | `setup_dropbox_auth.py` | One-time OAuth setup script for Dropbox authentication. |
@@ -543,7 +543,7 @@ This reads `EventType='DataCollected'` events from Seq and writes them to the `t
 
 ## Customer Profiles
 
-Each customer has a JSON profile in `profiles/` containing all customer-specific settings and learned parameters. This centralizes configuration for maintainability and future GUI integration.
+Each customer has a JSON profile in `profiles/` containing all customer-specific settings and learned parameters. This centralizes configuration for maintainability and GUI integration (svenskeb.se).
 
 ### Profile Structure
 
@@ -767,7 +767,7 @@ The system is exposed publicly via **svenskeb.se** (Svensk EnergiBesparing) with
 | URL | Purpose |
 |-----|---------|
 | `grafana.svenskeb.se` | Grafana dashboards (HTTPS, basic auth) |
-| `svenskeb.se` | Reserved for future Settings GUI |
+| `svenskeb.se` | Settings GUI - user registration, house settings, admin panel |
 
 ### nginx Reverse Proxy
 

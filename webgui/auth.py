@@ -95,7 +95,8 @@ class UserManager:
                     homeside_username: str = '',
                     homeside_password: str = '',
                     house_friendly_name: str = '',
-                    verified_customer_id: str = '') -> bool:
+                    verified_customer_id: str = '',
+                    meter_number: str = '') -> bool:
         """Create a new user account"""
         data = self._load_data()
 
@@ -115,7 +116,8 @@ class UserManager:
             'homeside_username': homeside_username,
             'homeside_password': homeside_password,
             'house_friendly_name': house_friendly_name,
-            'verified_customer_id': verified_customer_id
+            'verified_customer_id': verified_customer_id,
+            'meter_number': meter_number
         }
 
         self._save_data(data)

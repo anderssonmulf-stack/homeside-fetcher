@@ -65,6 +65,13 @@
                 <small class="help-text">A friendly name for your house (shown in dashboards)</small>
             </div>
 
+            <div class="form-group">
+                <label for="meter_number">District Heating Meter Number (optional)</label>
+                <input type="text" id="meter_number" name="meter_number"
+                       value="{{ meter_number or '' }}" placeholder="e.g., 12345678">
+                <small class="help-text">Your meter number from the energy company. Required for automatic energy data import.</small>
+            </div>
+
             <h3 class="form-section-title">Additional Information</h3>
 
             <div class="form-group">
