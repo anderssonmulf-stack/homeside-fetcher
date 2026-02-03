@@ -485,32 +485,6 @@ verify_nas_backup() {
     return 0
 }
 
-cleanup_local_backups_after_nas_verified() {
-    local archive_name="$1"
-    local local_backup_dir="$2"
-    print_header "🗑️  Cleaning up local backups (NAS verified)"
-
-    # Delete all local Docker backups since NAS copy is verified
-    local removed_count=0
-    local removed_size_mb=0
-
-    for local_backup in "${local_backup_dir}"/${PROJECT_NAME}_docker_backup_*.tar.gz; do
-        if [ -f "$local_backup" ]; then
-            local size_mb=$(get_file_size_mb "$local_backup")
-            rm -f "$local_backup"
-            removed_count=$((removed_count + 1))
-            removed_size_mb=$(echo "$removed_size_mb + $size_mb" | bc)
-            echo -e "   ${YELLOW}🗑️  Removed: $(basename $local_backup) (${size_mb} MB)${NC}"
-        fi
-    done
-
-    if [ "$removed_count" -gt 0 ]; then
-        echo -e "   ${GREEN}✅ Removed ${removed_count} local backup(s), freed ${removed_size_mb} MB${NC}"
-    else
-        echo -e "   ${GREEN}✅ No local backups to remove${NC}"
-    fi
-}
-
 ###############################################################################
 # Main execution
 ###############################################################################
@@ -542,19 +516,13 @@ main() {
     create_restore_script "$backup_dir"
     create_readme "$backup_dir"
 
-    # Create final archive
+    # Create final archive (in /tmp)
     local archive_info=$(create_final_archive "$backup_dir")
     archive_path=$(echo "$archive_info" | cut -d'|' -f1)
     local archive_name=$(echo "$archive_info" | cut -d'|' -f2)
     local archive_size_mb=$(get_file_size_mb "$archive_path")
 
-    # Copy to local backup location
-    local local_backup_dir="/opt/docker/${PROJECT_NAME}/backups"
-    mkdir -p "$local_backup_dir"
-    cp "$archive_path" "$local_backup_dir/"
-    echo -e "${GREEN}✅ Local copy saved: ${local_backup_dir}/${archive_name}${NC}"
-
-    # Optionally copy to NAS and verify
+    # Copy to NAS and verify
     local nas_verified=false
     if [ "$SAVE_TO_NAS" = true ]; then
         if mount_nas; then
@@ -564,43 +532,22 @@ main() {
             # Verify the backup exists on NAS with correct size
             if verify_nas_backup "$archive_path" "$archive_name"; then
                 nas_verified=true
+                # NAS verified - delete local archive from /tmp
+                echo ""
+                echo -e "${GREEN}🗑️  NAS backup verified - removing local archive...${NC}"
+                rm -f "$archive_path"
+                echo -e "   ${GREEN}✅ Local archive deleted${NC}"
+                archive_path=""
             else
-                echo -e "${YELLOW}⚠️  NAS verification failed, keeping local backups${NC}"
+                echo -e "${YELLOW}⚠️  NAS verification failed!${NC}"
+                echo -e "${YELLOW}   Local archive kept at: ${archive_path}${NC}"
             fi
         else
-            echo -e "${YELLOW}⚠️  Failed to mount NAS, backup saved locally only${NC}"
+            echo -e "${RED}❌ Failed to mount NAS${NC}"
+            echo -e "${YELLOW}   Local archive kept at: ${archive_path}${NC}"
         fi
-    fi
-
-    # Clean up local backups based on NAS verification
-    if [ "$nas_verified" = true ]; then
-        # NAS copy verified - delete ALL local backups
-        cleanup_local_backups_after_nas_verified "$archive_name" "$local_backup_dir"
     else
-        # NAS not verified - keep latest 2 local backups for safety
-        echo ""
-        echo -e "${GREEN}🗑️  Cleaning up old local Docker backups (keeping latest 2 for safety)...${NC}"
-        local backup_count=$(ls -1 "${local_backup_dir}"/${PROJECT_NAME}_docker_backup_*.tar.gz 2>/dev/null | wc -l)
-
-        if [ "$backup_count" -gt 2 ]; then
-            ls -1t "${local_backup_dir}"/${PROJECT_NAME}_docker_backup_*.tar.gz | tail -n +3 | while read -r old_backup; do
-                local size_mb=$(get_file_size_mb "$old_backup")
-                rm -f "$old_backup"
-                echo -e "   ${YELLOW}🗑️  Removed: $(basename $old_backup) (${size_mb} MB)${NC}"
-            done
-            echo -e "   ${GREEN}✅ Cleaned up old local backups${NC}"
-        else
-            echo -e "   ${GREEN}✅ No old backups to remove (keeping latest 2)${NC}"
-        fi
-    fi
-
-    # Delete temporary archive from /tmp
-    if [ -f "$archive_path" ]; then
-        echo ""
-        echo -e "${GREEN}🗑️  Removing temporary archive from /tmp...${NC}"
-        rm -f "$archive_path"
-        echo -e "   ${GREEN}✅ Temporary archive deleted${NC}"
-        archive_path=""
+        echo -e "${YELLOW}⚠️  NAS backup disabled, archive at: ${archive_path}${NC}"
     fi
 
     # Success!
@@ -609,12 +556,15 @@ main() {
 
     echo ""
     echo "============================================================"
-    echo -e "${GREEN}✅ Docker backup completed successfully in ${total_duration}s${NC}"
-    echo -e "   Archive: ${archive_name}"
-    echo -e "   Size: ${archive_size_mb} MB"
-    echo -e "   Local: ${local_backup_dir}/${archive_name}"
-    if [ "$SAVE_TO_NAS" = true ] && [ "$mounted" = true ]; then
+    if [ "$nas_verified" = true ]; then
+        echo -e "${GREEN}✅ Docker backup completed successfully in ${total_duration}s${NC}"
+        echo -e "   Archive: ${archive_name}"
+        echo -e "   Size: ${archive_size_mb} MB"
         echo -e "   NAS: //${NAS_IP}/${NAS_SHARE}/${PROJECT_NAME}_docker_backups/${archive_name}"
+    else
+        echo -e "${YELLOW}⚠️  Docker backup created but NAS transfer failed${NC}"
+        echo -e "   Archive: ${archive_path}"
+        echo -e "   Size: ${archive_size_mb} MB"
     fi
     echo "============================================================"
 }
