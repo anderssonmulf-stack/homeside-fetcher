@@ -23,6 +23,10 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Source shared backup configuration (single source of truth for what to backup)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/backup_include.conf"
+
 ###############################################################################
 # Functions
 ###############################################################################
@@ -68,155 +72,13 @@ unmount_nas() {
 }
 
 backup_config_files() {
-    local backup_dir="$1"
-    echo -e "${GREEN}📋 Backing up configuration files...${NC}"
-
-    local config_dir="${backup_dir}/config"
-    mkdir -p "$config_dir"
-
-    local files_backed_up=0
-
-    # Copy configuration files
-    if [ -f "${PROJECT_DIR}/docker-compose.yml" ]; then
-        cp "${PROJECT_DIR}/docker-compose.yml" "$config_dir/"
-        echo -e "   ${GREEN}✅ docker-compose.yml${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    if [ -f "${PROJECT_DIR}/.env" ]; then
-        cp "${PROJECT_DIR}/.env" "$config_dir/"
-        echo -e "   ${GREEN}✅ .env${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    if [ -f "${PROJECT_DIR}/.env.example" ]; then
-        cp "${PROJECT_DIR}/.env.example" "$config_dir/"
-        echo -e "   ${GREEN}✅ .env.example${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    if [ -f "${PROJECT_DIR}/Dockerfile" ]; then
-        cp "${PROJECT_DIR}/Dockerfile" "$config_dir/"
-        echo -e "   ${GREEN}✅ Dockerfile${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    if [ -f "${PROJECT_DIR}/requirements.txt" ]; then
-        cp "${PROJECT_DIR}/requirements.txt" "$config_dir/"
-        echo -e "   ${GREEN}✅ requirements.txt${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    if [ -f "${PROJECT_DIR}/variables_config.json" ]; then
-        cp "${PROJECT_DIR}/variables_config.json" "$config_dir/"
-        echo -e "   ${GREEN}✅ variables_config.json${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    if [ -f "${PROJECT_DIR}/README.md" ]; then
-        cp "${PROJECT_DIR}/README.md" "$config_dir/"
-        echo -e "   ${GREEN}✅ README.md${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    # Backup scripts
-    if [ -d "${PROJECT_DIR}/backup_scripts" ]; then
-        mkdir -p "$config_dir/backup_scripts"
-        cp -r "${PROJECT_DIR}/backup_scripts/"* "$config_dir/backup_scripts/"
-        echo -e "   ${GREEN}✅ backup_scripts/${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    echo -e "   ${GREEN}✅ Backed up ${files_backed_up} config files${NC}"
-    return 0
+    # Use shared function from backup_include.conf
+    backup_config_shared "$1" "$PROJECT_DIR"
 }
 
 backup_codebase() {
-    local backup_dir="$1"
-    echo -e "${GREEN}📦 Backing up codebase...${NC}"
-
-    local code_dir="${backup_dir}/codebase"
-    mkdir -p "$code_dir"
-
-    local files_backed_up=0
-
-    # Backup Python files in root
-    for py_file in "${PROJECT_DIR}"/*.py; do
-        if [ -f "$py_file" ]; then
-            cp "$py_file" "$code_dir/"
-            echo -e "   ${GREEN}✅ $(basename $py_file)${NC}"
-            files_backed_up=$((files_backed_up + 1))
-        fi
-    done
-
-    # Backup shell scripts in root
-    for sh_file in "${PROJECT_DIR}"/*.sh; do
-        if [ -f "$sh_file" ]; then
-            cp "$sh_file" "$code_dir/"
-            echo -e "   ${GREEN}✅ $(basename $sh_file)${NC}"
-            files_backed_up=$((files_backed_up + 1))
-        fi
-    done
-
-    # Backup energy_models package
-    if [ -d "${PROJECT_DIR}/energy_models" ]; then
-        mkdir -p "$code_dir/energy_models"
-        cp -r "${PROJECT_DIR}/energy_models/"*.py "$code_dir/energy_models/" 2>/dev/null || true
-        echo -e "   ${GREEN}✅ energy_models/${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    # Backup webgui (excluding venv)
-    if [ -d "${PROJECT_DIR}/webgui" ]; then
-        mkdir -p "$code_dir/webgui"
-        cp "${PROJECT_DIR}/webgui/"*.py "$code_dir/webgui/" 2>/dev/null || true
-        cp "${PROJECT_DIR}/webgui/"*.txt "$code_dir/webgui/" 2>/dev/null || true
-        cp "${PROJECT_DIR}/webgui/"*.service "$code_dir/webgui/" 2>/dev/null || true
-        cp -r "${PROJECT_DIR}/webgui/templates" "$code_dir/webgui/" 2>/dev/null || true
-        cp -r "${PROJECT_DIR}/webgui/static" "$code_dir/webgui/" 2>/dev/null || true
-        echo -e "   ${GREEN}✅ webgui/${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    # Backup profiles
-    if [ -d "${PROJECT_DIR}/profiles" ]; then
-        mkdir -p "$code_dir/profiles"
-        cp "${PROJECT_DIR}/profiles/"*.json "$code_dir/profiles/" 2>/dev/null || true
-        echo -e "   ${GREEN}✅ profiles/${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    # Backup grafana dashboards
-    if [ -d "${PROJECT_DIR}/grafana" ]; then
-        cp -r "${PROJECT_DIR}/grafana" "$code_dir/" 2>/dev/null || true
-        echo -e "   ${GREEN}✅ grafana/${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    # Backup nginx configs
-    if [ -d "${PROJECT_DIR}/nginx" ]; then
-        cp -r "${PROJECT_DIR}/nginx" "$code_dir/" 2>/dev/null || true
-        echo -e "   ${GREEN}✅ nginx/${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    # Backup docs
-    if [ -d "${PROJECT_DIR}/docs" ]; then
-        cp -r "${PROJECT_DIR}/docs" "$code_dir/" 2>/dev/null || true
-        echo -e "   ${GREEN}✅ docs/${NC}"
-        files_backed_up=$((files_backed_up + 1))
-    fi
-
-    # Remove __pycache__ if any
-    find "$code_dir" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-    find "$code_dir" -type f -name "*.pyc" -delete 2>/dev/null || true
-
-    # Calculate total size
-    local size_bytes=$(du -sb "$code_dir" 2>/dev/null | cut -f1)
-    local total_size_mb=$(echo "scale=2; $size_bytes / 1024 / 1024" | bc)
-
-    echo -e "   ${GREEN}✅ Backed up ${files_backed_up} items: ${total_size_mb} MB${NC}"
-    return 0
+    # Use shared function from backup_include.conf
+    backup_codebase_shared "$1" "$PROJECT_DIR"
 }
 
 create_archive() {
