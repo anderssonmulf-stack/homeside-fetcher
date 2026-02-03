@@ -22,16 +22,19 @@ A Python application that optimizes district heating by learning your building's
 
 ## Setup Instructions
 
-### 1. Get Your Session Token
+### 1. Configure Credentials
 
-The HomeSide API requires a session token from the browser:
+The application supports two authentication methods:
 
-1. Log in to https://homeside.systeminstallation.se/
-2. Open **Developer Tools** (F12)
-3. Go to **Application** tab
-4. Expand **Local Storage** -> click `homeside.systeminstallation.se`
-5. Find the key `currentToken`
-6. Copy the value after `"querykey":"` (not the whole object)
+**Option A: Username/Password (Recommended)**
+- Set `HOMESIDE_USERNAME` and `HOMESIDE_PASSWORD` in `.env`
+- Tokens are automatically obtained and refreshed when they expire
+- No manual intervention needed
+
+**Option B: Manual Session Token (Legacy)**
+- Get token from browser: Log in to HomeSide → F12 → Application → Local Storage → `currentToken`
+- Set `HOMESIDE_SESSION_TOKEN` in `.env`
+- Note: This token will expire and require manual refresh
 
 ### 2. Client ID (Auto-Discovered)
 
@@ -48,7 +51,6 @@ nano .env
 ```
 
 Required settings:
-- `HOMESIDE_SESSION_TOKEN` - from step 1
 - `HOMESIDE_USERNAME` - your HomeSide username
 - `HOMESIDE_PASSWORD` - your HomeSide password
 
@@ -90,9 +92,9 @@ Key variables tracked from the heating system:
 
 | Environment Variable | Description | Required | Default |
 |---------------------|-------------|----------|---------|
-| HOMESIDE_SESSION_TOKEN | Session token from browser | Yes | - |
 | HOMESIDE_USERNAME | HomeSide username | Yes | - |
 | HOMESIDE_PASSWORD | HomeSide password | Yes | - |
+| HOMESIDE_SESSION_TOKEN | Manual session token (legacy, optional) | No | - |
 | HOMESIDE_CLIENTID | Client ID (auto-discovered if not set) | No | Auto |
 | POLL_INTERVAL_MINUTES | Minutes between polls | No | 15 |
 | INFLUXDB_URL | InfluxDB server URL | No | - |
@@ -104,10 +106,13 @@ Key variables tracked from the heating system:
 | FRIENDLY_NAME | Human-readable site name | No | - |
 | HEAT_CURVE_ENABLED | Enable heat curve control | No | false |
 
-## Token Expiration
+## Token Management
 
-The session token from the browser will eventually expire. When you see authentication errors:
+**With username/password authentication (recommended):**
+Tokens are automatically refreshed when they expire. No manual intervention needed.
 
+**With manual session token (legacy):**
+The session token will eventually expire. When you see authentication errors:
 1. Log in to HomeSide again in your browser
 2. Get the new `currentToken` value from Local Storage
 3. Update `.env` with the new token
@@ -116,7 +121,8 @@ The session token from the browser will eventually expire. When you see authenti
 ## Troubleshooting
 
 ### "no authorization header sent" error
-Your session token has expired. Get a fresh one from the browser.
+If using username/password: Check credentials are correct. The system will auto-retry.
+If using manual token: Your session token has expired. Get a fresh one from the browser, or switch to username/password authentication for automatic refresh.
 
 ### "Method forbiden" error
 Check that your clientid is correct.
@@ -171,11 +177,12 @@ homeside-fetcher/
 - [x] Web dashboard (Grafana)
 - [x] Public access with security (nginx, HTTPS, geo-blocking)
 - [x] Settings GUI with user management (svenskeb.se)
+- [x] Automatic token refresh (HomeSide API and Dropbox OAuth)
+- [x] Energy data import from Dropbox with daily scheduling
 
 ### Potential Future Features
 
 - [ ] MQTT publishing for home automation integration
-- [ ] Automatic token refresh
 - [ ] Home Assistant integration
 - [ ] Mobile notifications
 
