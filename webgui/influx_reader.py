@@ -636,6 +636,7 @@ class InfluxReader:
             - dh_supply_temp, dh_return_temp (district heating primary side)
             - supply_temp, return_temp (house secondary side)
             - outdoor_temperature
+            - supply_temp_heat_curve_ml (predicted supply temp using effective temp)
         """
         self._ensure_connection()
         if not self.client:
@@ -654,7 +655,8 @@ class InfluxReader:
                     r["_field"] == "dh_return_temp" or
                     r["_field"] == "supply_temp" or
                     r["_field"] == "return_temp" or
-                    r["_field"] == "outdoor_temperature"
+                    r["_field"] == "outdoor_temperature" or
+                    r["_field"] == "supply_temp_heat_curve_ml"
                 )
                 |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
                 |> sort(columns: ["_time"])
@@ -679,6 +681,7 @@ class InfluxReader:
                             'supply_temp': record.values.get('supply_temp'),
                             'return_temp': record.values.get('return_temp'),
                             'outdoor_temperature': record.values.get('outdoor_temperature'),
+                            'supply_temp_heat_curve_ml': record.values.get('supply_temp_heat_curve_ml'),
                         })
 
             return results
@@ -1144,6 +1147,68 @@ class InfluxReader:
         except Exception as e:
             print(f"Failed to query energy separation data: {e}")
             return {'data': [], 'totals': {}, 'k_value': None}
+
+    def get_k_value_history(self, house_id: str, days: int = 30) -> dict:
+        """
+        Get k-value calibration history for convergence visualization.
+
+        Returns:
+            Dict with 'data' list of k-value records over time
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'data': [], 'current_k': None}
+
+        try:
+            query_api = self.client.query_api()
+
+            # Extract short house_id (last part after /) for k-value lookup
+            # k_calibration_history stores short IDs like "HEM_FJV_Villa_149"
+            short_id = house_id.split('/')[-1] if '/' in house_id else house_id
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "k_calibration_history")
+                |> filter(fn: (r) => r["house_id"] =~ /{short_id}/)
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            results = []
+            for table in tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    # Convert to Swedish time for display
+                    ts_swedish = ts.astimezone(ZoneInfo('Europe/Stockholm'))
+
+                    results.append({
+                        'timestamp': ts.isoformat(),
+                        'timestamp_display': ts_swedish.strftime('%Y-%m-%d %H:%M'),
+                        'k_value': record.values.get('k_value'),
+                        'k_median': record.values.get('k_median'),
+                        'k_stddev': record.values.get('k_stddev'),
+                        'confidence': record.values.get('confidence'),
+                        'days_used': record.values.get('days_used'),
+                        'avg_outdoor_temp': record.values.get('avg_outdoor_temp'),
+                    })
+
+            # Get current k from profile if available
+            current_k = None
+            if results:
+                current_k = results[-1].get('k_value')
+
+            return {
+                'data': results,
+                'current_k': current_k,
+                'days': days
+            }
+
+        except Exception as e:
+            print(f"Failed to query k-value history: {e}")
+            return {'data': [], 'current_k': None}
 
     def close(self):
         """Close the connection"""

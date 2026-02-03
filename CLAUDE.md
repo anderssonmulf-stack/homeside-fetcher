@@ -763,8 +763,96 @@ Internet → nginx (svenskeb.se) → Gunicorn → Flask App
 | `register.html` | User registration with HomeSide credentials |
 | `dashboard.html` | User's house list |
 | `house_detail.html` | Real-time data, settings, profile editing |
+| `house_graphs.html` | Plotly charts for data visualization |
 | `admin_users.html` | Admin: user approval, credential testing |
 | `admin_edit_user.html` | Admin: edit user details |
+
+### Plotly Chart Implementation Pattern
+
+All charts in `house_graphs.html` must follow this pattern to avoid "Loading..." spinner issues:
+
+```javascript
+function updateMyChart() {
+    const chartDiv = document.getElementById('my-chart');
+    const summaryDiv = document.getElementById('my-summary');
+
+    // 1. Show loading spinner
+    chartDiv.innerHTML = '<div class="loading-spinner">Loading...</div>';
+    summaryDiv.innerHTML = '';
+
+    fetch(`/api/house/${houseId}/my-endpoint?days=${days}`)
+        .then(r => r.ok ? r.json() : { data: [], error: 'Failed' })
+        .then(result => {
+            const data = result.data || [];
+
+            // 2. Handle empty data
+            if (data.length === 0) {
+                chartDiv.innerHTML = '<div class="no-data-message">No data available.</div>';
+                return;
+            }
+
+            // 3. Build traces and layout...
+            const traces = [...];
+            const layout = {
+                height: 350,
+                margin: { l: 60, r: 30, t: 30, b: 80 },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: '#ffffff',
+                font: { family: 'system-ui, -apple-system, sans-serif' },
+                dragmode: 'pan',
+                hovermode: 'x unified',
+                // ... other options
+            };
+
+            // 4. CRITICAL: Clear loading spinner BEFORE Plotly renders
+            chartDiv.innerHTML = '';
+
+            // 5. Use Plotly with promise chain for error handling
+            Plotly.newPlot('my-chart', traces, layout, chartConfig)
+                .then(() => {
+                    // 6. Update summary after chart renders
+                    summaryDiv.innerHTML = `...`;
+                })
+                .catch(err => {
+                    console.error('Plotly render error:', err);
+                    chartDiv.innerHTML = '<div class="no-data-message">Failed to render.</div>';
+                });
+        })
+        .catch(error => {
+            console.error('Failed to load data:', error);
+            chartDiv.innerHTML = '<div class="no-data-message">Failed to load data.</div>';
+        });
+}
+```
+
+**Key points:**
+1. Always clear the loading spinner with `chartDiv.innerHTML = ''` before `Plotly.newPlot()`
+2. Always use `.catch()` on the Plotly promise to handle render errors
+3. Include standard layout properties: `height`, `paper_bgcolor`, `plot_bgcolor`, `font`, `dragmode`
+4. Use `chartConfig` (defined globally) for consistent Plotly configuration
+
+### InfluxDB Reader Pattern
+
+All query methods in `influx_reader.py` must follow this pattern:
+
+```python
+def get_my_data(self, house_id: str, days: int = 30) -> dict:
+    self._ensure_connection()
+    if not self.client:
+        return {'data': [], 'error': 'No connection'}
+
+    try:
+        query_api = self.client.query_api()  # Get query API from client
+        # ... build and execute query
+    except Exception as e:
+        print(f"Failed to query: {e}")
+        return {'data': [], 'error': str(e)}
+```
+
+**Key points:**
+1. Call `self._ensure_connection()` at the start
+2. Check `if not self.client` and return early
+3. Create `query_api` via `self.client.query_api()` - NOT `self.query_api`
 
 ### User Roles
 

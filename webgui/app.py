@@ -793,6 +793,26 @@ def api_energy_separated(house_id):
     return jsonify(result)
 
 
+@app.route('/api/house/<house_id>/k-value-history')
+@require_login
+def api_k_value_history(house_id):
+    """
+    API endpoint for k-value calibration history.
+    Returns historical k-values for convergence visualization.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_k_value_history(house_id, days=days)
+
+    return jsonify(result)
+
+
 @app.route('/api/house/<house_id>/efficiency-metrics')
 @require_login
 def api_efficiency_metrics(house_id):
