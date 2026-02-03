@@ -274,6 +274,15 @@ class HomeSideOnDemandDHWSeparator:
         # Sort energy data by timestamp
         energy = sorted(energy_data, key=lambda x: x['timestamp'])
 
+        # Build hourly consumption lookup for capping DHW estimates
+        # Key: hour start timestamp, Value: consumption in kWh
+        hourly_consumption = {}
+        for reading in energy:
+            ts = reading['timestamp']
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            hourly_consumption[ts] = reading.get('consumption', 0) or 0
+
         # Group by period using Swedish day boundaries
         # Energy data timestamps are UTC, but we want to group by Swedish calendar day
         results = []
@@ -293,8 +302,14 @@ class HomeSideOnDemandDHWSeparator:
         current_period_energy = 0.0
         current_period_events = []
 
+        # Maximum fraction of hourly consumption that can be DHW
+        # Heating is always running, so DHW can't be 100% of any hour
+        max_hourly_dhw_fraction = 0.80
+
         for reading in energy:
             ts = reading['timestamp']
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
             consumption = reading.get('consumption', 0) or 0
 
             # Check if we've moved to a new period
@@ -314,12 +329,29 @@ class HomeSideOnDemandDHWSeparator:
 
             current_period_energy += consumption
 
-            # Find DHW events in this hour
+            # Find DHW events in this hour and cap by actual consumption
             hour_start = ts
             hour_end = ts + timedelta(hours=1)
+            hour_dhw_budget = consumption * max_hourly_dhw_fraction
+            hour_dhw_used = 0.0
+
             for event in dhw_events:
                 if event.start_time >= hour_start and event.start_time < hour_end:
-                    current_period_events.append(event)
+                    # Cap event energy by remaining hourly budget
+                    remaining_budget = hour_dhw_budget - hour_dhw_used
+                    if remaining_budget > 0:
+                        capped_energy = min(event.estimated_energy_kwh, remaining_budget)
+                        # Create a modified event with capped energy
+                        capped_event = DHWEvent(
+                            start_time=event.start_time,
+                            end_time=event.end_time,
+                            peak_temp=event.peak_temp,
+                            temp_rise=event.temp_rise,
+                            duration_minutes=event.duration_minutes,
+                            estimated_energy_kwh=capped_energy
+                        )
+                        current_period_events.append(capped_event)
+                        hour_dhw_used += capped_energy
 
         # Finalize last period
         if current_period_energy > 0:
