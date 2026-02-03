@@ -23,9 +23,10 @@ import sys
 import argparse
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from dataclasses import asdict
 
+from zoneinfo import ZoneInfo
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
@@ -39,6 +40,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Swedish timezone for proper day boundaries
+SWEDISH_TZ = ZoneInfo('Europe/Stockholm')
 
 
 class EnergySeparationService:
@@ -192,6 +196,142 @@ class EnergySeparationService:
             logger.error(f"Failed to fetch energy data: {e}")
             return []
 
+    def fetch_daily_totals(
+        self,
+        house_id: str,
+        hours: int = 24
+    ) -> Dict[str, float]:
+        """
+        Fetch daily energy totals from energy_meter for validation.
+        Groups by Swedish local date for proper day boundaries.
+
+        Returns:
+            Dict mapping date string (YYYY-MM-DD) to total kWh
+        """
+        # Query hourly data and aggregate manually with proper timezone
+        query = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: -{hours}h)
+            |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["_field"] == "consumption")
+            |> sort(columns: ["_time"])
+        '''
+
+        try:
+            tables = self.query_api.query(query, org=self.influx_org)
+
+            # Aggregate by Swedish local date
+            daily_totals = {}
+            for table in tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+
+                    # Convert to Swedish time for day grouping
+                    swedish_time = ts.astimezone(SWEDISH_TZ)
+                    date_str = swedish_time.strftime('%Y-%m-%d')
+
+                    consumption = record.get_value() or 0
+                    daily_totals[date_str] = daily_totals.get(date_str, 0) + consumption
+
+            return daily_totals
+
+        except Exception as e:
+            logger.error(f"Failed to fetch daily totals: {e}")
+            return {}
+
+    def validate_separation_results(
+        self,
+        house_id: str,
+        results: List[EnergySeparationResult],
+        tolerance_pct: float = 10.0
+    ) -> Tuple[List[EnergySeparationResult], List[Dict]]:
+        """
+        Validate separation results against actual energy totals.
+
+        Args:
+            house_id: House identifier
+            results: Separation results to validate
+            tolerance_pct: Acceptable difference percentage (default 10%)
+
+        Returns:
+            Tuple of (valid_results, issues)
+            - valid_results: Results that passed validation
+            - issues: List of dicts describing validation failures
+        """
+        if not results:
+            return [], []
+
+        # Get date range from results
+        min_date = min(r.timestamp for r in results)
+        max_date = max(r.timestamp for r in results)
+        hours = int((max_date - min_date).total_seconds() / 3600) + 48  # Add buffer
+
+        # Fetch actual daily totals
+        daily_totals = self.fetch_daily_totals(house_id, hours)
+
+        valid_results = []
+        issues = []
+
+        for result in results:
+            # Convert result timestamp to Swedish date
+            ts = result.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            swedish_time = ts.astimezone(SWEDISH_TZ)
+            date_str = swedish_time.strftime('%Y-%m-%d')
+
+            actual_total = daily_totals.get(date_str)
+            separated_total = result.total_energy_kwh
+
+            if actual_total is None:
+                # No actual data for this date - mark as low confidence
+                logger.warning(f"No actual energy data for {date_str}, skipping validation")
+                result.confidence = min(result.confidence, 0.5)
+                valid_results.append(result)
+                continue
+
+            # Calculate difference
+            diff = abs(actual_total - separated_total)
+            diff_pct = (diff / actual_total * 100) if actual_total > 0 else 0
+
+            if diff_pct > tolerance_pct:
+                issue = {
+                    'date': date_str,
+                    'actual_kwh': actual_total,
+                    'separated_kwh': separated_total,
+                    'diff_kwh': diff,
+                    'diff_pct': diff_pct,
+                    'heating_kwh': result.heating_energy_kwh,
+                    'dhw_kwh': result.dhw_energy_kwh,
+                }
+                issues.append(issue)
+                logger.warning(
+                    f"Validation failed for {date_str}: "
+                    f"actual={actual_total:.1f} vs separated={separated_total:.1f} "
+                    f"(diff={diff:.1f} kWh, {diff_pct:.1f}%)"
+                )
+
+                # Try to fix by adjusting the total and proportionally adjusting components
+                if actual_total > 0:
+                    ratio = actual_total / separated_total if separated_total > 0 else 1
+                    result.total_energy_kwh = actual_total
+                    result.heating_energy_kwh = result.heating_energy_kwh * ratio
+                    result.dhw_energy_kwh = result.dhw_energy_kwh * ratio
+                    result.confidence = max(0.3, result.confidence - 0.2)  # Lower confidence
+                    logger.info(f"  Adjusted {date_str}: heating={result.heating_energy_kwh:.1f}, dhw={result.dhw_energy_kwh:.1f}")
+
+            valid_results.append(result)
+
+        if issues:
+            logger.warning(f"Validation found {len(issues)} issue(s) for {house_id}")
+        else:
+            logger.info(f"Validation passed for all {len(results)} result(s)")
+
+        return valid_results, issues
+
     def write_separation_results(
         self,
         house_id: str,
@@ -287,8 +427,18 @@ class EnergySeparationService:
             logger.warning(f"No separation results for {house_id}")
             return 0
 
+        # Validate results against actual energy totals
+        validated_results, issues = self.validate_separation_results(
+            house_id=house_id,
+            results=results,
+            tolerance_pct=10.0  # Allow 10% difference
+        )
+
+        if issues:
+            logger.info(f"Validation adjusted {len(issues)} result(s) to match actual totals")
+
         # Write results
-        return self.write_separation_results(house_id, results)
+        return self.write_separation_results(house_id, validated_results)
 
     def run(
         self,

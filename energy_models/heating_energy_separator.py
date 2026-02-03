@@ -33,9 +33,13 @@ Configuration in customer profile:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 import statistics
+
+# Swedish timezone for proper day boundaries
+SWEDISH_TZ = ZoneInfo('Europe/Stockholm')
 
 
 @dataclass
@@ -270,9 +274,20 @@ class HomeSideOnDemandDHWSeparator:
         # Sort energy data by timestamp
         energy = sorted(energy_data, key=lambda x: x['timestamp'])
 
-        # Group by period
+        # Group by period using Swedish day boundaries
+        # Energy data timestamps are UTC, but we want to group by Swedish calendar day
         results = []
-        period_start = energy[0]['timestamp'].replace(hour=0, minute=0, second=0, microsecond=0)
+        first_ts = energy[0]['timestamp']
+
+        # Ensure timezone awareness
+        if first_ts.tzinfo is None:
+            first_ts = first_ts.replace(tzinfo=timezone.utc)
+
+        # Convert to Swedish time, get start of that day, convert back to UTC
+        swedish_time = first_ts.astimezone(SWEDISH_TZ)
+        swedish_midnight = swedish_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        period_start = swedish_midnight.astimezone(timezone.utc)
+
         period_delta = timedelta(hours=period_hours)
 
         current_period_energy = 0.0

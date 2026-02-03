@@ -1082,11 +1082,13 @@ class InfluxReader:
         try:
             query_api = self.client.query_api()
 
+            # Filter by homeside_ondemand_dhw method to avoid duplicates from k_calibration
             query = f'''
                 from(bucket: "{self.bucket}")
                 |> range(start: -{days}d)
                 |> filter(fn: (r) => r["_measurement"] == "energy_separated")
                 |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["method"] == "homeside_ondemand_dhw")
                 |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
                 |> sort(columns: ["_time"])
             '''
@@ -1105,7 +1107,8 @@ class InfluxReader:
                             timestamp = timestamp.replace(tzinfo=timezone.utc)
                         swedish_time = timestamp.astimezone(SWEDISH_TZ)
 
-                        actual = record.values.get('actual_energy_kwh') or 0
+                        # Handle both field names: total_energy_kwh (new) and actual_energy_kwh (legacy)
+                        actual = record.values.get('total_energy_kwh') or record.values.get('actual_energy_kwh') or 0
                         heating = record.values.get('heating_energy_kwh') or 0
                         dhw = record.values.get('dhw_energy_kwh') or 0
                         k = record.values.get('k_value')
@@ -1120,7 +1123,7 @@ class InfluxReader:
                             'heating_kwh': round(heating, 1),
                             'dhw_kwh': round(dhw, 1),
                             'avg_temp_diff': record.values.get('avg_temp_difference'),
-                            'dhw_events': record.values.get('dhw_events'),
+                            'dhw_events': record.values.get('dhw_event_count'),
                         })
 
                         totals['actual'] += actual

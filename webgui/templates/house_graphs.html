@@ -1551,15 +1551,14 @@
                     }
                 ];
 
-                // Add line for actual consumption
+                // Add markers for actual consumption (no line, just hover info)
                 traces.push({
                     x: timestamps,
                     y: data.map(d => d.actual_kwh),
                     type: 'scatter',
-                    mode: 'lines+markers',
+                    mode: 'markers',
                     name: 'Actual Total',
-                    line: { color: '#2c3e50', width: 2, dash: 'dot' },
-                    marker: { size: 6 },
+                    marker: { color: '#2c3e50', size: 8, symbol: 'diamond' },
                     hovertemplate: '%{x}<br>Actual: %{y} kWh<extra></extra>'
                 });
 
