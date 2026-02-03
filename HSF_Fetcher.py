@@ -919,14 +919,26 @@ def monitor_heating_system(config):
 
                     # =====================================================
                     # WEATHER: Current observations (every iteration)
+                    # Uses shared cache for neighbors with same coordinates
                     # =====================================================
                     weather_obs = None
+                    weather_obs_data = None  # Dict version for effective_temp calculation
+                    lat = config.get('latitude')
+                    lon = config.get('longitude')
+
                     if weather and observation_enabled:
-                        weather_obs = weather.get_current_weather()
-                        if weather_obs and weather_obs.temperature is not None:
-                            # Write observation to InfluxDB
-                            if influx:
-                                influx.write_weather_observation({
+                        # Try shared cache first (for effective_temp - shared among neighbors)
+                        if influx and lat and lon:
+                            cached_obs = influx.read_shared_weather_observation(lat, lon)
+                            if cached_obs:
+                                weather_obs_data = cached_obs
+                                print(f"\n📦 Weather: {cached_obs['temperature']:.1f}°C (shared cache from {cached_obs['station_name']})")
+
+                        # If no cache, fetch from SMHI
+                        if not weather_obs_data:
+                            weather_obs = weather.get_current_weather()
+                            if weather_obs and weather_obs.temperature is not None:
+                                weather_obs_data = {
                                     'station_name': weather_obs.station.name,
                                     'station_id': weather_obs.station.id,
                                     'distance_km': weather_obs.station.distance_km,
@@ -934,11 +946,17 @@ def monitor_heating_system(config):
                                     'wind_speed': weather_obs.wind_speed,
                                     'humidity': weather_obs.humidity,
                                     'timestamp': weather_obs.timestamp
-                                })
-                            print(f"\n🌡️ Current Weather: {weather_obs.temperature:.1f}°C (from {weather_obs.station.name})")
+                                }
+                                # Write to house-specific and shared cache
+                                if influx:
+                                    influx.write_weather_observation(weather_obs_data)
+                                    if lat and lon:
+                                        influx.write_shared_weather_observation(weather_obs_data, lat, lon)
+                                print(f"\n🌡️ Current Weather: {weather_obs.temperature:.1f}°C (from {weather_obs.station.name})")
 
                     # =====================================================
                     # EFFECTIVE TEMP: Calculate ML supply temp using effective temperature
+                    # Uses shared weather data from cache or fresh SMHI fetch
                     # =====================================================
                     # Use effective_temp (accounts for wind, humidity, solar) for ML supply temp
                     # This gives a more accurate "perceived" outdoor temperature for heating control
@@ -947,16 +965,17 @@ def monitor_heating_system(config):
                         effective_temp = outdoor_temp  # Default to raw outdoor temp
 
                         # Calculate effective temperature if we have weather observation data
-                        if weather_obs and weather_obs.temperature is not None:
+                        # (from shared cache or fresh fetch)
+                        if weather_obs_data and weather_obs_data.get('temperature') is not None:
                             weather_model = SimpleWeatherModel()
                             conditions = WeatherConditions(
                                 timestamp=now,
                                 temperature=outdoor_temp,  # Use HomeSide outdoor temp as base
-                                wind_speed=weather_obs.wind_speed if weather_obs.wind_speed else 3.0,
-                                humidity=weather_obs.humidity if weather_obs.humidity else 60.0,
+                                wind_speed=weather_obs_data.get('wind_speed') or 3.0,
+                                humidity=weather_obs_data.get('humidity') or 60.0,
                                 cloud_cover=4.0,  # Default: partly cloudy (could be improved with forecast data)
-                                latitude=config.get('latitude'),
-                                longitude=config.get('longitude')
+                                latitude=lat,
+                                longitude=lon
                             )
                             eff_result = weather_model.effective_temperature(conditions)
                             effective_temp = eff_result.effective_temp
@@ -1007,8 +1026,24 @@ def monitor_heating_system(config):
 
                                 # Use new forecaster if available, otherwise legacy
                                 if forecaster:
-                                    # Get hourly weather forecast for configured horizon
-                                    hourly_forecast = weather.get_forecast(hours_ahead=forecast_hours)
+                                    # Get hourly weather forecast - try shared cache first
+                                    hourly_forecast = None
+                                    lat = config.get('latitude')
+                                    lon = config.get('longitude')
+
+                                    if lat and lon:
+                                        # Check shared cache first (avoids duplicate SMHI API calls for neighbors)
+                                        hourly_forecast = influx.read_shared_weather_forecast(lat, lon)
+                                        if hourly_forecast:
+                                            print("📦 Using shared weather cache")
+
+                                    if not hourly_forecast:
+                                        # Fetch from SMHI API
+                                        hourly_forecast = weather.get_forecast(hours_ahead=forecast_hours)
+                                        # Write to shared cache for other houses
+                                        if hourly_forecast and lat and lon:
+                                            influx.delete_old_shared_weather_forecasts()
+                                            influx.write_shared_weather_forecast(hourly_forecast, lat, lon)
                                     if hourly_forecast:
                                         # Store raw weather forecast for historical analysis
                                         influx.write_weather_forecast_points(hourly_forecast)
@@ -1053,7 +1088,22 @@ def monitor_heating_system(config):
                                 else:
                                     # Legacy forecaster (fallback)
                                     # First store raw weather forecast for historical analysis
-                                    hourly_forecast = weather.get_forecast(hours_ahead=forecast_hours)
+                                    # Try shared cache first
+                                    hourly_forecast = None
+                                    lat = config.get('latitude')
+                                    lon = config.get('longitude')
+
+                                    if lat and lon:
+                                        hourly_forecast = influx.read_shared_weather_forecast(lat, lon)
+                                        if hourly_forecast:
+                                            print("📦 Using shared weather cache (legacy)")
+
+                                    if not hourly_forecast:
+                                        hourly_forecast = weather.get_forecast(hours_ahead=forecast_hours)
+                                        if hourly_forecast and lat and lon:
+                                            influx.delete_old_shared_weather_forecasts()
+                                            influx.write_shared_weather_forecast(hourly_forecast, lat, lon)
+
                                     if hourly_forecast:
                                         influx.write_weather_forecast_points(hourly_forecast)
 

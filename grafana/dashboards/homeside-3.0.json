@@ -1368,9 +1368,14 @@
             "selected": false,
             "text": "Glance",
             "value": "HEM_FJV_Villa_34"
+          },
+          {
+            "selected": false,
+            "text": "RydingResidence",
+            "value": "HEM_FJV_Villa_148"
           }
         ],
-        "query": "Daggis8 : HEM_FJV_Villa_149, Glance : HEM_FJV_Villa_34",
+        "query": "Daggis8 : HEM_FJV_Villa_149, Glance : HEM_FJV_Villa_34, RydingResidence : HEM_FJV_Villa_148",
         "skipUrlSync": false,
         "type": "custom"
       }

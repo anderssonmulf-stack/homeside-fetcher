@@ -88,12 +88,13 @@ def login():
                 flash('Your account is awaiting admin approval.', 'warning')
                 return render_template('login.html')
 
-            session['user_id'] = username
+            session['user_id'] = user['username']  # Use actual username from DB
             session['user_name'] = user['name']
             session['user_role'] = user['role']
-            session['user_houses'] = user['houses']
+            session['user_houses'] = user.get('houses', [])
+            session['verified_customer_id'] = user.get('verified_customer_id', '')
 
-            audit_logger.log('UserLogin', username, {'ip': request.remote_addr})
+            audit_logger.log('UserLogin', user['username'], {'ip': request.remote_addr})
             flash(f'Welcome, {user["name"]}!', 'success')
             return redirect(url_for('dashboard'))
         else:
@@ -111,6 +112,69 @@ def logout():
     session.clear()
     flash('You have been logged out.', 'info')
     return redirect(url_for('login'))
+
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    """Request a password reset email"""
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+
+        if not email or '@' not in email:
+            flash('Please enter a valid email address.', 'error')
+            return render_template('forgot_password.html')
+
+        # Try to create reset token (returns None if email not found)
+        token = user_manager.create_password_reset_token(email)
+
+        if token:
+            # Email exists - send reset email
+            user = user_manager.get_user_by_email(email)
+            email_service.send_password_reset_email(email, user['name'], token)
+            audit_logger.log('PasswordResetRequested', email, {'ip': request.remote_addr})
+
+        # Always show the same message for security (don't reveal if email exists)
+        flash('If an account with that email exists, we have sent password reset instructions.', 'info')
+        return redirect(url_for('login'))
+
+    return render_template('forgot_password.html')
+
+
+@app.route('/reset-password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    """Reset password using a valid token"""
+    # Validate token first
+    token_data = user_manager.validate_password_reset_token(token)
+
+    if not token_data:
+        flash('This password reset link is invalid or has expired.', 'error')
+        return redirect(url_for('forgot_password'))
+
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        confirm_password = request.form.get('confirm_password', '')
+
+        errors = []
+        if len(password) < 8:
+            errors.append('Password must be at least 8 characters.')
+        if password != confirm_password:
+            errors.append('Passwords do not match.')
+
+        if errors:
+            for error in errors:
+                flash(error, 'error')
+            return render_template('reset_password.html', token=token)
+
+        # Reset the password
+        if user_manager.reset_password_with_token(token, password):
+            audit_logger.log('PasswordReset', token_data['username'], {'ip': request.remote_addr})
+            flash('Your password has been reset successfully. You can now log in.', 'success')
+            return redirect(url_for('login'))
+        else:
+            flash('Failed to reset password. Please try again.', 'error')
+            return redirect(url_for('forgot_password'))
+
+    return render_template('reset_password.html', token=token)
 
 
 def _verify_homeside_credentials(homeside_username: str, homeside_password: str) -> dict:
@@ -275,13 +339,18 @@ def register():
 def dashboard():
     """Main dashboard - shows user's houses and recent activity"""
     user_houses = session.get('user_houses', [])
+    verified_customer_id = session.get('verified_customer_id', '')
     role = session.get('user_role')
 
     # Get houses this user can see
     if role == 'admin' or '*' in user_houses:
         house_ids = user_manager.get_all_houses()
     else:
-        house_ids = user_houses
+        # Start with assigned houses
+        house_ids = list(user_houses)
+        # Add own house if not already included
+        if verified_customer_id and verified_customer_id not in house_ids:
+            house_ids.append(verified_customer_id)
 
     # Get houses with friendly names
     from customer_profile import CustomerProfile
@@ -329,6 +398,13 @@ def house_detail(house_id):
 
     can_edit = user_manager.can_edit_house(session.get('user_id'), house_id)
 
+    # Check if this is the user's own house (for showing/hiding settings)
+    # Admins can always see settings
+    is_own_house = (
+        session.get('user_role') == 'admin' or
+        session.get('verified_customer_id') == house_id
+    )
+
     # Get real-time data from InfluxDB
     from influx_reader import get_influx_reader
     influx = get_influx_reader()
@@ -342,6 +418,7 @@ def house_detail(house_id):
                            profile=profile,
                            house_id=house_id,
                            can_edit=can_edit,
+                           is_own_house=is_own_house,
                            changes=changes,
                            realtime=realtime_data,
                            forecast=forecast_data,
@@ -369,10 +446,15 @@ def house_dashboard(customer_id):
     user = user_manager.get_user(session.get('user_id'))
     user_houses = []
     if user:
-        house_ids = user.get('houses', [])
+        house_ids = list(user.get('houses', []))
+        verified_cid = user.get('verified_customer_id', '')
+
         # Admin or wildcard user gets all houses
         if user.get('role') == 'admin' or '*' in house_ids:
             house_ids = user_manager.get_all_houses()
+        elif verified_cid and verified_cid not in house_ids:
+            # Add own house if not already included
+            house_ids.append(verified_cid)
 
         for house_id in house_ids:
             if house_id != '*':
@@ -418,10 +500,11 @@ def house_graphs(house_id):
     except FileNotFoundError:
         friendly_name = house_id
 
-    # Get data availability
+    # Get data availability and real-time data
     from influx_reader import get_influx_reader
     influx = get_influx_reader()
     availability = influx.get_data_availability(house_id, days=30)
+    realtime_data = influx.get_latest_heating_data(house_id)
 
     # Build Plotly chart data - using heatmap for data availability
     import plotly.graph_objects as go
@@ -520,6 +603,7 @@ def house_graphs(house_id):
         graph_json=graph_json,
         config_json=config_json,
         availability=availability,
+        realtime=realtime_data,
         current_house_name=friendly_name
     )
 
@@ -749,6 +833,26 @@ def api_temperature_history(house_id):
         'data': data,
         'hours': hours
     })
+
+
+@app.route('/api/house/<house_id>/supply-return-forecast')
+@require_login
+def api_supply_return_forecast(house_id):
+    """
+    API endpoint for Supply & Return temperatures with heat curve and forecast.
+    Returns historical data and future forecast predictions.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)  # Clamp between 1 and 30 days
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_supply_return_with_forecast(house_id, hours=hours)
+
+    return jsonify(result)
 
 
 @app.route('/api/house/<house_id>/energy-consumption')
@@ -1223,6 +1327,15 @@ def confirm_energy_import(house_id):
             'rows_imported': result['rows_written'],
             'total_kwh': pending['new_kwh']
         })
+
+        # Sync meter requests to Dropbox (updates from_date based on imported data)
+        try:
+            from dropbox_sync import sync_meters
+            sync_meters()
+            print(f"[INFO] Synced meter requests to Dropbox after energy import for {house_id}")
+        except Exception as e:
+            print(f"[WARNING] Failed to sync meters to Dropbox: {e}")
+
         flash(f"Successfully imported {result['rows_written']} rows ({pending['new_kwh']:.1f} kWh).", 'success')
     else:
         flash(f"Import failed: {result['error']}", 'error')
@@ -1323,6 +1436,15 @@ def admin_approve_user(username):
                 })
                 # Update Grafana dashboard to include new house
                 update_dashboard_house_variable()
+
+                # Sync meter IDs to Dropbox if provided
+                if meter_ids:
+                    try:
+                        from dropbox_sync import sync_meters
+                        sync_meters()
+                        print(f"[INFO] Synced meter IDs to Dropbox for {customer_id}")
+                    except Exception as e:
+                        print(f"[WARNING] Failed to sync meters to Dropbox: {e}")
             else:
                 audit_logger.log('FetcherDeployFailed', session.get('user_id'), {
                     'customer_id': customer_id,

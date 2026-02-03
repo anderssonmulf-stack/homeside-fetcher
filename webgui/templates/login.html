@@ -9,9 +9,9 @@
 
         <form method="POST" class="auth-form">
             <div class="form-group">
-                <label for="username">Username</label>
+                <label for="username">Username or HomeSide ID</label>
                 <input type="text" id="username" name="username" required autofocus
-                       autocomplete="username" placeholder="Enter username">
+                       autocomplete="username" placeholder="Username or FC number">
             </div>
 
             <div class="form-group">
@@ -22,6 +22,10 @@
 
             <button type="submit" class="btn btn-primary btn-full">Log In</button>
         </form>
+
+        <div class="auth-links">
+            <a href="{{ url_for('forgot_password') }}">Forgot password?</a>
+        </div>
 
         <div class="auth-footer">
             <p>Don't have an account? <a href="{{ url_for('register') }}">Register here</a></p>

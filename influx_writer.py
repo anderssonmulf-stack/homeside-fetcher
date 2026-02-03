@@ -1079,6 +1079,282 @@ class InfluxDBWriter:
             self.logger.error(f"Failed to get last data timestamps: {str(e)}")
             return {m: None for m in measurements}
 
+    def write_shared_weather_forecast(self, forecast_data: List[Dict], lat: float, lon: float) -> bool:
+        """
+        Write weather forecast to shared cache (not house-specific).
+
+        Used for caching SMHI forecasts when multiple houses share the same location.
+        Other houses can read this cache to avoid duplicate API calls.
+
+        Args:
+            forecast_data: List of forecast dictionaries from SMHI
+            lat: Latitude used for the forecast
+            lon: Longitude used for the forecast
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not forecast_data:
+            return False
+
+        try:
+            # Round coordinates to 3 decimal places for consistent cache key
+            location_key = f"{lat:.3f},{lon:.3f}"
+
+            points = []
+            for data in forecast_data:
+                time_str = data.get('time')
+                if not time_str:
+                    continue
+
+                target_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+
+                point = Point("weather_forecast_shared") \
+                    .tag("location", location_key) \
+                    .field("temperature", round(float(data['temp']), 2)) \
+                    .field("lead_time_hours", round(float(data.get('hour', 0)), 1)) \
+                    .time(target_time, WritePrecision.S)
+
+                # Add optional fields
+                if data.get('cloud_cover') is not None:
+                    point.field("cloud_cover", round(float(data['cloud_cover']), 1))
+                if data.get('wind_speed') is not None:
+                    point.field("wind_speed", round(float(data['wind_speed']), 1))
+                if data.get('wind_gust') is not None:
+                    point.field("wind_gust", round(float(data['wind_gust']), 1))
+                if data.get('wind_direction') is not None:
+                    point.field("wind_direction", round(float(data['wind_direction']), 0))
+                if data.get('humidity') is not None:
+                    point.field("humidity", round(float(data['humidity']), 0))
+                if data.get('precipitation') is not None:
+                    point.field("precipitation", round(float(data['precipitation']), 2))
+                if data.get('visibility') is not None:
+                    point.field("visibility", round(float(data['visibility']), 1))
+
+                points.append(point)
+
+            if points:
+                self.write_api.write(bucket=self.bucket, org=self.org, record=points)
+                self.logger.info(f"Wrote {len(points)} shared weather forecast points (location: {location_key})")
+                return True
+
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Failed to write shared weather forecast: {str(e)}")
+            return False
+
+    def read_shared_weather_forecast(self, lat: float, lon: float, max_age_minutes: int = 120) -> Optional[List[Dict]]:
+        """
+        Read weather forecast from shared cache if recent enough.
+
+        Args:
+            lat: Latitude to look up
+            lon: Longitude to look up
+            max_age_minutes: Maximum age of cached forecast (default 2 hours)
+
+        Returns:
+            List of forecast dictionaries if cache hit, None if miss or stale
+        """
+        if not self.enabled:
+            return None
+
+        try:
+            query_api = self.client.query_api()
+            location_key = f"{lat:.3f},{lon:.3f}"
+
+            # Query for future forecast points from this location
+            # Check if the most recent write was within max_age_minutes
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: now(), stop: 7d)
+                |> filter(fn: (r) => r["_measurement"] == "weather_forecast_shared")
+                |> filter(fn: (r) => r["location"] == "{location_key}")
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            forecast_points = []
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    values = record.values
+
+                    point = {
+                        'time': timestamp.isoformat(),
+                        'temp': values.get('temperature'),
+                        'hour': values.get('lead_time_hours', 0)
+                    }
+
+                    # Add optional fields if present
+                    if values.get('cloud_cover') is not None:
+                        point['cloud_cover'] = values['cloud_cover']
+                    if values.get('wind_speed') is not None:
+                        point['wind_speed'] = values['wind_speed']
+                    if values.get('wind_gust') is not None:
+                        point['wind_gust'] = values['wind_gust']
+                    if values.get('wind_direction') is not None:
+                        point['wind_direction'] = values['wind_direction']
+                    if values.get('humidity') is not None:
+                        point['humidity'] = values['humidity']
+                    if values.get('precipitation') is not None:
+                        point['precipitation'] = values['precipitation']
+                    if values.get('visibility') is not None:
+                        point['visibility'] = values['visibility']
+
+                    forecast_points.append(point)
+
+            if not forecast_points:
+                return None
+
+            # Check if we have enough future data (at least 12 hours)
+            if len(forecast_points) < 12:
+                self.logger.info(f"Shared weather cache has only {len(forecast_points)} points, fetching fresh")
+                return None
+
+            # Check the lead_time_hours of the first point to see how fresh the data is
+            # If the first point has lead_time > max_age_minutes/60, the cache is stale
+            first_lead_time = forecast_points[0].get('hour', 999)
+            if first_lead_time > max_age_minutes / 60:
+                self.logger.info(f"Shared weather cache is stale (first point lead_time: {first_lead_time:.1f}h)")
+                return None
+
+            self.logger.info(f"Using shared weather cache: {len(forecast_points)} points (location: {location_key})")
+            return forecast_points
+
+        except Exception as e:
+            self.logger.error(f"Failed to read shared weather forecast: {str(e)}")
+            return None
+
+    def write_shared_weather_observation(self, observation: Dict, lat: float, lon: float) -> bool:
+        """
+        Write weather observation to shared cache (for effective_temp calculation).
+
+        Args:
+            observation: Dictionary with observation data (temperature, wind, humidity, etc.)
+            lat: Latitude used for the observation
+            lon: Longitude used for the observation
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not observation:
+            return False
+
+        try:
+            location_key = f"{lat:.3f},{lon:.3f}"
+
+            point = Point("weather_observation_shared") \
+                .tag("location", location_key) \
+                .tag("station_name", observation.get('station_name', 'unknown')) \
+                .field("temperature", round(float(observation['temperature']), 2)) \
+                .field("distance_km", round(float(observation.get('distance_km', 0)), 2)) \
+                .time(observation.get('timestamp', datetime.now(timezone.utc)), WritePrecision.S)
+
+            if observation.get('wind_speed') is not None:
+                point.field("wind_speed", round(float(observation['wind_speed']), 2))
+            if observation.get('humidity') is not None:
+                point.field("humidity", round(float(observation['humidity']), 2))
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write shared weather observation: {str(e)}")
+            return False
+
+    def read_shared_weather_observation(self, lat: float, lon: float, max_age_minutes: int = 30) -> Optional[Dict]:
+        """
+        Read weather observation from shared cache if recent enough.
+
+        Args:
+            lat: Latitude to look up
+            lon: Longitude to look up
+            max_age_minutes: Maximum age of cached observation (default 30 min)
+
+        Returns:
+            Dictionary with observation data if cache hit, None if miss or stale
+        """
+        if not self.enabled:
+            return None
+
+        try:
+            query_api = self.client.query_api()
+            location_key = f"{lat:.3f},{lon:.3f}"
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{max_age_minutes}m)
+                |> filter(fn: (r) => r["_measurement"] == "weather_observation_shared")
+                |> filter(fn: (r) => r["location"] == "{location_key}")
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"], desc: true)
+                |> limit(n: 1)
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            for table in tables:
+                for record in table.records:
+                    values = record.values
+                    timestamp = record.get_time()
+
+                    observation = {
+                        'station_name': values.get('station_name', 'unknown'),
+                        'temperature': values.get('temperature'),
+                        'distance_km': values.get('distance_km', 0),
+                        'timestamp': timestamp
+                    }
+
+                    if values.get('wind_speed') is not None:
+                        observation['wind_speed'] = values['wind_speed']
+                    if values.get('humidity') is not None:
+                        observation['humidity'] = values['humidity']
+
+                    self.logger.info(f"Using shared weather observation: {observation['temperature']:.1f}°C from {observation['station_name']}")
+                    return observation
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Failed to read shared weather observation: {str(e)}")
+            return None
+
+    def delete_old_shared_weather_forecasts(self) -> bool:
+        """
+        Delete past shared weather forecast points (keep future only).
+
+        Returns:
+            True if delete succeeded, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            delete_api = self.client.delete_api()
+
+            # Delete forecasts from the past
+            start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+            stop = datetime.now(timezone.utc)
+
+            predicate = '_measurement="weather_forecast_shared"'
+
+            delete_api.delete(
+                start=start,
+                stop=stop,
+                predicate=predicate,
+                bucket=self.bucket,
+                org=self.org
+            )
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to delete old shared weather forecasts: {str(e)}")
+            return False
+
     def close(self):
         """Close InfluxDB client connection"""
         if self.client:

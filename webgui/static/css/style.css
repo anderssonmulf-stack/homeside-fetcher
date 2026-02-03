@@ -634,6 +634,20 @@ a:hover {
     border-top: 1px solid var(--border);
 }
 
+.auth-links {
+    text-align: center;
+    margin-top: 16px;
+}
+
+.auth-links a {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.auth-links a:hover {
+    color: var(--primary);
+}
+
 .info-box {
     background: var(--light);
     padding: 16px;

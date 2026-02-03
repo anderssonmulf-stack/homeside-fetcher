@@ -175,21 +175,153 @@ class UserManager:
         return any(u.get('email', '').lower() == email.lower()
                    for u in data['users'].values())
 
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        """Get user by email address"""
+        data = self._load_data()
+        email_lower = email.lower()
+        for username, user in data['users'].items():
+            if user.get('email', '').lower() == email_lower:
+                user_copy = user.copy()
+                user_copy['username'] = username
+                return user_copy
+        return None
+
+    def get_user_by_homeside_username(self, homeside_username: str) -> Optional[Dict]:
+        """Get user by HomeSide username (normalized, without spaces)"""
+        data = self._load_data()
+        # Normalize: remove spaces and convert to uppercase for comparison
+        normalized = homeside_username.replace(' ', '').upper()
+        for username, user in data['users'].items():
+            stored_hs = user.get('homeside_username', '')
+            if stored_hs and stored_hs.replace(' ', '').upper() == normalized:
+                user_copy = user.copy()
+                user_copy['username'] = username
+                return user_copy
+        return None
+
     # =========================================================================
     # Authentication
     # =========================================================================
 
     def authenticate(self, username: str, password: str) -> Optional[Dict]:
-        """Authenticate user and return user data if successful"""
-        user = self.get_user(username)
+        """Authenticate user and return user data if successful.
 
+        Supports login via:
+        - Regular username with webgui password
+        - HomeSide username (with or without space) with HomeSide password
+        """
+        # First try regular username with webgui password
+        user = self.get_user(username)
+        if user and self._verify_password(password, user.get('password_hash', '')):
+            return user
+
+        # Try HomeSide username with HomeSide password
+        user = self.get_user_by_homeside_username(username)
+        if user:
+            stored_homeside_password = user.get('homeside_password', '')
+            if stored_homeside_password and password == stored_homeside_password:
+                return user
+
+        return None
+
+    # =========================================================================
+    # Password Reset
+    # =========================================================================
+
+    def create_password_reset_token(self, email: str) -> Optional[str]:
+        """Create a password reset token for the user with this email.
+
+        Returns the token if created, None if email not found.
+        Token is valid for 15 minutes.
+        """
+        user = self.get_user_by_email(email)
         if not user:
             return None
 
-        if not self._verify_password(password, user.get('password_hash', '')):
+        data = self._load_data()
+        token = secrets.token_urlsafe(32)
+
+        # Store reset token in pending_actions
+        if 'password_reset_tokens' not in data:
+            data['password_reset_tokens'] = {}
+
+        data['password_reset_tokens'][token] = {
+            'username': user['username'],
+            'email': email,
+            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'expires_at': (datetime.utcnow() + timedelta(minutes=15)).isoformat() + 'Z',
+            'used': False
+        }
+
+        self._save_data(data)
+        return token
+
+    def validate_password_reset_token(self, token: str) -> Optional[Dict]:
+        """Validate a password reset token.
+
+        Returns the token data if valid, None if invalid or expired.
+        """
+        data = self._load_data()
+        token_data = data.get('password_reset_tokens', {}).get(token)
+
+        if not token_data:
             return None
 
-        return user
+        if token_data.get('used'):
+            return None
+
+        # Check expiration
+        expires_at = datetime.fromisoformat(token_data['expires_at'].replace('Z', ''))
+        if datetime.utcnow() > expires_at:
+            return None
+
+        return token_data
+
+    def reset_password_with_token(self, token: str, new_password: str) -> bool:
+        """Reset password using a valid token.
+
+        Returns True if successful, False if token is invalid.
+        """
+        token_data = self.validate_password_reset_token(token)
+        if not token_data:
+            return False
+
+        username = token_data['username']
+        data = self._load_data()
+
+        if username not in data['users']:
+            return False
+
+        # Update password
+        data['users'][username]['password_hash'] = self._hash_password(new_password)
+
+        # Mark token as used
+        data['password_reset_tokens'][token]['used'] = True
+        data['password_reset_tokens'][token]['used_at'] = datetime.utcnow().isoformat() + 'Z'
+
+        self._save_data(data)
+        return True
+
+    def cleanup_expired_reset_tokens(self):
+        """Remove expired password reset tokens (housekeeping)"""
+        data = self._load_data()
+        if 'password_reset_tokens' not in data:
+            return
+
+        now = datetime.utcnow()
+        expired = []
+
+        for token, token_data in data['password_reset_tokens'].items():
+            expires_at = datetime.fromisoformat(token_data['expires_at'].replace('Z', ''))
+            # Remove tokens older than 1 day (even if 15 min expired)
+            if (now - expires_at).days >= 1:
+                expired.append(token)
+
+        for token in expired:
+            del data['password_reset_tokens'][token]
+
+        if expired:
+            self._save_data(data)
 
     def approve_user(self, username: str, houses: List[str], approved_by: str, role: str = 'user') -> bool:
         """Approve a pending user"""
@@ -218,7 +350,14 @@ class UserManager:
     # =========================================================================
 
     def can_access_house(self, username: str, house_id: str) -> bool:
-        """Check if user can view a house"""
+        """Check if user can view a house.
+
+        Access is granted if:
+        - User is admin
+        - User has wildcard access (*)
+        - House is in user's assigned houses list
+        - House matches user's verified_customer_id (their own house)
+        """
         user = self.get_user(username)
         if not user:
             return False
@@ -229,10 +368,26 @@ class UserManager:
         if '*' in user.get('houses', []):
             return True
 
-        return house_id in user.get('houses', [])
+        # Check assigned houses
+        if house_id in user.get('houses', []):
+            return True
+
+        # Check own house (verified_customer_id)
+        if user.get('verified_customer_id') == house_id:
+            return True
+
+        return False
 
     def can_edit_house(self, username: str, house_id: str) -> bool:
-        """Check if user can edit a house"""
+        """Check if user can edit a house.
+
+        Edit permission is granted if:
+        - User is admin
+        - User has 'user' role AND house is their own (verified_customer_id)
+
+        Viewers can never edit.
+        Users can only edit their OWN house, not houses they have viewing access to.
+        """
         user = self.get_user(username)
         if not user:
             return False
@@ -245,11 +400,12 @@ class UserManager:
         if user['role'] == 'admin':
             return True
 
-        # Users can edit their own houses
-        if '*' in user.get('houses', []):
-            return True
+        # Users can only edit their OWN house (verified_customer_id)
+        # Not other houses they may have viewing access to
+        if user['role'] == 'user':
+            return user.get('verified_customer_id') == house_id
 
-        return house_id in user.get('houses', [])
+        return False
 
     def get_all_houses(self) -> List[str]:
         """Get list of all house IDs from customer profiles"""

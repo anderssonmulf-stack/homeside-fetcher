@@ -151,6 +151,12 @@ class EnergyImporter:
             raise ValueError("Either dropbox_client or dropbox_token must be provided")
         logger.info("Connected to Dropbox")
 
+        # Store InfluxDB settings for passing to other components
+        self.influx_url = influx_url
+        self.influx_token = influx_token
+        self.influx_org = influx_org
+        self.influx_bucket = influx_bucket
+
         # Initialize InfluxDB client
         if not dry_run:
             self.influx_client = InfluxDBClient(
@@ -159,8 +165,6 @@ class EnergyImporter:
                 org=influx_org
             )
             self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
-            self.influx_bucket = influx_bucket
-            self.influx_org = influx_org
             logger.info(f"Connected to InfluxDB: {influx_url}")
         else:
             self.influx_client = None
@@ -405,7 +409,11 @@ class EnergyImporter:
                 from dropbox_sync import MeterRequestManager
                 manager = MeterRequestManager(
                     dropbox_client=self._dropbox_client,
-                    profiles_dir=self.profiles_dir
+                    profiles_dir=self.profiles_dir,
+                    influx_url=self.influx_url,
+                    influx_token=self.influx_token,
+                    influx_org=self.influx_org,
+                    influx_bucket=self.influx_bucket
                 )
                 manager.sync_meters_to_dropbox()
                 manager.close()

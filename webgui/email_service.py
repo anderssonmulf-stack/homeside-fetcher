@@ -193,6 +193,74 @@ If you have any questions, please contact us.
 
         self._send_email(user['email'], subject, html_body)
 
+    def send_password_reset_email(self, email: str, name: str, reset_token: str) -> bool:
+        """Send password reset email with secure link.
+
+        Args:
+            email: User's email address
+            name: User's display name
+            reset_token: The password reset token
+
+        Returns:
+            True if email was sent successfully
+        """
+        subject = "Password Reset Request - Svenskeb"
+        reset_url = f"{self.base_url}/reset-password/{reset_token}"
+
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #2c3e50;">Password Reset Request</h2>
+
+            <p>Hi {name},</p>
+
+            <p>We received a request to reset your password for your Svenskeb account.</p>
+
+            <p>Click the button below to set a new password:</p>
+
+            <p style="margin: 30px 0;">
+                <a href="{reset_url}"
+                   style="display: inline-block; padding: 14px 28px; background-color: #3498db;
+                          color: white; text-decoration: none; border-radius: 4px;
+                          font-weight: bold;">
+                    Reset Password
+                </a>
+            </p>
+
+            <p style="color: #e74c3c; font-weight: bold;">
+                This link will expire in 15 minutes.
+            </p>
+
+            <p>If you didn't request a password reset, you can safely ignore this email.
+               Your password will remain unchanged.</p>
+
+            <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
+                This is an automated message from Svenskeb Heating System.<br>
+                If you're having trouble clicking the button, copy and paste this URL into your browser:<br>
+                <span style="word-break: break-all;">{reset_url}</span>
+            </p>
+        </body>
+        </html>
+        """
+
+        text_body = f"""
+Password Reset Request
+
+Hi {name},
+
+We received a request to reset your password for your Svenskeb account.
+
+Click this link to set a new password:
+{reset_url}
+
+This link will expire in 15 minutes.
+
+If you didn't request a password reset, you can safely ignore this email.
+Your password will remain unchanged.
+        """
+
+        return self._send_email(email, subject, html_body, text_body)
+
     # =========================================================================
     # Action Request Emails (confirm/decline)
     # =========================================================================

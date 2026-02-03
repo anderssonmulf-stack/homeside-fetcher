@@ -50,8 +50,49 @@ services:
       - INFLUXDB_ORG=homeside
       - INFLUXDB_BUCKET=heating
       - INFLUXDB_ENABLED=true
-      - LATITUDE=56.67
-      - LONGITUDE=12.86
+      - LATITUDE=56.66157
+      - LONGITUDE=12.77318
+    volumes:
+      - ./profiles:/app/profiles
+    networks:
+      - dryckesmail_beer-network
+    depends_on:
+      - influxdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Third house: RydingResidence (Villa_148)
+  homeside-fetcher-ryding:
+    build: .
+    container_name: homeside-fetcher-HEM_FJV_Villa_148
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if any('HSF_Fetcher' in open(f'/proc/{p}/cmdline').read() for p in os.listdir('/proc') if p.isdigit() and os.path.exists(f'/proc/{p}/cmdline')) else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - HOMESIDE_USERNAME=FC2000232610
+      - HOMESIDE_PASSWORD=fKyxL2
+      - HOMESIDE_CLIENTID=
+      - FRIENDLY_NAME=RydingResidence
+      - DISPLAY_NAME_SOURCE=friendly_name
+      - POLL_INTERVAL_MINUTES=15
+      - SEQ_URL=http://seq:5341
+      - SEQ_API_KEY=hllDhc79UDrWDEJ0HPY2
+      - LOG_LEVEL=INFO
+      - DEBUG_MODE=false
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=homeside_token_2026_secret
+      - INFLUXDB_ORG=homeside
+      - INFLUXDB_BUCKET=heating
+      - INFLUXDB_ENABLED=true
+      - LATITUDE=56.66157
+      - LONGITUDE=12.77318
     volumes:
       - ./profiles:/app/profiles
     networks:

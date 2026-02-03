@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "customer_id": "HEM_FJV_Villa_148",
+  "friendly_name": "RydingResidence",
+  "meter_ids": [
+    "735999255020057930"
+  ],
+  "building": {
+    "description": "",
+    "thermal_response": "medium"
+  },
+  "comfort": {
+    "target_indoor_temp": 22.0,
+    "acceptable_deviation": 1.0
+  },
+  "heating_system": {
+    "response_time_minutes": 30,
+    "max_supply_temp": 55
+  },
+  "learned": {
+    "thermal_coefficient": null,
+    "thermal_coefficient_confidence": 0.0,
+    "hourly_bias": {},
+    "samples_since_last_update": 0,
+    "total_samples": 0,
+    "next_update_at_samples": 24,
+    "updated_at": null
+  }
+}

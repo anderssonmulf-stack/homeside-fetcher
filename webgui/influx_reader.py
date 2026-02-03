@@ -690,6 +690,95 @@ class InfluxReader:
             print(f"Failed to query temperature history: {e}")
             return []
 
+    def get_supply_return_with_forecast(self, house_id: str, hours: int = 168) -> dict:
+        """
+        Get supply/return temperatures with heat curve and forecast data.
+
+        Returns dict with:
+            - history: list of historical data points
+            - forecast: list of forecast data points
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'history': [], 'forecast': []}
+
+        try:
+            query_api = self.client.query_api()
+
+            # Query historical data
+            history_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "heating_system")
+                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) =>
+                    r["_field"] == "supply_temp" or
+                    r["_field"] == "return_temp" or
+                    r["_field"] == "supply_temp_heat_curve" or
+                    r["_field"] == "supply_temp_heat_curve_ml"
+                )
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(history_query, org=self.org)
+
+            history = []
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        history.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'supply_temp': record.values.get('supply_temp'),
+                            'return_temp': record.values.get('return_temp'),
+                            'heat_curve': record.values.get('supply_temp_heat_curve'),
+                            'heat_curve_ml': record.values.get('supply_temp_heat_curve_ml'),
+                        })
+
+            # Query forecast data (future predictions)
+            forecast_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: now(), stop: 24h)
+                |> filter(fn: (r) => r["_measurement"] == "temperature_forecast")
+                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) =>
+                    r["forecast_type"] == "supply_temp_baseline" or
+                    r["forecast_type"] == "supply_temp_ml"
+                )
+                |> pivot(rowKey: ["_time"], columnKey: ["forecast_type"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            forecast_tables = query_api.query(forecast_query, org=self.org)
+
+            forecast = []
+            for table in forecast_tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        forecast.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'supply_baseline': record.values.get('supply_temp_baseline'),
+                            'supply_ml': record.values.get('supply_temp_ml'),
+                        })
+
+            return {'history': history, 'forecast': forecast}
+
+        except Exception as e:
+            print(f"Failed to query supply/return with forecast: {e}")
+            return {'history': [], 'forecast': []}
+
     def get_energy_consumption_history(self, house_id: str, days: int = 30,
                                         aggregation: str = 'daily') -> dict:
         """

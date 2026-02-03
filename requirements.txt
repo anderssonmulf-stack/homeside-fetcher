@@ -5,3 +5,4 @@ influxdb-client>=1.36.0
 astral>=3.2
 python-dotenv>=1.0.0
 dropbox>=11.36.0
+pytz>=2024.1

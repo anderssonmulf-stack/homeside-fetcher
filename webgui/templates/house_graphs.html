@@ -9,6 +9,84 @@
         <p class="subtitle">{{ friendly_name }}</p>
     </div>
 
+    <!-- Current Status Widgets -->
+    <div class="status-widgets">
+        {% if realtime %}
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.room_temperature and realtime.room_temperature >= 21 and realtime.room_temperature <= 24 %}good{% elif realtime.room_temperature and realtime.room_temperature > 24 %}warm{% else %}cold{% endif %}">
+                {{ "%.1f"|format(realtime.room_temperature) if realtime.room_temperature else '--' }}°C
+            </div>
+            <div class="stat-label">Room</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value neutral">
+                {{ "%.1f"|format(realtime.target_temp_setpoint) if realtime.target_temp_setpoint else '--' }}°C
+            </div>
+            <div class="stat-label">Target</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.outdoor_temperature and realtime.outdoor_temperature >= 5 %}mild{% elif realtime.outdoor_temperature and realtime.outdoor_temperature >= 0 %}cool{% else %}cold{% endif %}">
+                {{ "%.1f"|format(realtime.outdoor_temperature) if realtime.outdoor_temperature else '--' }}°C
+            </div>
+            <div class="stat-label">Outdoor</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.supply_temp and realtime.supply_temp >= 25 and realtime.supply_temp <= 40 %}good{% elif realtime.supply_temp and realtime.supply_temp > 40 %}warm{% else %}neutral{% endif %}">
+                {{ "%.1f"|format(realtime.supply_temp) if realtime.supply_temp else '--' }}°C
+            </div>
+            <div class="stat-label">Supply</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.hot_water_temp and realtime.hot_water_temp >= 50 %}good{% elif realtime.hot_water_temp and realtime.hot_water_temp >= 40 %}warm{% else %}cold{% endif %}">
+                {{ "%.1f"|format(realtime.hot_water_temp) if realtime.hot_water_temp else '--' }}°C
+            </div>
+            <div class="stat-label">Hot Water</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.system_pressure and realtime.system_pressure >= 0.5 and realtime.system_pressure <= 1.5 %}good{% elif realtime.system_pressure and realtime.system_pressure < 0.5 %}cold{% else %}warm{% endif %}">
+                {{ "%.2f"|format(realtime.system_pressure) if realtime.system_pressure else '--' }} bar
+            </div>
+            <div class="stat-label">Pressure</div>
+        </div>
+        {% else %}
+        <div class="stat-widget wide">
+            <div class="stat-value neutral">No data</div>
+            <div class="stat-label">Heating system offline</div>
+        </div>
+        {% endif %}
+    </div>
+    {% if realtime and realtime.timestamp_friendly %}
+    <p class="status-timestamp {% if realtime.age_minutes and realtime.age_minutes <= 16 %}fresh{% else %}stale{% endif %}">
+        Last updated: {{ realtime.timestamp_friendly }}
+        {% if realtime.age_minutes %}({{ realtime.age_minutes|int }} min ago){% endif %}
+    </p>
+    {% endif %}
+
+    <!-- Supply & Return Temperatures & Forecast Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Supply & Return Temperatures & Forecast</h2>
+            <div class="chart-controls">
+                <select id="supply-return-days-select" class="role-select" onchange="updateSupplyReturnChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Supply and return water temperatures with heat curve comparison.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color supply-temp"></span> Supply</span>
+                <span class="legend-item"><span class="legend-color return-temp"></span> Return</span>
+                <span class="legend-item"><span class="legend-color heat-curve"></span> Heat Curve</span>
+                <span class="legend-item"><span class="legend-color heat-curve-ml"></span> Heat Curve (ML)</span>
+            </span>
+        </p>
+        <div id="supply-return-chart" class="chart-container"></div>
+    </div>
+
     <!-- Data Availability Chart -->
     <div class="card">
         <div class="card-header-flex">
@@ -188,6 +266,53 @@
 </div>
 
 <style>
+/* Status Widgets - matching Grafana stat panels */
+.status-widgets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.stat-widget {
+    background: var(--white, #fff);
+    border-radius: 8px;
+    padding: 16px 20px;
+    min-width: 100px;
+    flex: 1;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.stat-widget.wide {
+    flex: 2;
+    min-width: 200px;
+}
+.stat-value {
+    font-size: 1.8em;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.stat-value.good { color: #27ae60; }
+.stat-value.warm { color: #e67e22; }
+.stat-value.cold { color: #3498db; }
+.stat-value.mild { color: #27ae60; }
+.stat-value.cool { color: #3498db; }
+.stat-value.neutral { color: var(--text-color, #333); }
+.stat-label {
+    font-size: 0.85em;
+    color: var(--muted, #7f8c8d);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.status-timestamp {
+    font-size: 0.85em;
+    color: var(--muted);
+    text-align: right;
+    margin-bottom: 20px;
+}
+.status-timestamp.fresh { color: #27ae60; }
+.status-timestamp.stale { color: #e67e22; }
+
 .card-header-flex {
     display: flex;
     justify-content: space-between;
@@ -282,6 +407,19 @@
 .legend-color.dhw-energy {
     background: #e67e22;
 }
+/* Supply/Return chart colors */
+.legend-color.supply-temp {
+    background: #e74c3c;
+}
+.legend-color.return-temp {
+    background: #3498db;
+}
+.legend-color.heat-curve {
+    background: #27ae60;
+}
+.legend-color.heat-curve-ml {
+    background: #9b59b6;
+}
 /* Metric summary boxes */
 .metric-summary {
     display: flex;
@@ -375,6 +513,157 @@
 
     function renderChart(data) {
         Plotly.newPlot('availability-chart', data.data, data.layout, chartConfig);
+    }
+
+    // Supply & Return Temperatures with Forecast Chart
+    function updateSupplyReturnChart() {
+        const hours = document.getElementById('supply-return-days-select').value;
+        const chartDiv = document.getElementById('supply-return-chart');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading supply/return data...</div>';
+
+        fetch(`/api/house/${houseId}/supply-return-forecast?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { history: [], forecast: [] })
+            .then(result => {
+                const history = result.history || [];
+                const forecast = result.forecast || [];
+
+                if (history.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No supply/return temperature data available.</div>';
+                    return;
+                }
+
+                const histTimestamps = history.map(d => d.timestamp_display);
+                const forecastTimestamps = forecast.map(d => d.timestamp_display);
+
+                // Get current time for "now" line
+                const nowTime = histTimestamps.length > 0 ? histTimestamps[histTimestamps.length - 1] : null;
+
+                const traces = [
+                    // Supply Temperature (solid red)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.supply_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Supply',
+                        line: { color: '#e74c3c', width: 2 },
+                        hovertemplate: '%{x}<br>Supply: %{y}°C<extra></extra>'
+                    },
+                    // Return Temperature (solid blue)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.return_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Return',
+                        line: { color: '#3498db', width: 2 },
+                        hovertemplate: '%{x}<br>Return: %{y}°C<extra></extra>'
+                    },
+                    // Heat Curve (baseline - dashed green)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.heat_curve),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Heat Curve',
+                        line: { color: '#27ae60', width: 2, dash: 'dash' },
+                        hovertemplate: '%{x}<br>Heat Curve: %{y}°C<extra></extra>'
+                    },
+                    // Heat Curve ML (dotted purple)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.heat_curve_ml),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Heat Curve (ML)',
+                        line: { color: '#9b59b6', width: 2, dash: 'dot' },
+                        hovertemplate: '%{x}<br>Heat Curve ML: %{y}°C<extra></extra>'
+                    }
+                ];
+
+                // Add forecast traces if available
+                if (forecast.length > 0) {
+                    traces.push(
+                        {
+                            x: forecastTimestamps,
+                            y: forecast.map(d => d.supply_baseline),
+                            type: 'scatter',
+                            mode: 'lines',
+                            name: 'Forecast (Baseline)',
+                            line: { color: '#27ae60', width: 2, dash: 'dashdot' },
+                            hovertemplate: '%{x}<br>Forecast: %{y}°C<extra></extra>'
+                        },
+                        {
+                            x: forecastTimestamps,
+                            y: forecast.map(d => d.supply_ml),
+                            type: 'scatter',
+                            mode: 'lines',
+                            name: 'Forecast (ML)',
+                            line: { color: '#9b59b6', width: 2, dash: 'dashdot' },
+                            hovertemplate: '%{x}<br>Forecast ML: %{y}°C<extra></extra>'
+                        }
+                    );
+                }
+
+                const layout = {
+                    xaxis: {
+                        title: 'Time',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis: {
+                        title: 'Temperature (°C)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    height: 400,
+                    margin: { l: 60, r: 30, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified',
+                    // Add vertical "now" line if we have forecast data
+                    shapes: (nowTime && forecast.length > 0) ? [{
+                        type: 'line',
+                        x0: nowTime,
+                        x1: nowTime,
+                        y0: 0,
+                        y1: 1,
+                        yref: 'paper',
+                        line: { color: 'rgba(0,0,0,0.3)', width: 2, dash: 'dot' }
+                    }] : [],
+                    annotations: (nowTime && forecast.length > 0) ? [{
+                        x: nowTime,
+                        y: 1,
+                        yref: 'paper',
+                        text: 'Now',
+                        showarrow: false,
+                        font: { size: 10, color: 'rgba(0,0,0,0.5)' },
+                        yanchor: 'bottom'
+                    }] : []
+                };
+
+                chartDiv.innerHTML = '';
+
+                Plotly.newPlot('supply-return-chart', traces, layout, chartConfig)
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load supply/return data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load supply/return data.</div>';
+            });
     }
 
     // Helper function to update data source badge
@@ -1517,13 +1806,16 @@
 
     // Initialize all charts on page load
     document.addEventListener('DOMContentLoaded', function() {
+        // Supply & Return chart (top priority - shown first)
+        updateSupplyReturnChart();
+
         // Existing charts
         if (document.getElementById('availability-chart')) {
             renderChart(initialData);
         }
         updateEffectiveTempChart();
 
-        // New charts - load with slight delay to not overload
+        // Other charts - load with slight delay to not overload
         setTimeout(() => updateTemperatureHistoryChart(), 100);
         setTimeout(() => updateEfficiencyChart(), 200);
         setTimeout(() => updateEnergySeparationChart(), 300);

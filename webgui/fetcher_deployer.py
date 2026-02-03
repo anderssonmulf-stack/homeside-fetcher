@@ -39,8 +39,8 @@ class FetcherDeployer:
         friendly_name: str,
         homeside_username: str,
         homeside_password: str,
-        latitude: float = 56.67,
-        longitude: float = 12.86,
+        latitude: float = 56.66157,
+        longitude: float = 12.77318,
         meter_ids: List[str] = None
     ) -> Dict[str, Any]:
         """
@@ -287,6 +287,14 @@ LONGITUDE={longitude}
                     'com.homeside.customer_id': customer_id,
                     'com.homeside.managed': 'true',
                     'com.homeside.created': datetime.now().isoformat()
+                },
+                healthcheck={
+                    'test': ['CMD', 'python', '-c',
+                             "import os; exit(0 if any('HSF_Fetcher' in open(f'/proc/{p}/cmdline').read() for p in os.listdir('/proc') if p.isdigit() and os.path.exists(f'/proc/{p}/cmdline')) else 1)"],
+                    'interval': 30000000000,  # 30s in nanoseconds
+                    'timeout': 10000000000,   # 10s in nanoseconds
+                    'retries': 3,
+                    'start_period': 60000000000  # 60s in nanoseconds
                 },
                 log_config={
                     'type': 'json-file',
