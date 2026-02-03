@@ -283,6 +283,19 @@ class EnergySeparationService:
             swedish_time = ts.astimezone(SWEDISH_TZ)
             date_str = swedish_time.strftime('%Y-%m-%d')
 
+            # Skip days with 0% DHW - indicates insufficient hot water temp data
+            # This prevents skewing k-value calculations with incorrect heating values
+            if result.dhw_energy_kwh == 0 and result.total_energy_kwh > 0:
+                logger.warning(
+                    f"Skipping {date_str}: 0% DHW detected (likely no hot water temp data)"
+                )
+                issues.append({
+                    'date': date_str,
+                    'reason': 'no_dhw_data',
+                    'total_kwh': result.total_energy_kwh,
+                })
+                continue  # Don't include this day in results
+
             actual_total = daily_totals.get(date_str)
             separated_total = result.total_energy_kwh
 
