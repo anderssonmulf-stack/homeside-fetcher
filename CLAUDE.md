@@ -125,15 +125,67 @@ python3 import_historical_data.py --username FC... --password "..." --arrigo-hos
 | Tappvarmvatten, FC... | hot_water_temp |
 | Framledning Börvärde | supply_setpoint |
 
-## External Scripts
+## Backup & Commit Scripts
 
-### GitHub Commit Script
-Located in `/opt/dev` - script for committing changes to GitHub.
+All scripts in `backup_scripts/` use **`backup_include.conf`** as a single source of truth for what files to include.
 
-### Backup Scripts
-Located in `/backup_scripts`:
-- `backup_to_nas_host.sh` - Backs up the project files to NAS
-- `backup_docker_system.sh` - Backs up Docker containers and volumes to NAS
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `backup_include.conf` | **Single source of truth** - defines files/dirs to backup and commit |
+| `backup_to_nas_host.sh` | Backs up codebase to NAS (lightweight, fast) |
+| `backup_docker_system.sh` | Full Docker backup: images, volumes, InfluxDB, codebase → NAS |
+| `git_commit.sh` | Git commit using the same file patterns as backups |
+
+### Usage
+
+```bash
+# Codebase backup to NAS
+bash backup_scripts/backup_to_nas_host.sh
+
+# Full Docker backup to NAS (images, volumes, InfluxDB)
+bash backup_scripts/backup_docker_system.sh
+
+# Git commit (dry run - see what would be committed)
+bash backup_scripts/git_commit.sh -n
+
+# Git commit with message
+bash backup_scripts/git_commit.sh "Your commit message"
+
+# Git commit and push
+bash backup_scripts/git_commit.sh -p "Your commit message"
+```
+
+### Modifying What Gets Backed Up / Committed
+
+Edit `backup_scripts/backup_include.conf`:
+
+```bash
+# Root-level file patterns
+ROOT_FILE_PATTERNS=(
+    "*.py"
+    "*.sh"
+    "*.json"
+    "*.yml"
+    "Dockerfile"
+    # Add new patterns here
+)
+
+# Directories to include
+BACKUP_DIRS=(
+    "energy_models"
+    "webgui"
+    "profiles"
+    "grafana"
+    "nginx"
+    "docs"
+    "backup_scripts"
+    # Add new directories here
+)
+```
+
+All three scripts automatically pick up changes to this file.
 
 ## Data Flow
 
