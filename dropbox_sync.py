@@ -122,7 +122,8 @@ class MeterRequestManager:
                     profiles.append({
                         'customer_id': data.get('customer_id', ''),
                         'friendly_name': data.get('friendly_name', ''),
-                        'meter_ids': meter_ids
+                        'meter_ids': meter_ids,
+                        'energy_data_start_date': data.get('energy_data_start_date')
                     })
             except Exception as e:
                 logger.error(f"Error loading profile {filename}: {e}")
@@ -191,6 +192,9 @@ class MeterRequestManager:
                     # Request data from the hour after last import
                     next_hour = last_timestamp + timedelta(hours=1)
                     from_datetime = next_hour.strftime('%Y-%m-%d %H:00')
+                elif profile.get('energy_data_start_date'):
+                    # Use profile-specified start date for new meters
+                    from_datetime = f"{profile['energy_data_start_date']} 00:00"
                 else:
                     # New meter - request DEFAULT_LOOKBACK_DAYS of historical data
                     start = datetime.now(timezone.utc) - timedelta(days=DEFAULT_LOOKBACK_DAYS)

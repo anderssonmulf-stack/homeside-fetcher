@@ -18,12 +18,46 @@
     "max_supply_temp": 55
   },
   "learned": {
-    "thermal_coefficient": null,
+    "thermal_coefficient": 0.016993364729327914,
     "thermal_coefficient_confidence": 0.0,
-    "hourly_bias": {},
+    "hourly_bias": {
+      "21": 0.368,
+      "22": 0.368,
+      "23": 0.368,
+      "00": 0.368,
+      "01": 0.368,
+      "02": 0.368,
+      "06": 0.368,
+      "07": 0.368,
+      "08": 0.368,
+      "09": 0.368,
+      "10": 0.368,
+      "11": 0.368,
+      "12": 0.368,
+      "13": 0.368,
+      "14": 0.368,
+      "15": 0.368,
+      "16": 0.372,
+      "17": 0.376
+    },
     "samples_since_last_update": 0,
-    "total_samples": 0,
-    "next_update_at_samples": 24,
-    "updated_at": null
+    "total_samples": 72,
+    "next_update_at_samples": 96,
+    "updated_at": "2026-02-04T18:16:33.059776+00:00"
+  },
+  "energy_separation": {
+    "enabled": false,
+    "method": "k_calibration",
+    "heat_loss_k": null,
+    "k_percentile": 15,
+    "calibration_date": null,
+    "calibration_days": 0,
+    "dhw_percentage": null,
+    "dhw_temp_threshold": 45.0,
+    "dhw_temp_rise_threshold": 2.0,
+    "dhw_baseline_temp": 25.0,
+    "avg_dhw_power_kw": 25.0,
+    "cold_water_temp": 8.0,
+    "hot_water_target_temp": 55.0
   }
 }
