@@ -3,6 +3,8 @@ services:
     build: .
     container_name: homeside-fetcher
     restart: unless-stopped
+    cpus: "2.4"
+    mem_limit: 3g
     env_file:
       - .env
     volumes:
@@ -28,6 +30,8 @@ services:
     build: .
     container_name: homeside-fetcher-HEM_FJV_Villa_34
     restart: unless-stopped
+    cpus: "2.4"
+    mem_limit: 3g
     healthcheck:
       test: ["CMD", "python", "-c", "import os; exit(0 if any('HSF_Fetcher' in open(f'/proc/{p}/cmdline').read() for p in os.listdir('/proc') if p.isdigit() and os.path.exists(f'/proc/{p}/cmdline')) else 1)"]
       interval: 30s
@@ -69,6 +73,8 @@ services:
     build: .
     container_name: homeside-fetcher-HEM_FJV_Villa_148
     restart: unless-stopped
+    cpus: "2.4"
+    mem_limit: 3g
     healthcheck:
       test: ["CMD", "python", "-c", "import os; exit(0 if any('HSF_Fetcher' in open(f'/proc/{p}/cmdline').read() for p in os.listdir('/proc') if p.isdigit() and os.path.exists(f'/proc/{p}/cmdline')) else 1)"]
       interval: 30s
@@ -109,6 +115,8 @@ services:
     image: influxdb:2.7-alpine
     container_name: homeside-influxdb
     restart: unless-stopped
+    cpus: "2.4"
+    mem_limit: 3g
     ports:
       - "8086:8086"
     healthcheck:
@@ -139,6 +147,8 @@ services:
     image: grafana/grafana:latest
     container_name: homeside-grafana
     restart: unless-stopped
+    cpus: "2.4"
+    mem_limit: 3g
     ports:
       - "3000:3000"
     healthcheck:
