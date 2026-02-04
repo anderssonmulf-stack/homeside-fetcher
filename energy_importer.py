@@ -23,7 +23,7 @@ Environment variables:
 import os
 import sys
 import argparse
-import logging
+# Logging handled by SeqLogger
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from io import StringIO
@@ -38,12 +38,6 @@ from dropbox_client import DropboxClient, create_client_from_env
 from seq_logger import SeqLogger
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 
 # Column name mappings (header name -> InfluxDB field name)
@@ -131,25 +125,18 @@ class EnergyImporter:
 
         # Load meter_id -> customer_id mapping from profiles
         self.meter_mapping = build_meter_mapping(profiles_dir)
-        if self.meter_mapping:
-            logger.info(f"Loaded {len(self.meter_mapping)} meter mapping(s)")
-        else:
-            logger.warning("No meter mappings found - unknown meters will be rejected")
 
         # Initialize Dropbox client
         # Prefer new DropboxClient with refresh token
         if dropbox_client:
             self._dropbox_client = dropbox_client
             self.dbx = dropbox_client.dbx
-            logger.info("Using DropboxClient with refresh token")
         elif dropbox_token:
             # Legacy: use access token directly (deprecated)
             self._dropbox_client = None
             self.dbx = dropbox.Dropbox(dropbox_token)
-            logger.warning("Using legacy DROPBOX_ACCESS_TOKEN - consider using refresh token auth")
         else:
             raise ValueError("Either dropbox_client or dropbox_token must be provided")
-        logger.info("Connected to Dropbox")
 
         # Store InfluxDB settings for passing to other components
         self.influx_url = influx_url
@@ -165,11 +152,30 @@ class EnergyImporter:
                 org=influx_org
             )
             self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
-            logger.info(f"Connected to InfluxDB: {influx_url}")
+            self._log(f"Connected to InfluxDB: {influx_url}")
         else:
             self.influx_client = None
             self.write_api = None
-            logger.info("Dry run mode - no data will be written")
+            self._log("Dry run mode - no data will be written")
+
+    def _log(self, message: str, level: str = None, properties: dict = None):
+        """Log to Seq. Uses Debug level for dry-run, otherwise uses specified level."""
+        if not self.seq:
+            return
+        # In dry-run mode, use Debug level unless explicitly specified
+        if level is None:
+            level = 'Debug' if self.dry_run else 'Information'
+        self.seq.log(message, level=level, properties=properties)
+
+    def _log_warning(self, message: str, properties: dict = None):
+        """Log warning to Seq."""
+        if self.seq:
+            self.seq.log(message, level='Warning', properties=properties)
+
+    def _log_error(self, message: str, properties: dict = None):
+        """Log error to Seq."""
+        if self.seq:
+            self.seq.log(message, level='Error', properties=properties)
 
     def list_incoming_files(self) -> List[FileMetadata]:
         """List energy data files (.txt) in /data/ folder."""
@@ -179,11 +185,11 @@ class EnergyImporter:
                 entry for entry in result.entries
                 if isinstance(entry, FileMetadata) and entry.name.endswith('.txt')
             ]
-            logger.info(f"Found {len(files)} energy file(s) in /data")
+            self._log(f"Found {len(files)} energy file(s) in /data")
             return files
         except dropbox.exceptions.ApiError as e:
             if 'not_found' in str(e):
-                logger.warning("Folder /data not found, creating it...")
+                self._log_warning("Folder /data not found, creating it...")
                 self.dbx.files_create_folder_v2('/data')
                 self.dbx.files_create_folder_v2('/processed')
                 self.dbx.files_create_folder_v2('/failed')
@@ -221,7 +227,7 @@ class EnergyImporter:
             if col in COLUMN_MAPPINGS:
                 column_map[i] = COLUMN_MAPPINGS[col]
             else:
-                logger.debug(f"Unknown column '{col}' at position {i}")
+                self._log(f"Unknown column '{col}' at position {i}")
 
         if 'timestamp' not in column_map.values():
             errors.append(f"No timestamp column found in {filename}")
@@ -254,7 +260,7 @@ class EnergyImporter:
                                 value = value.replace(',', '.')
                                 record[field_name] = float(value)
                             except ValueError:
-                                logger.warning(f"Line {line_num}: Cannot parse '{value}' as number for {field_name}")
+                                self._log_warning(f"Line {line_num}: Cannot parse '{value}' as number for {field_name}")
 
                 if 'timestamp' in record:
                     records.append(record)
@@ -299,6 +305,7 @@ class EnergyImporter:
 
         Uses meter_mapping to translate meter_id -> customer_id (house_id).
         Records with unknown meter_ids are rejected.
+        Duplicates (records with timestamps that already exist) are skipped.
 
         Returns:
             Tuple of (records_written, errors)
@@ -310,15 +317,49 @@ class EnergyImporter:
 
         if not customer_id:
             error_msg = f"Unknown meter_id '{meter_id}' - not mapped to any customer. Configure meter_ids in the customer profile."
-            logger.warning(error_msg)
+            self._log_warning(error_msg, properties={'MeterId': meter_id})
             return 0, [error_msg]
 
+        # Get existing data for this house to detect duplicates
+        existing_data = self._get_existing_data(customer_id, records)
+
+        # Filter: skip only if timestamp exists AND values are identical
+        records_to_write = []
+        skipped = 0
+        updated = 0
+
+        for record in records:
+            ts = record['timestamp']
+            if ts in existing_data:
+                if self._records_match(record, existing_data[ts]):
+                    # Identical data - skip
+                    skipped += 1
+                else:
+                    # Different values - will overwrite
+                    records_to_write.append(record)
+                    updated += 1
+            else:
+                # New timestamp
+                records_to_write.append(record)
+
+        new_count = len(records_to_write) - updated
+
+        if skipped > 0:
+            self._log(f"Skipping {skipped} identical records for meter {meter_id}", properties={'MeterId': meter_id, 'Skipped': skipped})
+        if updated > 0:
+            self._log(f"Updating {updated} records for meter {meter_id}", properties={'MeterId': meter_id, 'Updated': updated})
+
+        if not records_to_write:
+            self._log(f"No records to write for meter {meter_id} -> house {customer_id} (all {len(records)} identical)")
+            return 0, []
+
         if self.dry_run:
-            logger.info(f"[DRY RUN] Would write {len(records)} records for meter {meter_id} -> house {customer_id}")
-            return len(records), []
+            self._log(f"[DRY RUN] Would write {len(records_to_write)} records for meter {meter_id} -> house {customer_id}",
+                     properties={'MeterId': meter_id, 'HouseId': customer_id, 'New': new_count, 'Updated': updated, 'Skipped': skipped})
+            return len(records_to_write), []
 
         points = []
-        for record in records:
+        for record in records_to_write:
             point = Point("energy_meter") \
                 .tag("house_id", customer_id) \
                 .tag("meter_id", meter_id) \
@@ -333,22 +374,103 @@ class EnergyImporter:
 
         if points:
             self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
-            logger.info(f"Wrote {len(points)} records for meter {meter_id} -> house {customer_id}")
+            self._log(
+                f"Wrote {len(points)} records for meter {meter_id} -> house {customer_id}",
+                level='Information',  # Always log actual writes as Information
+                properties={
+                    'HouseId': customer_id,
+                    'MeterId': meter_id,
+                    'RecordsWritten': len(points),
+                    'NewRecords': new_count,
+                    'UpdatedRecords': updated,
+                    'SkippedRecords': skipped
+                }
+            )
 
         return len(points), []
+
+    def _get_existing_data(self, house_id: str, records: List[Dict]) -> dict:
+        """
+        Query InfluxDB for existing data to detect duplicates.
+
+        Returns dict mapping timestamp -> {field: value, ...}
+        Only queries the time range covered by the records to be imported.
+        """
+        if not records:
+            return {}
+
+        # Get time range from records
+        timestamps = [r['timestamp'] for r in records]
+        min_time = min(timestamps)
+        max_time = max(timestamps)
+
+        # Add buffer to ensure we catch edge cases
+        from datetime import timedelta
+        start_time = (min_time - timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
+        stop_time = (max_time + timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
+
+        query = f'''
+from(bucket: "{self.influx_bucket}")
+  |> range(start: {start_time}, stop: {stop_time})
+  |> filter(fn: (r) => r._measurement == "energy_meter")
+  |> filter(fn: (r) => r.house_id == "{house_id}")
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+'''
+
+        existing = {}
+        try:
+            query_api = self.influx_client.query_api()
+            result = query_api.query(query)
+            for table in result:
+                for record in table.records:
+                    ts = record.get_time()
+                    existing[ts] = {
+                        'consumption': record.values.get('consumption'),
+                        'meter_reading': record.values.get('meter_reading'),
+                        'volume': record.values.get('volume'),
+                        'primary_temp_in': record.values.get('primary_temp_in'),
+                        'primary_temp_out': record.values.get('primary_temp_out'),
+                    }
+        except Exception as e:
+            self._log_warning(f"Failed to query existing data: {e}")
+            # Continue without dedup if query fails
+
+        return existing
+
+    def _records_match(self, new_record: Dict, existing: Dict) -> bool:
+        """Check if new record values match existing data (within tolerance for floats)."""
+        fields_to_check = ['consumption', 'meter_reading', 'volume', 'primary_temp_in', 'primary_temp_out']
+
+        for field in fields_to_check:
+            new_val = new_record.get(field)
+            old_val = existing.get(field)
+
+            # Both None or missing - match
+            if new_val is None and old_val is None:
+                continue
+
+            # One is None, other isn't - no match
+            if new_val is None or old_val is None:
+                return False
+
+            # Compare with small tolerance for floats
+            if abs(float(new_val) - float(old_val)) > 0.001:
+                return False
+
+        return True
 
     def delete_file(self, path: str):
         """Delete file from Dropbox after successful import."""
         try:
             self.dbx.files_delete_v2(path)
-            logger.info(f"Deleted {path}")
+            self._log(f"Deleted {path}")
         except dropbox.exceptions.ApiError as e:
-            logger.error(f"Failed to delete file {path}: {e}")
+            self._log_error(f"Failed to delete file {path}: {e}", properties={'Path': path, 'Error': str(e)})
 
     def process_file(self, file_meta: FileMetadata) -> Tuple[int, List[str]]:
         """Process a single file."""
         path = file_meta.path_display
-        logger.info(f"Processing: {path}")
+        self._log(f"Processing: {path}", properties={'Path': path})
 
         # Download
         content = self.download_file(path)
@@ -358,25 +480,35 @@ class EnergyImporter:
 
         if errors:
             for error in errors:
-                logger.warning(f"  {error}")
+                self._log_warning(f"Parse error: {error}", properties={'File': file_meta.name})
 
         if not records:
-            logger.warning(f"No valid records in {file_meta.name}")
+            self._log_warning(f"No valid records in {file_meta.name}", properties={'File': file_meta.name})
             # Don't delete - leave file for investigation
             return 0, errors
 
-        # Get meter ID from first record, or use filename
-        meter_id = records[0].get('meter_id', file_meta.name.replace('.txt', ''))
+        # Group records by meter_id
+        from collections import defaultdict
+        records_by_meter = defaultdict(list)
+        for record in records:
+            meter_id = record.get('meter_id', file_meta.name.replace('.txt', ''))
+            records_by_meter[meter_id].append(record)
 
-        # Write to InfluxDB (will reject unknown meters)
-        count, write_errors = self.write_to_influx(records, meter_id)
-        errors.extend(write_errors)
+        # Write each meter's records to InfluxDB
+        total_written = 0
+        total_processed = 0
+        for meter_id, meter_records in records_by_meter.items():
+            count, write_errors = self.write_to_influx(meter_records, meter_id)
+            total_written += count
+            total_processed += len(meter_records)
+            errors.extend(write_errors)
 
-        # Delete file after successful import
-        if not self.dry_run and count > 0:
+        # Delete file after successful processing (even if all records were duplicates)
+        # Only keep file if there were errors or no records could be mapped to a house
+        if not self.dry_run and total_processed > 0 and len(errors) == 0:
             self.delete_file(path)
 
-        return count, errors
+        return total_written, errors
 
     def run(self, sync_meters: bool = True) -> Dict:
         """
@@ -391,7 +523,7 @@ class EnergyImporter:
         files = self.list_incoming_files()
 
         if not files:
-            logger.info("No files to process")
+            self._log("No files to process")
             return {'files': 0, 'records': 0, 'errors': []}
 
         total_records = 0
@@ -417,9 +549,9 @@ class EnergyImporter:
                 )
                 manager.sync_meters_to_dropbox()
                 manager.close()
-                logger.info("Synced meter requests to Dropbox")
+                self._log("Synced meter requests to Dropbox")
             except Exception as e:
-                logger.warning(f"Failed to sync meters to Dropbox: {e}")
+                self._log_warning(f"Failed to sync meters to Dropbox: {e}")
 
         return {
             'files': len(files),
@@ -494,8 +626,8 @@ def main():
                 }
             )
         elif result['files'] == 0:
-            # No files to process - this is normal, don't log as error
-            logger.info("No energy files to import")
+            # No files to process - this is normal, log at debug level
+            seq.log("No energy files to import", level='Debug' if args.dry_run else 'Information')
         else:
             seq.log(
                 "Energy import failed: {Files} file(s), 0 records imported",
