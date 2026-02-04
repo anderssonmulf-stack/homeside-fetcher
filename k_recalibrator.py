@@ -85,7 +85,7 @@ class KRecalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{days}d)
             |> filter(fn: (r) => r["_measurement"] == "energy_separated")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "heating_energy_kwh" or r["_field"] == "total_energy_kwh" or r["_field"] == "confidence")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
@@ -114,7 +114,7 @@ class KRecalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{days}d)
             |> filter(fn: (r) => r["_measurement"] == "heating_system")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "room_temperature" or r["_field"] == "outdoor_temperature")
             |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
@@ -354,8 +354,8 @@ def recalibrate_house(
                 pass
 
     if not profile:
-        # Try finding by client ID
-        profile = find_profile_for_client_id(f"/{house_id}", profiles_dir=profiles_dir)
+        # Try finding by client ID (short form like HEM_FJV_Villa_149)
+        profile = find_profile_for_client_id(house_id, profiles_dir=profiles_dir)
 
     if not profile:
         logger.error(f"No profile found for {house_id}")

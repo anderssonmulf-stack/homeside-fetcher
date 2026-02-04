@@ -72,13 +72,12 @@ class InfluxReader:
         try:
             query_api = self.client.query_api()
 
-            # house_id in InfluxDB is full path like "38/xxx/HEM_FJV_149/HEM_FJV_Villa_149"
-            # Match by checking if it contains the customer_id
+            # house_id in InfluxDB is short form like "HEM_FJV_Villa_149"
             query = f'''
                 from(bucket: "{self.bucket}")
                 |> range(start: -1h)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> last()
             '''
 
@@ -130,7 +129,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -2h)
                 |> filter(fn: (r) => r["_measurement"] == "weather_observation")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> last()
             '''
 
@@ -164,7 +163,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -1h)
                 |> filter(fn: (r) => r["_measurement"] == "weather_forecast")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> last()
             '''
 
@@ -232,7 +231,7 @@ class InfluxReader:
                     from(bucket: "{self.bucket}")
                     |> range(start: -{days}d)
                     |> filter(fn: (r) => r["_measurement"] == "{measurement}")
-                    |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                    |> filter(fn: (r) => r["house_id"] == "{house_id}")
                     |> aggregateWindow(every: 1d, fn: count, createEmpty: true)
                     |> yield(name: "count")
                 '''
@@ -307,7 +306,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "weather_forecast")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["_field"] == "avg_cloud_cover")
                 |> sort(columns: ["_time"])
             '''
@@ -356,7 +355,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "weather_observation")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
                 |> sort(columns: ["_time"])
             '''
@@ -413,7 +412,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["_field"] == "outdoor_temperature" or
                                      r["_field"] == "room_temperature" or
                                      r["_field"] == "supply_temp")
@@ -450,7 +449,7 @@ class InfluxReader:
                     from(bucket: "{self.bucket}")
                     |> range(start: -1h)
                     |> filter(fn: (r) => r["_measurement"] == "weather_forecast")
-                    |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                    |> filter(fn: (r) => r["house_id"] == "{house_id}")
                     |> last()
                     |> keep(columns: ["latitude", "longitude"])
                 '''
@@ -491,7 +490,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: now(), stop: {hours_ahead}h)
                 |> filter(fn: (r) => r["_measurement"] == "temperature_forecast")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["forecast_type"] == "outdoor_temp")
                 |> filter(fn: (r) => r["_field"] == "value")
                 |> group(columns: ["_time"])
@@ -507,7 +506,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -2h)
                 |> filter(fn: (r) => r["_measurement"] == "weather_forecast")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["_field"] == "avg_cloud_cover")
                 |> last()
             '''
@@ -649,7 +648,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) =>
                     r["_field"] == "dh_supply_temp" or
                     r["_field"] == "dh_return_temp" or
@@ -710,7 +709,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) =>
                     r["_field"] == "supply_temp" or
                     r["_field"] == "return_temp" or
@@ -746,7 +745,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: now(), stop: 24h)
                 |> filter(fn: (r) => r["_measurement"] == "temperature_forecast")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) =>
                     r["forecast_type"] == "supply_temp_baseline" or
                     r["forecast_type"] == "supply_temp_ml"
@@ -811,7 +810,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{days}d)
                 |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["_field"] == "value")
                 |> aggregateWindow(every: {agg_window}, fn: sum, createEmpty: false)
                 |> sort(columns: ["_time"])
@@ -883,7 +882,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{days}d)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["_field"] == "dh_power")
                 |> aggregateWindow(every: {agg_window}, fn: mean, createEmpty: false)
                 |> sort(columns: ["_time"])
@@ -960,7 +959,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) =>
                     r["_field"] == "dh_supply_temp" or
                     r["_field"] == "dh_return_temp" or
@@ -1045,7 +1044,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["_field"] == "dh_power")
                 |> sort(columns: ["_time"])
             '''
@@ -1099,7 +1098,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{days}d)
                 |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["_field"] == "value")
                 |> filter(fn: (r) => r["energy_type"] == "fjv_total" or r["energy_type"] == "fjv_heating")
                 |> aggregateWindow(every: 1h, fn: sum, createEmpty: false)
@@ -1176,7 +1175,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{days}d)
                 |> filter(fn: (r) => r["_measurement"] == "energy_separated")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["method"] == "homeside_ondemand_dhw")
                 |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
                 |> sort(columns: ["_time"])
@@ -1262,7 +1261,7 @@ class InfluxReader:
                 from(bucket: "{self.bucket}")
                 |> range(start: -{days}d)
                 |> filter(fn: (r) => r["_measurement"] == "k_calibration_history")
-                |> filter(fn: (r) => r["house_id"] =~ /{short_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{short_id}")
                 |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
                 |> sort(columns: ["_time"])
             '''

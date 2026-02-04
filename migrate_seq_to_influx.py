@@ -118,10 +118,13 @@ def parse_seq_event(event: dict) -> dict:
             # Also check top-level for structured logging
             props = {k: v for k, v in event.items() if not k.startswith('@') and k != 'Timestamp'}
 
-        # Extract house_id from ClientId property
+        # Extract house_id from ClientId property (convert to short format)
         client_id = props.get('ClientId', '')
         if not client_id:
             return None
+        # Convert full path to short format: "38/xxx/HEM_FJV_149/HEM_FJV_Villa_149" -> "HEM_FJV_Villa_149"
+        if '/' in client_id:
+            client_id = client_id.split('/')[-1]
 
         # Extract required fields (PascalCase from Seq)
         room_temp = props.get('RoomTemperature')

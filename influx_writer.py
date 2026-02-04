@@ -1043,8 +1043,6 @@ class InfluxDBWriter:
 
         try:
             query_api = self.client.query_api()
-            # Escape forward slashes for Flux regex
-            escaped_house_id = self.house_id.replace('/', '\\/')
 
             for measurement in measurements:
                 try:
@@ -1052,7 +1050,7 @@ class InfluxDBWriter:
                         from(bucket: "{self.bucket}")
                         |> range(start: -30d)
                         |> filter(fn: (r) => r["_measurement"] == "{measurement}")
-                        |> filter(fn: (r) => r["house_id"] =~ /{escaped_house_id}/)
+                        |> filter(fn: (r) => r["house_id"] == "{self.house_id}")
                         |> filter(fn: (r) => r["_field"] == "room_temperature" or r["_field"] == "temperature")
                         |> sort(columns: ["_time"], desc: true)
                         |> first()

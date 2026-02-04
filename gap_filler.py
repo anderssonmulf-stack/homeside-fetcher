@@ -60,7 +60,8 @@ class GapDetector:
         self.org = org
         self.house_id = house_id
         # Escape forward slashes for Flux regex
-        self.escaped_house_id = house_id.replace('/', '\\/')
+        # house_id is now short format (no slashes), no escaping needed
+        self.escaped_house_id = house_id
 
     def find_gaps(
         self,
@@ -86,7 +87,7 @@ class GapDetector:
             from(bucket: "{self.bucket}")
             |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
             |> filter(fn: (r) => r["_measurement"] == "{measurement}")
-            |> filter(fn: (r) => r["house_id"] =~ /{self.escaped_house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{self.house_id}")
             |> filter(fn: (r) => r["_field"] == "room_temperature" or r["_field"] == "outdoor_temperature")
             |> keep(columns: ["_time"])
         '''
@@ -149,7 +150,7 @@ class GapDetector:
             from(bucket: "{self.bucket}")
             |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
             |> filter(fn: (r) => r["_measurement"] == "{measurement}")
-            |> filter(fn: (r) => r["house_id"] =~ /{self.escaped_house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{self.house_id}")
             |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
 
@@ -487,7 +488,8 @@ class WeatherGapFiller:
         self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
 
         # Escape forward slashes for Flux regex
-        self.escaped_house_id = house_id.replace('/', '\\/')
+        # house_id is now short format (no slashes), no escaping needed
+        self.escaped_house_id = house_id
 
     def detect_weather_gaps(
         self,
@@ -500,7 +502,7 @@ class WeatherGapFiller:
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
             |> filter(fn: (r) => r["_measurement"] == "weather_observation")
-            |> filter(fn: (r) => r["house_id"] =~ /{self.escaped_house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{self.house_id}")
             |> filter(fn: (r) => r["_field"] == "temperature")
             |> keep(columns: ["_time"])
         '''

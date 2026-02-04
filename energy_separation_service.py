@@ -113,7 +113,7 @@ class EnergySeparationService:
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{hours}h)
             |> filter(fn: (r) => r["_measurement"] == "heating_system")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "hot_water_temp")
             |> sort(columns: ["_time"])
         '''
@@ -149,7 +149,7 @@ class EnergySeparationService:
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{hours}h)
             |> filter(fn: (r) => r["_measurement"] == "energy_meter")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "consumption")
             |> sort(columns: ["_time"])
         '''
@@ -175,7 +175,7 @@ class EnergySeparationService:
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{hours}h)
             |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "value")
             |> sort(columns: ["_time"])
         '''
@@ -213,7 +213,7 @@ class EnergySeparationService:
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{hours}h)
             |> filter(fn: (r) => r["_measurement"] == "energy_meter")
-            |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "consumption")
             |> sort(columns: ["_time"])
         '''

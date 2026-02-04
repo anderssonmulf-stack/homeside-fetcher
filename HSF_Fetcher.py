@@ -666,7 +666,7 @@ def monitor_heating_system(config):
             token=config.get('influxdb_token'),
             org=config.get('influxdb_org'),
             bucket=config.get('influxdb_bucket'),
-            house_id=api.clientid,  # Use auto-discovered client ID
+            house_id=api.clientid.split('/')[-1],  # Use short form: HEM_FJV_Villa_XXX
             logger=logger,
             enabled=True,
             seq_logger=seq_logger
@@ -688,7 +688,7 @@ def monitor_heating_system(config):
                 influx_token=config.get('influxdb_token'),
                 influx_org=config.get('influxdb_org'),
                 influx_bucket=config.get('influxdb_bucket'),
-                house_id=api.clientid,
+                house_id=api.clientid.split('/')[-1],  # Use short form
                 username=config.get('username'),
                 password=config.get('password'),
                 settings=settings,

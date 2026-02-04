@@ -100,7 +100,7 @@ class HeatingEnergyCalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-            |> filter(fn: (r) => r["house_id"] =~ /^.*{house_id}$/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "value")
             |> aggregateWindow(every: 1d, fn: sum, createEmpty: false)
             |> sort(columns: ["_time"])
@@ -123,7 +123,7 @@ class HeatingEnergyCalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "heating_system")
-            |> filter(fn: (r) => r["house_id"] =~ /^.*{house_id}$/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) =>
                 r["_field"] == "room_temperature" or
                 r["_field"] == "outdoor_temperature" or
@@ -169,7 +169,7 @@ class HeatingEnergyCalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "weather_observation")
-            |> filter(fn: (r) => r["house_id"] =~ /^.*{house_id}$/)
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
         '''

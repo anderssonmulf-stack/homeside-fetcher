@@ -64,7 +64,7 @@ def main():
         from(bucket: "{influx_bucket}")
         |> range(start: {args.start}{end_clause})
         |> filter(fn: (r) => r["_measurement"] == "heating_system")
-        |> filter(fn: (r) => r["house_id"] =~ /{args.house}/)
+        |> filter(fn: (r) => r["house_id"] == "{args.house}")
         |> filter(fn: (r) => r["_field"] == "{args.source_field}")
         |> sort(columns: ["_time"])
     '''

@@ -245,9 +245,13 @@ def main():
     influx_bucket = os.getenv('INFLUXDB_BUCKET')
     house_id = os.getenv('HOMESIDE_CLIENTID', '')
 
-    # If house_id not in env, try to get from existing data
+    # Extract short form if full path provided
+    if house_id and '/' in house_id:
+        house_id = house_id.split('/')[-1]
+
+    # If house_id not in env, use default
     if not house_id:
-        house_id = "38/xxxxxxx/HEM_FJV_149/HEM_FJV_Villa_149"
+        house_id = "HEM_FJV_Villa_149"
 
     if not influx_url and not args.dry_run:
         print("ERROR: INFLUXDB_URL not set in .env")

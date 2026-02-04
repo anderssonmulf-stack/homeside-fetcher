@@ -182,7 +182,7 @@ class EnergyImporter:
                 from(bucket: "{self.bucket}")
                 |> range(start: {start_time}, stop: {end_time})
                 |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-                |> filter(fn: (r) => r["house_id"] =~ /{house_id}/)
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) => r["energy_type"] == "{energy_type}")
                 |> keep(columns: ["_time"])
                 |> distinct(column: "_time")
