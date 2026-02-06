@@ -1,0 +1,1615 @@
+{
+  "schema_version": 1,
+  "building_id": "TE236_HEM_Kontor",
+  "friendly_name": "HEM Kontor TE236",
+  "building_type": "commercial",
+  "connection": {
+    "system": "arrigo",
+    "host": "exodrift05.systeminstallation.se",
+    "account": "HEMLocal"
+  },
+  "discovered_at": "2026-02-06T14:40:20.358737+00:00",
+  "sub_areas": [
+    {
+      "id": "SEVNX0tvbnRvcjFfVUM=",
+      "name": "HEM_Kontor1_UC",
+      "title": "FVC",
+      "type": "UserArea"
+    },
+    {
+      "id": "SEVNX0tvbnRvcjNfS00x",
+      "name": "HEM_Kontor3_KM1",
+      "title": "KM",
+      "type": "UserArea"
+    },
+    {
+      "id": "SEVNX0tvbnRvcjFfVEEx",
+      "name": "HEM_Kontor1_TA1",
+      "title": "TA/FA1",
+      "type": "UserArea"
+    },
+    {
+      "id": "SEVNX0tvbnRvcjFfVEEy",
+      "name": "HEM_Kontor1_TA2",
+      "title": "TA/FA2",
+      "type": "UserArea"
+    },
+    {
+      "id": "SEVNX0tvbnRvcjFfVEEz",
+      "name": "HEM_Kontor1_TA3",
+      "title": "TA/FA3",
+      "type": "UserArea"
+    },
+    {
+      "id": "SEVNX0tvbnRvcjFfVEE0",
+      "name": "HEM_Kontor1_TA4",
+      "title": "TA/FA4",
+      "type": "UserArea"
+    },
+    {
+      "id": "SEVNX0tvbnRvcjFfVEE1",
+      "name": "HEM_Kontor1_TA5",
+      "title": "TA/FA5",
+      "type": "UserArea"
+    },
+    {
+      "id": "SEVNX0tvbnRvcjFfQkVM",
+      "name": "HEM_Kontor1_BEL",
+      "title": "Belysning",
+      "type": "UserArea"
+    },
+    {
+      "id": "SEVNX0tvbnRvcjFfRUxN",
+      "name": "HEM_Kontor1_ELM",
+      "title": "Elmätare",
+      "type": "UserArea"
+    }
+  ],
+  "analog_signals": {
+    "HEM_Kontor1.AAM_VS1_SV_1_Output1": {
+      "signal_id": "MTQyNw==",
+      "unit": "%",
+      "category": "heating",
+      "field_name": "radiator_valve_pct",
+      "fetch": true,
+      "discovered_value": 48.10651397705078
+    },
+    "HEM_Kontor1.AAM_VV1_TAPP_SV_1_Output1": {
+      "signal_id": "MTQyOA==",
+      "unit": "%",
+      "category": "hot_water",
+      "field_name": "dhw_valve_pct",
+      "fetch": true,
+      "discovered_value": 12.83441162109375
+    },
+    "HEM_Kontor1.AI_GP_EXP1_1_Output": {
+      "signal_id": "MTQyNA==",
+      "unit": "kPa",
+      "category": "pressure",
+      "field_name": "system_pressure",
+      "fetch": true,
+      "discovered_value": 142.03651428222656
+    },
+    "HEM_Kontor1.AI_VS1_GT_RETUR_1_Output": {
+      "signal_id": "MTQyMA==",
+      "unit": "°C",
+      "category": "heating",
+      "field_name": "radiator_return_temp",
+      "fetch": true,
+      "discovered_value": 32.38512420654297
+    },
+    "HEM_Kontor1.AI_VS1_GT_TILL_1_Output": {
+      "signal_id": "MTQxOA==",
+      "unit": "°C",
+      "category": "heating",
+      "field_name": "radiator_supply_temp",
+      "fetch": true,
+      "discovered_value": 43.86227035522461
+    },
+    "HEM_Kontor1.AI_VV1_GT_TAPP_1_Output": {
+      "signal_id": "MTQyMQ==",
+      "unit": "°C",
+      "category": "hot_water",
+      "field_name": "dhw_temp",
+      "fetch": true,
+      "discovered_value": 55.16884231567383
+    },
+    "HEM_Kontor1.AI_VVC1_GT_RETUR_1_Output": {
+      "signal_id": "MTQyMw==",
+      "unit": "°C",
+      "category": "hot_water",
+      "field_name": "dhw_circ_return_temp",
+      "fetch": true,
+      "discovered_value": 51.240753173828125
+    },
+    "HEM_Kontor1.BUS_ELM1_Utgång": {
+      "signal_id": "MTQ2NA==",
+      "unit": "kWh",
+      "category": "electricity_metering",
+      "field_name": "elm1_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_ELM2_Utgång": {
+      "signal_id": "MTQ2NQ==",
+      "unit": "kWh",
+      "category": "electricity_metering",
+      "field_name": "elm2_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_ELM3_Utgång": {
+      "signal_id": "MTQ2Ng==",
+      "unit": "kWh",
+      "category": "electricity_metering",
+      "field_name": "elm3_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_ELM4_Utgång": {
+      "signal_id": "MTQ2Nw==",
+      "unit": "kWh",
+      "category": "electricity_metering",
+      "field_name": "elm4_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_ELM5_Utgång": {
+      "signal_id": "MTQ2OA==",
+      "unit": "kWh",
+      "category": "electricity_metering",
+      "field_name": "elm5_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_ELM6_Utgång": {
+      "signal_id": "MTQ2OQ==",
+      "unit": "kWh",
+      "category": "electricity_metering",
+      "field_name": "elm6_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.28125
+    },
+    "HEM_Kontor1.BUS_KMM1_E_kWh_Utgång": {
+      "signal_id": "MTQ3Ng==",
+      "unit": "kWh",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_KMM1_F_Utgång": {
+      "signal_id": "MTQ3Nw==",
+      "unit": "m³",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 1.59375
+    },
+    "HEM_Kontor1.BUS_KMM2_E_kWh_Utgång": {
+      "signal_id": "MTQ3OA==",
+      "unit": "kWh",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_KMM2_F_Utgång": {
+      "signal_id": "MTQ3OQ==",
+      "unit": "m³",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_KMM3_E_kWh_Utgång": {
+      "signal_id": "MTQ4MA==",
+      "unit": "kWh",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_KMM3_F_Utgång": {
+      "signal_id": "MTQ4MQ==",
+      "unit": "m³",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.28125
+    },
+    "HEM_Kontor1.BUS_KMM4_E_kWh_Utgång": {
+      "signal_id": "MTQ4Mg==",
+      "unit": "kWh",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_KMM4_F_Utgång": {
+      "signal_id": "MTQ4Mw==",
+      "unit": "m³",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.208984375
+    },
+    "HEM_Kontor1.BUS_KMM5_E_kWh_Utgång": {
+      "signal_id": "MTQ4NA==",
+      "unit": "kWh",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_KMM5_F_Utgång": {
+      "signal_id": "MTQ4NQ==",
+      "unit": "m³",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_VM1_Utgång": {
+      "signal_id": "MTQ2Mw==",
+      "unit": "m³",
+      "category": "water_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_VMM1_E_kWh_Utgång": {
+      "signal_id": "MTQyOQ==",
+      "unit": "kWh",
+      "category": "energy_metering",
+      "field_name": "vmm1_energy_kwh",
+      "fetch": true,
+      "discovered_value": 5.0048828125
+    },
+    "HEM_Kontor1.BUS_VMM1_F_Utgång": {
+      "signal_id": "MTQzMA==",
+      "unit": "m³",
+      "category": "energy_metering",
+      "field_name": "vmm1_flow_m3",
+      "fetch": true,
+      "discovered_value": 0.06982421875
+    },
+    "HEM_Kontor1.BUS_VMM2_E_kWh_Utgång": {
+      "signal_id": "MTQzMQ==",
+      "unit": "kWh",
+      "category": "energy_metering",
+      "field_name": "vmm2_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_VMM2_F_Utgång": {
+      "signal_id": "MTQzMg==",
+      "unit": "m³",
+      "category": "energy_metering",
+      "field_name": "vmm2_flow_m3",
+      "fetch": true,
+      "discovered_value": 0.00830078125
+    },
+    "HEM_Kontor1.BUS_VMM3_E_kWh_Utgång": {
+      "signal_id": "MTQzMw==",
+      "unit": "kWh",
+      "category": "energy_metering",
+      "field_name": "vmm3_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_VMM3_F_Utgång": {
+      "signal_id": "MTQzNA==",
+      "unit": "m³",
+      "category": "energy_metering",
+      "field_name": "vmm3_flow_m3",
+      "fetch": true,
+      "discovered_value": 0.0498046875
+    },
+    "HEM_Kontor1.BUS_VMM4_E_kWh_Utgång": {
+      "signal_id": "MTQzNQ==",
+      "unit": "kWh",
+      "category": "energy_metering",
+      "field_name": "vmm4_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_VMM4_F_Utgång": {
+      "signal_id": "MTQzNg==",
+      "unit": "m³",
+      "category": "energy_metering",
+      "field_name": "vmm4_flow_m3",
+      "fetch": true,
+      "discovered_value": 0.03125
+    },
+    "HEM_Kontor1.BUS_VMM5_E_kWh_Utgång": {
+      "signal_id": "MTQzNw==",
+      "unit": "kWh",
+      "category": "energy_metering",
+      "field_name": "vmm5_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_VMM5_F_Utgång": {
+      "signal_id": "MTQzOA==",
+      "unit": "m³",
+      "category": "energy_metering",
+      "field_name": "vmm5_flow_m3",
+      "fetch": true,
+      "discovered_value": 0.1015625
+    },
+    "HEM_Kontor1.BUS_VMM6_E_kWh_Utgång": {
+      "signal_id": "MTQzOQ==",
+      "unit": "kWh",
+      "category": "energy_metering",
+      "field_name": "vmm6_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.99945068359375
+    },
+    "HEM_Kontor1.BUS_VMM6_F_Utgång": {
+      "signal_id": "MTQ0MA==",
+      "unit": "m³",
+      "category": "energy_metering",
+      "field_name": "vmm6_flow_m3",
+      "fetch": true,
+      "discovered_value": 0.05078125
+    },
+    "HEM_Kontor1.BUS_VMM7_E_kWh_Utgång": {
+      "signal_id": "MTQ0MQ==",
+      "unit": "kWh",
+      "category": "energy_metering",
+      "field_name": "vmm7_energy_kwh",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_VMM7_F_Utgång": {
+      "signal_id": "MTQ0Mg==",
+      "unit": "m³",
+      "category": "energy_metering",
+      "field_name": "vmm7_flow_m3",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.BUS_VMM8_E_kWh_Utgång": {
+      "signal_id": "MTQ0Mw==",
+      "unit": "kWh",
+      "category": "energy_metering",
+      "field_name": "vmm8_energy_kwh",
+      "fetch": true,
+      "discovered_value": 10.009765625
+    },
+    "HEM_Kontor1.BUS_VMM8_F_Utgång": {
+      "signal_id": "MTQ0NA==",
+      "unit": "m³",
+      "category": "energy_metering",
+      "field_name": "vmm8_flow_m3",
+      "fetch": true,
+      "discovered_value": 0.296875
+    },
+    "HEM_Kontor1.Effekt_Procent": {
+      "signal_id": "MTM1OTg=",
+      "unit": "%",
+      "category": "efficiency",
+      "field_name": "power_limit_pct",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.GT_UTE": {
+      "signal_id": "MTQyNQ==",
+      "unit": "°C",
+      "category": "climate",
+      "field_name": "outdoor_temp_fvc",
+      "fetch": true,
+      "discovered_value": -0.5677343010902405
+    },
+    "HEM_Kontor1.GT_UTE_MEDEL_24": {
+      "signal_id": "MTQyNg==",
+      "unit": "°C",
+      "category": "climate",
+      "field_name": "outdoor_temp_24h_avg_fvc",
+      "fetch": true,
+      "discovered_value": -3.2333028316497803
+    },
+    "HEM_Kontor1.PID_VS1_GT_TILL_1_SetP": {
+      "signal_id": "MTQxOQ==",
+      "unit": "°C",
+      "category": "heating",
+      "field_name": "radiator_supply_setpoint",
+      "fetch": true,
+      "discovered_value": 44.114654541015625
+    },
+    "HEM_Kontor1.PID_VV1_GT_TAPP_1_SetP": {
+      "signal_id": "MTQyMg==",
+      "unit": "°C",
+      "category": "hot_water",
+      "field_name": "dhw_setpoint",
+      "fetch": true,
+      "discovered_value": 56.0
+    },
+    "HEM_Kontor1.Pages(1).Energy": {
+      "signal_id": "NDk1OQ==",
+      "unit": "m³",
+      "category": "district_heating",
+      "field_name": "dh_energy_m3",
+      "fetch": true,
+      "discovered_value": 293.8050231933594
+    },
+    "HEM_Kontor1.Pages(1).Flow": {
+      "signal_id": "MTQ0Nw==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": "dh_flow_total",
+      "fetch": true,
+      "discovered_value": 0.8263199329376221
+    },
+    "HEM_Kontor1.Pages(1).Power": {
+      "signal_id": "MTQ0OA==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": "dh_power_total",
+      "fetch": true,
+      "discovered_value": 55.39402389526367
+    },
+    "HEM_Kontor1.Pages(1).TempForw": {
+      "signal_id": "MTQ0NQ==",
+      "unit": "°C",
+      "category": "district_heating",
+      "field_name": "dh_primary_supply",
+      "fetch": true,
+      "discovered_value": 92.6725845336914
+    },
+    "HEM_Kontor1.Pages(1).TempRet": {
+      "signal_id": "MTQ0Ng==",
+      "unit": "°C",
+      "category": "district_heating",
+      "field_name": "dh_primary_return",
+      "fetch": true,
+      "discovered_value": 34.67839813232422
+    },
+    "HEM_Kontor1.Pages(1).Volume": {
+      "signal_id": "NDk1OA==",
+      "unit": "m³",
+      "category": "district_heating",
+      "field_name": "dh_volume_total",
+      "fetch": true,
+      "discovered_value": 5014.830078125
+    },
+    "HEM_Kontor1.Pages(10).Power": {
+      "signal_id": "MTQ3MA==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.48952043056488037
+    },
+    "HEM_Kontor1.Pages(11).Energy": {
+      "signal_id": "Njg5NA==",
+      "unit": "kWh",
+      "category": "district_heating",
+      "field_name": "dh_energy_kwh_total",
+      "fetch": true,
+      "discovered_value": 336711.96875
+    },
+    "HEM_Kontor1.Pages(11).Power": {
+      "signal_id": "MTQ3MQ==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(12).Power": {
+      "signal_id": "MTQ3Mg==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(13).Power": {
+      "signal_id": "MTQ3Mw==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(14).Power": {
+      "signal_id": "MTQ3NA==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(15).Power": {
+      "signal_id": "MTQ3NQ==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": "dh_sub15_power",
+      "fetch": true,
+      "discovered_value": 3.172267436981201
+    },
+    "HEM_Kontor1.Pages(16).Flow": {
+      "signal_id": "MTQ4Ng==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 6.359997749328613
+    },
+    "HEM_Kontor1.Pages(16).Power": {
+      "signal_id": "MTQ4Nw==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(17).Flow": {
+      "signal_id": "MTQ4OA==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(17).Power": {
+      "signal_id": "MTQ4OQ==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(18).Flow": {
+      "signal_id": "MTQ5MA==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 2.8851993083953857
+    },
+    "HEM_Kontor1.Pages(18).Power": {
+      "signal_id": "MTQ5MQ==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(19).Flow": {
+      "signal_id": "MTQ5Mg==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 2.2977006435394287
+    },
+    "HEM_Kontor1.Pages(19).Power": {
+      "signal_id": "MTQ5Mw==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(2).Flow": {
+      "signal_id": "MTQ0OQ==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": "dh_sub2_flow",
+      "fetch": true,
+      "discovered_value": 0.1313999742269516
+    },
+    "HEM_Kontor1.Pages(2).Power": {
+      "signal_id": "MTQ1MA==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": "dh_sub2_power",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(20).Flow": {
+      "signal_id": "MTQ5NA==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(20).Power": {
+      "signal_id": "MTQ5NQ==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(3).Flow": {
+      "signal_id": "MTQ1MQ==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": "dh_sub3_flow",
+      "fetch": true,
+      "discovered_value": 0.6093000173568726
+    },
+    "HEM_Kontor1.Pages(3).Power": {
+      "signal_id": "MTQ1Mg==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": "dh_sub3_power",
+      "fetch": true,
+      "discovered_value": 5.411998271942139
+    },
+    "HEM_Kontor1.Pages(4).Flow": {
+      "signal_id": "MTQ1Mw==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": "dh_sub4_flow",
+      "fetch": true,
+      "discovered_value": 0.4357600510120392
+    },
+    "HEM_Kontor1.Pages(4).Power": {
+      "signal_id": "MTQ1NA==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": "dh_sub4_power",
+      "fetch": true,
+      "discovered_value": 3.3459994792938232
+    },
+    "HEM_Kontor1.Pages(5).Flow": {
+      "signal_id": "MTQ1NQ==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": "dh_sub5_flow",
+      "fetch": true,
+      "discovered_value": 1.2664399147033691
+    },
+    "HEM_Kontor1.Pages(5).Power": {
+      "signal_id": "MTQ1Ng==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": "dh_sub5_power",
+      "fetch": true,
+      "discovered_value": 6.417999744415283
+    },
+    "HEM_Kontor1.Pages(6).Flow": {
+      "signal_id": "MTQ1Nw==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": "dh_sub6_flow",
+      "fetch": true,
+      "discovered_value": 0.5710403323173523
+    },
+    "HEM_Kontor1.Pages(6).Power": {
+      "signal_id": "MTQ1OA==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": "dh_sub6_power",
+      "fetch": true,
+      "discovered_value": 8.02600383758545
+    },
+    "HEM_Kontor1.Pages(7).Flow": {
+      "signal_id": "MTQ1OQ==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(7).Power": {
+      "signal_id": "MTQ2MA==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor1.Pages(8).Flow": {
+      "signal_id": "MTQ2MQ==",
+      "unit": "m³/h",
+      "category": "district_heating",
+      "field_name": "dh_sub8_flow",
+      "fetch": true,
+      "discovered_value": 3.9275989532470703
+    },
+    "HEM_Kontor1.Pages(8).Power": {
+      "signal_id": "MTQ2Mg==",
+      "unit": "kW",
+      "category": "district_heating",
+      "field_name": "dh_sub8_power",
+      "fetch": true,
+      "discovered_value": 50.952022552490234
+    },
+    "HEM_Kontor2.LB1_Cool_output_level": {
+      "signal_id": "MTM1NQ==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor2.LB1_EA_Duct_pressure": {
+      "signal_id": "MTM0Nw==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 170.3079833984375
+    },
+    "HEM_Kontor2.LB1_EA_Duct_pressure_regulator": {
+      "signal_id": "MTM0OA==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 170.0
+    },
+    "HEM_Kontor2.LB1_EA_Fan_level": {
+      "signal_id": "MTM1OQ==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 45.905601501464844
+    },
+    "HEM_Kontor2.LB1_EA_Temperature": {
+      "signal_id": "MTM1Mg==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu1_extract_temp",
+      "fetch": true,
+      "discovered_value": 21.770401000976562
+    },
+    "HEM_Kontor2.LB1_Outdoor_temperature": {
+      "signal_id": "MTM1MQ==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu1_outdoor_temp",
+      "fetch": true,
+      "discovered_value": 0.7318000793457031
+    },
+    "HEM_Kontor2.LB1_RHX_efficiency": {
+      "signal_id": "MTM1Nw==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu1_hrx_efficiency",
+      "fetch": true,
+      "discovered_value": 88.56840515136719
+    },
+    "HEM_Kontor2.LB1_RHX_operation_level": {
+      "signal_id": "MTM1Ng==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 99.97001647949219
+    },
+    "HEM_Kontor2.LB1_Reheat_anti_frosttemp_overheat_input": {
+      "signal_id": "MTM1Mw==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 22.757596969604492
+    },
+    "HEM_Kontor2.LB1_Reheat_output_level": {
+      "signal_id": "MTM1NA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu1_reheat_pct",
+      "fetch": true,
+      "discovered_value": 82.8499526977539
+    },
+    "HEM_Kontor2.LB1_SA_Duct_pressure": {
+      "signal_id": "MTM0NQ==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 310.13397216796875
+    },
+    "HEM_Kontor2.LB1_SA_Duct_pressure_regulator": {
+      "signal_id": "MTM0Ng==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 310.0
+    },
+    "HEM_Kontor2.LB1_SA_Fan_level": {
+      "signal_id": "MTM1OA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu1_supply_fan_pct",
+      "fetch": true,
+      "discovered_value": 65.48698425292969
+    },
+    "HEM_Kontor2.LB1_SA_Temp_regulator": {
+      "signal_id": "MTM1MA==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 20.359989166259766
+    },
+    "HEM_Kontor2.LB1_SA_Temperature": {
+      "signal_id": "MTM0OQ==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu1_supply_temp",
+      "fetch": true,
+      "discovered_value": 20.43879508972168
+    },
+    "HEM_Kontor2.LB2_Cool_output_level": {
+      "signal_id": "MTM3MA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor2.LB2_EA_Duct_pressure": {
+      "signal_id": "MTM2Mg==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 175.0599822998047
+    },
+    "HEM_Kontor2.LB2_EA_Duct_pressure_regulator": {
+      "signal_id": "MTM2Mw==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 175.0
+    },
+    "HEM_Kontor2.LB2_EA_Fan_level": {
+      "signal_id": "MTM3NA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 72.17838287353516
+    },
+    "HEM_Kontor2.LB2_EA_Temperature": {
+      "signal_id": "MTM2Nw==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu2_extract_temp",
+      "fetch": true,
+      "discovered_value": 21.79920196533203
+    },
+    "HEM_Kontor2.LB2_Outdoor_temperature": {
+      "signal_id": "MTM2Ng==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu2_outdoor_temp",
+      "fetch": true,
+      "discovered_value": 1.6211999654769897
+    },
+    "HEM_Kontor2.LB2_RHX_efficiency": {
+      "signal_id": "MTM3Mg==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu2_hrx_efficiency",
+      "fetch": true,
+      "discovered_value": 86.07318115234375
+    },
+    "HEM_Kontor2.LB2_RHX_operation_level": {
+      "signal_id": "MTM3MQ==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 99.95996856689453
+    },
+    "HEM_Kontor2.LB2_Reheat_anti_frosttemp_overheat_input": {
+      "signal_id": "MTM2OA==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 21.104995727539062
+    },
+    "HEM_Kontor2.LB2_Reheat_output_level": {
+      "signal_id": "MTM2OQ==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu2_reheat_pct",
+      "fetch": true,
+      "discovered_value": 66.08280181884766
+    },
+    "HEM_Kontor2.LB2_SA_Duct_pressure": {
+      "signal_id": "MTM2MA==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 165.00799560546875
+    },
+    "HEM_Kontor2.LB2_SA_Duct_pressure_regulator": {
+      "signal_id": "MTM2MQ==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 165.0
+    },
+    "HEM_Kontor2.LB2_SA_Fan_level": {
+      "signal_id": "MTM3Mw==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu2_supply_fan_pct",
+      "fetch": true,
+      "discovered_value": 76.85281372070312
+    },
+    "HEM_Kontor2.LB2_SA_Temp_regulator": {
+      "signal_id": "MTM2NQ==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 20.359989166259766
+    },
+    "HEM_Kontor2.LB2_SA_Temperature": {
+      "signal_id": "MTM2NA==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu2_supply_temp",
+      "fetch": true,
+      "discovered_value": 20.33279800415039
+    },
+    "HEM_Kontor2.LB3_EA_Airflow": {
+      "signal_id": "MTM3Nw==",
+      "unit": "l/s",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 1140.06005859375
+    },
+    "HEM_Kontor2.LB3_EA_Airflow_regulator": {
+      "signal_id": "MTM3OA==",
+      "unit": "l/s",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 1140.0
+    },
+    "HEM_Kontor2.LB3_EA_Fan_level": {
+      "signal_id": "MTM4OA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 78.40800476074219
+    },
+    "HEM_Kontor2.LB3_EA_Temp_regulator": {
+      "signal_id": "MTM4Mg==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor2.LB3_EA_Temperature": {
+      "signal_id": "MTM4MQ==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu3_extract_temp",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor2.LB3_Outdoor_temperature": {
+      "signal_id": "MTM4MA==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu3_outdoor_temp",
+      "fetch": true,
+      "discovered_value": 1.6307997703552246
+    },
+    "HEM_Kontor2.LB3_RHX_efficiency": {
+      "signal_id": "MTM4Ng==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu3_hrx_efficiency",
+      "fetch": true,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor2.LB3_RHX_operation_level": {
+      "signal_id": "MTM4NQ==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor2.LB3_Reheat_anti_frosttemp_overheat_input": {
+      "signal_id": "MTM4Mw==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 23.15500259399414
+    },
+    "HEM_Kontor2.LB3_Reheat_output_level": {
+      "signal_id": "MTM4NA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu3_reheat_pct",
+      "fetch": true,
+      "discovered_value": 29.629796981811523
+    },
+    "HEM_Kontor2.LB3_SA_Airflow": {
+      "signal_id": "MTM3NQ==",
+      "unit": "l/s",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 1135.52001953125
+    },
+    "HEM_Kontor2.LB3_SA_Airflow_regulator": {
+      "signal_id": "MTM3Ng==",
+      "unit": "l/s",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 1135.0
+    },
+    "HEM_Kontor2.LB3_SA_Fan_level": {
+      "signal_id": "MTM4Nw==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu3_supply_fan_pct",
+      "fetch": true,
+      "discovered_value": 75.06920623779297
+    },
+    "HEM_Kontor2.LB3_SA_Temperature": {
+      "signal_id": "MTM3OQ==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu3_supply_temp",
+      "fetch": true,
+      "discovered_value": 20.37439727783203
+    },
+    "HEM_Kontor2.LB4_Cool_output_level": {
+      "signal_id": "MTM5OQ==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor2.LB4_EA_Duct_pressure": {
+      "signal_id": "MTM5MQ==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 73.83200073242188
+    },
+    "HEM_Kontor2.LB4_EA_Duct_pressure_regulator": {
+      "signal_id": "MTM5Mg==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor2.LB4_EA_Fan_level": {
+      "signal_id": "MTQwMw==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 51.4336051940918
+    },
+    "HEM_Kontor2.LB4_EA_Temperature": {
+      "signal_id": "MTM5Ng==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu4_extract_temp",
+      "fetch": true,
+      "discovered_value": 21.869997024536133
+    },
+    "HEM_Kontor2.LB4_Outdoor_temperature": {
+      "signal_id": "MTM5NQ==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu4_outdoor_temp",
+      "fetch": true,
+      "discovered_value": 1.0444004535675049
+    },
+    "HEM_Kontor2.LB4_RHX_efficiency": {
+      "signal_id": "MTQwMQ==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu4_hrx_efficiency",
+      "fetch": true,
+      "discovered_value": 86.01399230957031
+    },
+    "HEM_Kontor2.LB4_RHX_operation_level": {
+      "signal_id": "MTQwMA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 99.97001647949219
+    },
+    "HEM_Kontor2.LB4_Reheat_anti_frosttemp_overheat_input": {
+      "signal_id": "MTM5Nw==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 27.580602645874023
+    },
+    "HEM_Kontor2.LB4_Reheat_output_level": {
+      "signal_id": "MTM5OA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu4_reheat_pct",
+      "fetch": true,
+      "discovered_value": 99.80119323730469
+    },
+    "HEM_Kontor2.LB4_SA_Duct_pressure": {
+      "signal_id": "MTM4OQ==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 194.8939971923828
+    },
+    "HEM_Kontor2.LB4_SA_Duct_pressure_regulator": {
+      "signal_id": "MTM5MA==",
+      "unit": "Pa",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 195.0
+    },
+    "HEM_Kontor2.LB4_SA_Fan_level": {
+      "signal_id": "MTQwMg==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu4_supply_fan_pct",
+      "fetch": true,
+      "discovered_value": 66.62939453125
+    },
+    "HEM_Kontor2.LB4_SA_Temp_regulator": {
+      "signal_id": "MTM5NA==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 22.0
+    },
+    "HEM_Kontor2.LB4_SA_Temperature": {
+      "signal_id": "MTM5Mw==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu4_supply_temp",
+      "fetch": true,
+      "discovered_value": 21.466999053955078
+    },
+    "HEM_Kontor2.LB5_EA_Airflow": {
+      "signal_id": "MTQwNg==",
+      "unit": "l/s",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 350.9599914550781
+    },
+    "HEM_Kontor2.LB5_EA_Airflow_regulator": {
+      "signal_id": "MTQwNw==",
+      "unit": "l/s",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 350.0
+    },
+    "HEM_Kontor2.LB5_EA_Fan_level": {
+      "signal_id": "MTQxNw==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 34.539588928222656
+    },
+    "HEM_Kontor2.LB5_EA_Temp_regulator": {
+      "signal_id": "MTQxMQ==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 22.0
+    },
+    "HEM_Kontor2.LB5_EA_Temperature": {
+      "signal_id": "MTQxMA==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu5_extract_temp",
+      "fetch": true,
+      "discovered_value": 20.91559600830078
+    },
+    "HEM_Kontor2.LB5_Outdoor_temperature": {
+      "signal_id": "MTQwOQ==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu5_outdoor_temp",
+      "fetch": true,
+      "discovered_value": 1.848400592803955
+    },
+    "HEM_Kontor2.LB5_RHX_efficiency": {
+      "signal_id": "MTQxNQ==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu5_hrx_efficiency",
+      "fetch": true,
+      "discovered_value": 86.57559204101562
+    },
+    "HEM_Kontor2.LB5_RHX_operation_level": {
+      "signal_id": "MTQxNA==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 99.95001220703125
+    },
+    "HEM_Kontor2.LB5_Reheat_anti_frosttemp_overheat_input": {
+      "signal_id": "MTQxMg==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 18.504798889160156
+    },
+    "HEM_Kontor2.LB5_Reheat_output_level": {
+      "signal_id": "MTQxMw==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu5_reheat_pct",
+      "fetch": true,
+      "discovered_value": 99.90380096435547
+    },
+    "HEM_Kontor2.LB5_SA_Airflow": {
+      "signal_id": "MTQwNA==",
+      "unit": "l/s",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 349.1000061035156
+    },
+    "HEM_Kontor2.LB5_SA_Airflow_regulator": {
+      "signal_id": "MTQwNQ==",
+      "unit": "l/s",
+      "category": "ventilation",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 350.0
+    },
+    "HEM_Kontor2.LB5_SA_Fan_level": {
+      "signal_id": "MTQxNg==",
+      "unit": "%",
+      "category": "ventilation",
+      "field_name": "ahu5_supply_fan_pct",
+      "fetch": true,
+      "discovered_value": 50.758201599121094
+    },
+    "HEM_Kontor2.LB5_SA_Temperature": {
+      "signal_id": "MTQwOA==",
+      "unit": "°C",
+      "category": "ventilation",
+      "field_name": "ahu5_supply_temp",
+      "fetch": true,
+      "discovered_value": 18.900196075439453
+    },
+    "HEM_Kontor3.AAM_KB2_SV_1_Output1": {
+      "signal_id": "MTMzNg==",
+      "unit": "%",
+      "category": "cooling",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 0.0
+    },
+    "HEM_Kontor3.ABSOLUTFUKT_G_KG_Output": {
+      "signal_id": "MTM0MA==",
+      "unit": "g/m3 ",
+      "category": "cooling",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 3.1740097999572754
+    },
+    "HEM_Kontor3.AI_KB2_GP_EXP1_1_Output": {
+      "signal_id": "MTM0MQ==",
+      "unit": "kPa",
+      "category": "cooling",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 140.6710968017578
+    },
+    "HEM_Kontor3.AI_KB2_GT_RETUR_1_Output": {
+      "signal_id": "MTMzNQ==",
+      "unit": "°C",
+      "category": "cooling",
+      "field_name": "cooling_return_temp",
+      "fetch": true,
+      "discovered_value": 19.283382415771484
+    },
+    "HEM_Kontor3.AI_KB2_GT_TILL_1_Output": {
+      "signal_id": "MTMzMw==",
+      "unit": "°C",
+      "category": "cooling",
+      "field_name": "cooling_supply_temp",
+      "fetch": true,
+      "discovered_value": 15.120647430419922
+    },
+    "HEM_Kontor3.AI_KM1_GP_EXP1_1_Output": {
+      "signal_id": "MTM0Mg==",
+      "unit": "kPa",
+      "category": "cooling",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": 124.74085998535156
+    },
+    "HEM_Kontor3.AI_LB1_GM_FRAN_1_Output": {
+      "signal_id": "MTMzOA==",
+      "unit": "%Rh",
+      "category": "other",
+      "field_name": "extract_air_humidity",
+      "fetch": true,
+      "discovered_value": 20.221084594726562
+    },
+    "HEM_Kontor3.AI_LB1_GT_FRAN_1_Output": {
+      "signal_id": "MTMzNw==",
+      "unit": "°C",
+      "category": "other",
+      "field_name": "extract_air_temp",
+      "fetch": true,
+      "discovered_value": 21.382596969604492
+    },
+    "HEM_Kontor3.DAGGP_KYLB_DewPoint": {
+      "signal_id": "MTMzOQ==",
+      "unit": "°C",
+      "category": "cooling",
+      "field_name": null,
+      "fetch": false,
+      "discovered_value": -2.257112741470337
+    },
+    "HEM_Kontor3.GT_UTE": {
+      "signal_id": "MTM0Mw==",
+      "unit": "°C",
+      "category": "climate",
+      "field_name": "outdoor_temp_km",
+      "fetch": true,
+      "discovered_value": -0.5544979572296143
+    },
+    "HEM_Kontor3.GT_UTE_MEDEL_24": {
+      "signal_id": "MTM0NA==",
+      "unit": "°C",
+      "category": "climate",
+      "field_name": "outdoor_temp_24h_avg_km",
+      "fetch": true,
+      "discovered_value": -3.224087715148926
+    },
+    "HEM_Kontor3.PID_KB2_GT_TILL_1_SetP": {
+      "signal_id": "MTMzNA==",
+      "unit": "°C",
+      "category": "cooling",
+      "field_name": "cooling_supply_setpoint",
+      "fetch": true,
+      "discovered_value": 14.0
+    }
+  },
+  "digital_signals": {
+    "HEM_Kontor1.BELYSNING_1_LOGG": {
+      "signal_id": "MTA4",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, Ytterbelysning",
+      "state_texts": null
+    },
+    "HEM_Kontor1.BELYSNING_2_LOGG": {
+      "signal_id": "MTA5",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, Skyltbelysning",
+      "state_texts": null
+    },
+    "HEM_Kontor1.BELYSNING_3_LOGG": {
+      "signal_id": "MTEw",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, Effektbelysning lobby",
+      "state_texts": null
+    },
+    "HEM_Kontor1.BELYSNING_4_LOGG": {
+      "signal_id": "MTEx",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, Belysning carport",
+      "state_texts": null
+    },
+    "HEM_Kontor1.BELYSNING_5_LOGG": {
+      "signal_id": "MTEy",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, Mastbelysning",
+      "state_texts": null
+    },
+    "HEM_Kontor1.BELYSNING_6_LOGG": {
+      "signal_id": "MTIz",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, Belysning spolplatta",
+      "state_texts": null
+    },
+    "HEM_Kontor1.EFFEKKT_LOGG": {
+      "signal_id": "MTUzMQ==",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, Effektstyrning Aktiv",
+      "state_texts": null
+    },
+    "HEM_Kontor1.KMM5_LARM": {
+      "signal_id": "MTAz",
+      "category": "cooling_metering",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TA/FA4, KMM5 Svarar ej",
+      "state_texts": null
+    },
+    "HEM_Kontor1.VS1_NATTS_LOGG": {
+      "signal_id": "MTA2",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, VS1 Nattsänkning",
+      "state_texts": null
+    },
+    "HEM_Kontor1.VS1_P1_LOGG": {
+      "signal_id": "MTA0",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, FVC, VS1-P1 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor1.VV1_LEGIONELLA_LOGG": {
+      "signal_id": "MTA3",
+      "category": "hot_water",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "OFF",
+      "signal_text": "TE236 HEM Kontor, FVC, VV1 Legionellafunktion",
+      "state_texts": null
+    },
+    "HEM_Kontor1.VVC1_P1_LOGG": {
+      "signal_id": "MTA1",
+      "category": "hot_water",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, FVC, VV1-P1 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB1_FA1_LOGG": {
+      "signal_id": "MTE0",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA1, FA1 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB1_TA1_LOGG": {
+      "signal_id": "MTEz",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA1, TA1 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB2_FA1_LOGG": {
+      "signal_id": "MTE2",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA2, FA2 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB2_TA1_LOGG": {
+      "signal_id": "MTE1",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA2, TA2 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB3_FA1_LOGG": {
+      "signal_id": "MTE4",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA3, FA3 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB3_TA1_LOGG": {
+      "signal_id": "MTE3",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA3, TA3 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB4_FA1_LOGG": {
+      "signal_id": "MTIw",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA4, FA4 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB4_TA1_LOGG": {
+      "signal_id": "MTE5",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA4, TA4 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB5_FA1_LOGG": {
+      "signal_id": "MTIy",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA5, FA4 Drift",
+      "state_texts": null
+    },
+    "HEM_Kontor2.LB5_TA1_LOGG": {
+      "signal_id": "MTIx",
+      "category": "other",
+      "field_name": null,
+      "fetch": false,
+      "discovered_state": "ON",
+      "signal_text": "TE236 HEM Kontor, TA/FA5, TA4 Drift",
+      "state_texts": null
+    }
+  },
+  "alarm_monitoring": {
+    "enabled": false,
+    "priorities": [
+      "A",
+      "B"
+    ],
+    "poll_interval_minutes": 15
+  },
+  "poll_interval_minutes": 15
+}
