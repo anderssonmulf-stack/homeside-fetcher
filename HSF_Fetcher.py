@@ -19,6 +19,7 @@ from k_recalibrator import recalibrate_house
 from energy_importer import EnergyImporter
 from energy_separation_service import EnergySeparationService
 from dropbox_client import create_client_from_env
+from weather_sensitivity_learner import WeatherSensitivityLearner
 
 
 def check_data_staleness(influx, settings: dict, logger) -> dict:
@@ -305,10 +306,10 @@ def run_energy_pipeline(
     try:
         dropbox_client = create_client_from_env()
         if not dropbox_client:
-            print("⚠ Dropbox not configured - skipping import")
+            print("ℹ Dropbox not configured - skipping import (handled by main fetcher)")
             seq_logger.log(
-                "Energy pipeline: Dropbox not configured",
-                level='Warning'
+                "Energy pipeline: Dropbox not configured - import handled by main fetcher",
+                level='Info'
             )
         else:
             importer = EnergyImporter(
@@ -352,53 +353,18 @@ def run_energy_pipeline(
             properties={'Error': str(e)}
         )
 
-    # Step 2: Run energy separation (heating vs DHW)
-    print("\n⚡ Step 2: Separating heating vs DHW energy...")
-    try:
-        separation_service = EnergySeparationService(
-            influx_url=config.get('influxdb_url'),
-            influx_token=config.get('influxdb_token'),
-            influx_org=config.get('influxdb_org'),
-            influx_bucket=config.get('influxdb_bucket'),
-            profiles_dir=profiles_dir,
-            dry_run=False
-        )
+    # Step 2: Energy separation (DISABLED - k_calibration in Step 3 does this better)
+    # The energy_separation_service used hot water temp detection (homeside_ondemand_dhw)
+    # but the k_calibration method in Step 3 uses the calibrated heat loss coefficient
+    # which is more accurate. Keeping both caused duplicate entries.
+    # The service script is kept for potential future use.
+    print("\n⚡ Step 2: Energy separation (skipped - handled by k_calibration in Step 3)")
+    results['separation'] = {'success': True, 'houses': 0, 'records': 0}
 
-        # Process last 48 hours to catch any missed data
-        sep_result = separation_service.run(hours=48)
-        separation_service.close()
-
-        results['separation'] = {
-            'success': True,
-            'houses': sep_result.get('houses', 0),
-            'records': sep_result.get('records', 0)
-        }
-
-        if sep_result.get('records', 0) > 0:
-            print(f"✓ Separated energy for {sep_result['houses']} house(s), {sep_result['records']} record(s)")
-            seq_logger.log(
-                "Energy separation: {Records} records for {Houses} house(s)",
-                level='Information',
-                properties={
-                    'Records': sep_result['records'],
-                    'Houses': sep_result['houses']
-                }
-            )
-        else:
-            print("ℹ No energy data to separate")
-
-    except Exception as e:
-        logger.error(f"Energy separation failed: {e}")
-        print(f"❌ Separation failed: {e}")
-        seq_logger.log(
-            "Energy separation failed: {Error}",
-            level='Error',
-            properties={'Error': str(e)}
-        )
-
-    # Step 3: Recalibrate k-values (only if separation succeeded)
+    # Step 3: Recalibrate k-values (runs after energy import)
+    # This also writes energy_separated data with method="k_calibration"
     print("\n📊 Step 3: Recalibrating k-values...")
-    if results['separation']['success'] and results['separation']['records'] > 0:
+    if results['import']['success']:
         calibrated_count = 0
         try:
             # Get all enabled houses
@@ -728,21 +694,49 @@ def monitor_heating_system(config):
             # Initialize energy forecaster if k-value is calibrated
             heat_loss_k = customer_profile.energy_separation.heat_loss_k
             if heat_loss_k:
-                energy_forecaster = EnergyForecaster(
-                    heat_loss_k=heat_loss_k,
-                    target_indoor_temp=customer_profile.comfort.target_indoor_temp,
+                # Use from_profile to include ML2 learned coefficients
+                energy_forecaster = EnergyForecaster.from_profile(
+                    profile=customer_profile,
                     latitude=config.get('latitude', 58.41),
                     longitude=config.get('longitude', 15.62),
                     logger=logger
                 )
                 print(f"  - Energy forecast: k={heat_loss_k:.4f} kW/°C")
+                # Show if using ML2 coefficients
+                if energy_forecaster.solar_coefficient_ml2 and energy_forecaster.solar_confidence_ml2 >= 0.3:
+                    print(f"    Using ML2 model: solar={energy_forecaster.solar_coefficient_ml2:.1f}")
             else:
                 print("  - Energy forecast: Not calibrated (run heating_energy_calibrator.py)")
+
+            # Show ML2 weather learning status
+            weather_status = customer_profile.get_status()
+            print(f"  - Weather ML2: {weather_status.get('weather_status_ml2', 'Not initialized')}")
+            if weather_status.get('solar_coefficient_ml2', 6.0) > 6.0:
+                print(f"    Solar coeff: {weather_status.get('solar_coefficient_ml2'):.1f} "
+                      f"({weather_status.get('solar_events_total', 0)} events)")
         else:
             print("⚠ No customer profile found, using legacy forecaster")
     except Exception as e:
         logger.warning(f"Failed to load customer profile: {e}")
         print(f"⚠ Customer profile error: {e}, using legacy forecaster")
+
+    # Initialize weather sensitivity learner (ML2)
+    weather_learner = None
+    if customer_profile and customer_profile.energy_separation.heat_loss_k:
+        heat_loss_k = customer_profile.energy_separation.heat_loss_k
+        lat = config.get('latitude', 58.41)
+        lon = config.get('longitude', 15.62)
+        weather_learner = WeatherSensitivityLearner(
+            heat_loss_k=heat_loss_k,
+            latitude=lat,
+            longitude=lon,
+            coefficients=customer_profile.learned.weather_coefficients,
+            timing=customer_profile.learned.thermal_timing,
+            logger=logger
+        )
+        print(f"✓ Weather sensitivity learner (ML2) initialized")
+    else:
+        print("⚠ Weather sensitivity learner disabled (requires calibrated k-value)")
 
     # Initialize heat curve controller
     heat_curve_enabled = config.get('heat_curve_enabled', False)
@@ -967,7 +961,15 @@ def monitor_heating_system(config):
                         # Calculate effective temperature if we have weather observation data
                         # (from shared cache or fresh fetch)
                         if weather_obs_data and weather_obs_data.get('temperature') is not None:
-                            weather_model = SimpleWeatherModel()
+                            # Use ML2 coefficients from profile if available
+                            model_kwargs = {}
+                            if customer_profile and customer_profile.learned.weather_coefficients:
+                                wc = customer_profile.learned.weather_coefficients
+                                if wc.solar_coefficient_ml2 is not None:
+                                    model_kwargs['solar_coefficient'] = wc.solar_coefficient_ml2
+                                if wc.wind_coefficient_ml2 is not None:
+                                    model_kwargs['wind_coefficient'] = wc.wind_coefficient_ml2
+                            weather_model = SimpleWeatherModel(**model_kwargs)
                             conditions = WeatherConditions(
                                 timestamp=now,
                                 temperature=outdoor_temp,  # Use HomeSide outdoor temp as base
@@ -998,6 +1000,146 @@ def monitor_heating_system(config):
                             extracted_data['supply_temp_heat_curve_ml'] = round(current_supply, 2)
 
                     # =====================================================
+                    # WEATHER SENSITIVITY LEARNING (ML2)
+                    # Detect solar heating events and learn coefficients
+                    # =====================================================
+                    if weather_learner and all(k in extracted_data for k in
+                                               ['supply_temp', 'return_temp', 'room_temperature', 'outdoor_temperature']):
+                        # Get cloud cover from forecast trend if available
+                        cloud_cover = 4.0  # Default: partly cloudy
+                        if cached_forecast_trend and cached_forecast_trend.get('avg_cloud_cover') is not None:
+                            cloud_cover = cached_forecast_trend['avg_cloud_cover']
+
+                        # Get wind speed from weather observation
+                        wind_speed = 3.0  # Default
+                        if weather_obs_data and weather_obs_data.get('wind_speed') is not None:
+                            wind_speed = weather_obs_data['wind_speed']
+
+                        # Process observation for all ML2 learning systems
+                        ml2_result = weather_learner.process_observation(
+                            timestamp=now,
+                            supply_temp=extracted_data['supply_temp'],
+                            return_temp=extracted_data['return_temp'],
+                            room_temp=extracted_data['room_temperature'],
+                            outdoor_temp=extracted_data['outdoor_temperature'],
+                            cloud_cover=cloud_cover,
+                            wind_speed=wind_speed
+                        )
+
+                        # Handle solar event if one was just completed
+                        solar_event = ml2_result.get('solar_event')
+                        if solar_event:
+                            print(f"☀️  Solar event detected: {solar_event.duration_minutes:.0f}min, "
+                                  f"coeff={solar_event.implied_solar_coefficient_ml2:.1f}")
+
+                            # Write to InfluxDB
+                            if influx:
+                                influx.write_solar_event(solar_event.to_dict())
+
+                            # Log to Seq
+                            seq_logger.log(
+                                "Solar event detected: {Duration}min, implied_coeff={Coefficient}",
+                                level='Information',
+                                properties={
+                                    'EventType': 'SolarEventDetected',
+                                    'Duration': round(solar_event.duration_minutes, 0),
+                                    'Coefficient': round(solar_event.implied_solar_coefficient_ml2, 1),
+                                    'AvgOutdoorTemp': round(solar_event.avg_outdoor_temp, 1),
+                                    'AvgSunElevation': round(solar_event.avg_sun_elevation, 1),
+                                    'AvgCloudCover': round(solar_event.avg_cloud_cover, 1),
+                                }
+                            )
+
+                        # Handle solar early warning (predictive detection)
+                        early_warning = ml2_result.get('early_warning')
+                        if early_warning:
+                            print(f"⚡ Solar early warning: +{early_warning['outdoor_rise']:.1f}°C, "
+                                  f"~{early_warning['estimated_lead_time_minutes']:.0f}min lead time")
+
+                            # Write to InfluxDB
+                            if influx:
+                                influx.write_solar_early_warning(early_warning)
+
+                            seq_logger.log(
+                                "Solar early warning: +{Rise}°C rise, lead_time={LeadTime}min",
+                                level='Information',
+                                properties={
+                                    'EventType': 'SolarEarlyWarning',
+                                    'OutdoorRise': round(early_warning['outdoor_rise'], 1),
+                                    'LeadTimeMinutes': round(early_warning['estimated_lead_time_minutes'], 0),
+                                    'Confidence': round(early_warning['confidence'], 2),
+                                }
+                            )
+
+                        # Handle thermal lag measurement
+                        thermal_lag = ml2_result.get('thermal_lag')
+                        if thermal_lag:
+                            print(f"🕐 Thermal lag measured: {thermal_lag['type']} "
+                                  f"{thermal_lag['lag_minutes']:.0f}min")
+
+                            # Write to InfluxDB
+                            if influx:
+                                influx.write_thermal_lag_measurement(thermal_lag)
+
+                            seq_logger.log(
+                                "Thermal lag measured: {Type} {Lag}min",
+                                level='Information',
+                                properties={
+                                    'EventType': 'ThermalLagMeasured',
+                                    'TransitionType': thermal_lag['type'],
+                                    'LagMinutes': round(thermal_lag['lag_minutes'], 0),
+                                    'EffectiveTempChange': round(thermal_lag['effective_temp_change'], 1),
+                                    'IndoorTempChange': round(thermal_lag['indoor_temp_change'], 1),
+                                }
+                            )
+
+                        # Log heating adjustment recommendation (for future use)
+                        heating_adj = ml2_result.get('heating_adjustment')
+                        if heating_adj and heating_adj.get('action') != 'maintain':
+                            print(f"💡 ML2 heating recommendation: {heating_adj['action']} "
+                                  f"({heating_adj['reason']})")
+
+                        # Check if it's time to update coefficients
+                        if weather_learner.should_update_coefficients():
+                            updated_coeffs = weather_learner.update_coefficients()
+
+                            # Update profile
+                            customer_profile.learned.weather_coefficients = updated_coeffs
+                            customer_profile.save()
+
+                            # Write to InfluxDB for tracking
+                            if influx:
+                                influx.write_weather_coefficients_ml2(updated_coeffs.to_dict())
+
+                            print(f"📈 ML2 solar coefficient updated: {updated_coeffs.solar_coefficient_ml2:.1f} "
+                                  f"({updated_coeffs.solar_confidence_ml2:.0%} confidence)")
+
+                            seq_logger.log(
+                                "ML2 coefficient updated: solar={SolarCoeff}, confidence={Confidence}",
+                                level='Information',
+                                properties={
+                                    'EventType': 'WeatherCoefficientsUpdated',
+                                    'SolarCoeff': round(updated_coeffs.solar_coefficient_ml2, 1),
+                                    'WindCoeff': round(updated_coeffs.wind_coefficient_ml2, 2),
+                                    'Confidence': round(updated_coeffs.solar_confidence_ml2, 2),
+                                    'TotalEvents': updated_coeffs.total_solar_events,
+                                }
+                            )
+
+                        # Check if it's time to update thermal timing
+                        if weather_learner.should_update_timing():
+                            # Update profile with new timing
+                            customer_profile.learned.thermal_timing = weather_learner.timing
+                            customer_profile.save()
+
+                            # Write to InfluxDB
+                            if influx:
+                                influx.write_thermal_timing_ml2(weather_learner.timing.to_dict())
+
+                            print(f"📈 ML2 thermal timing updated: heat_up={weather_learner.timing.heat_up_lag_minutes_ml2:.0f}min, "
+                                  f"cool_down={weather_learner.timing.cool_down_lag_minutes_ml2:.0f}min")
+
+                    # =====================================================
                     # WEATHER: Forecast (every forecast_interval_minutes)
                     # =====================================================
                     forecast_trend = cached_forecast_trend
@@ -1021,7 +1163,7 @@ def monitor_heating_system(config):
                                 influx.write_forecast_data(forecast_trend)
 
                                 # Generate and write detailed forecast points for Grafana
-                                influx.delete_old_forecasts()
+                                influx.delete_future_forecasts()  # Delete future temp forecasts (prevents "curtain" effect)
                                 influx.delete_future_weather_forecasts()
 
                                 # Use new forecaster if available, otherwise legacy

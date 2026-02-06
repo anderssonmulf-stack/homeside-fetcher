@@ -42,6 +42,59 @@ class HeatingSystemConfig:
 
 
 @dataclass
+class LearnedWeatherCoefficients:
+    """
+    Weather coefficients learned from solar event detection (ML2 model).
+
+    Uses _ml2 suffix to distinguish from original model coefficients.
+    Solar coefficient is learned from detected solar heating events.
+    Wind coefficient is fixed low for modern FTX houses.
+    """
+    solar_coefficient_ml2: float = 6.0      # Default (will be learned to 30-50)
+    wind_coefficient_ml2: float = 0.15      # Fixed low value for FTX houses
+    solar_confidence_ml2: float = 0.0       # 0-1 confidence
+    total_solar_events: int = 0
+    events_since_last_update: int = 0
+    next_update_at_events: int = 3          # First update after 3 events
+    updated_at: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            'solar_coefficient_ml2': self.solar_coefficient_ml2,
+            'wind_coefficient_ml2': self.wind_coefficient_ml2,
+            'solar_confidence_ml2': self.solar_confidence_ml2,
+            'total_solar_events': self.total_solar_events,
+            'events_since_last_update': self.events_since_last_update,
+            'next_update_at_events': self.next_update_at_events,
+            'updated_at': self.updated_at,
+        }
+
+
+@dataclass
+class ThermalResponseTiming:
+    """
+    Learned thermal response timing for predictive control (ML2 model).
+
+    How quickly the building responds to effective_temp changes.
+    Used for predictive heating control.
+    """
+    heat_up_lag_minutes_ml2: float = 60.0     # Time for indoor to respond to rising eff_temp
+    cool_down_lag_minutes_ml2: float = 90.0   # Time for indoor to respond to falling eff_temp
+    confidence_ml2: float = 0.0
+    total_transitions: int = 0
+    updated_at: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            'heat_up_lag_minutes_ml2': self.heat_up_lag_minutes_ml2,
+            'cool_down_lag_minutes_ml2': self.cool_down_lag_minutes_ml2,
+            'confidence_ml2': self.confidence_ml2,
+            'total_transitions': self.total_transitions,
+            'updated_at': self.updated_at,
+        }
+
+
+@dataclass
 class LearnedParameters:
     """
     Parameters learned from historical data.
@@ -54,6 +107,9 @@ class LearnedParameters:
     total_samples: int = 0
     next_update_at_samples: int = 24  # First update after 24 samples
     updated_at: Optional[str] = None
+    # ML2 weather sensitivity coefficients (learned from solar events)
+    weather_coefficients: LearnedWeatherCoefficients = field(default_factory=LearnedWeatherCoefficients)
+    thermal_timing: ThermalResponseTiming = field(default_factory=ThermalResponseTiming)
 
 
 @dataclass
@@ -161,6 +217,17 @@ class CustomerProfile:
     @classmethod
     def _from_dict(cls, data: Dict[str, Any]) -> "CustomerProfile":
         """Create a CustomerProfile from a dictionary."""
+        # Parse learned parameters with nested dataclasses
+        learned_data = data.get("learned", {})
+        weather_coeff_data = learned_data.pop("weather_coefficients", {})
+        thermal_timing_data = learned_data.pop("thermal_timing", {})
+
+        learned = LearnedParameters(
+            **{k: v for k, v in learned_data.items() if k not in ['weather_coefficients', 'thermal_timing']},
+            weather_coefficients=LearnedWeatherCoefficients(**weather_coeff_data) if weather_coeff_data else LearnedWeatherCoefficients(),
+            thermal_timing=ThermalResponseTiming(**thermal_timing_data) if thermal_timing_data else ThermalResponseTiming()
+        )
+
         return cls(
             schema_version=data.get("schema_version", 1),
             customer_id=data.get("customer_id", ""),
@@ -169,7 +236,7 @@ class CustomerProfile:
             building=BuildingConfig(**data.get("building", {})),
             comfort=ComfortConfig(**data.get("comfort", {})),
             heating_system=HeatingSystemConfig(**data.get("heating_system", {})),
-            learned=LearnedParameters(**data.get("learned", {})),
+            learned=learned,
             energy_separation=EnergySeparationConfig(**data.get("energy_separation", {}))
         )
 
@@ -270,6 +337,17 @@ class CustomerProfile:
 
         hourly_coverage = len([b for b in learned.hourly_bias.values() if b != 0])
 
+        # ML2 weather learning status
+        weather = learned.weather_coefficients
+        if weather.total_solar_events == 0:
+            weather_status = "Waiting for solar events"
+        elif weather.solar_confidence_ml2 < 0.3:
+            weather_status = f"Learning ({weather.total_solar_events} events)"
+        elif weather.solar_confidence_ml2 < 0.6:
+            weather_status = f"Calibrating ({weather.solar_confidence_ml2:.0%})"
+        else:
+            weather_status = f"Calibrated ({weather.solar_confidence_ml2:.0%})"
+
         return {
             "customer": self.friendly_name,
             "target_temp": self.comfort.target_indoor_temp,
@@ -282,7 +360,15 @@ class CustomerProfile:
                 learned.next_update_at_samples -
                 learned.samples_since_last_update
             ),
-            "last_updated": learned.updated_at
+            "last_updated": learned.updated_at,
+            # ML2 weather sensitivity
+            "weather_status_ml2": weather_status,
+            "solar_coefficient_ml2": weather.solar_coefficient_ml2,
+            "solar_events_total": weather.total_solar_events,
+            "solar_events_until_update": (
+                weather.next_update_at_events -
+                weather.events_since_last_update
+            ),
         }
 
 

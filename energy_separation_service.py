@@ -350,7 +350,13 @@ class EnergySeparationService:
         house_id: str,
         results: List[EnergySeparationResult]
     ) -> int:
-        """Write separation results to InfluxDB."""
+        """Write separation results to InfluxDB.
+
+        Skips the current day (incomplete data) and results with
+        0% DHW (indicates missing hot water temp data).
+        """
+        today = datetime.now(timezone.utc).date()
+
         if self.dry_run:
             logger.info(f"[DRY RUN] Would write {len(results)} separation results for {house_id}")
             for r in results:
@@ -358,7 +364,13 @@ class EnergySeparationService:
             return len(results)
 
         points = []
+        skipped_today = 0
         for result in results:
+            # Skip current day (incomplete)
+            result_date = result.timestamp.date() if result.timestamp.tzinfo else result.timestamp.replace(tzinfo=timezone.utc).date()
+            if result_date >= today:
+                skipped_today += 1
+                continue
             # Write to energy_separated measurement
             point = Point("energy_separated") \
                 .tag("house_id", house_id) \
@@ -387,8 +399,10 @@ class EnergySeparationService:
         if points:
             self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
             logger.info(f"Wrote {len(points)} points for {house_id}")
+            if skipped_today > 0:
+                logger.info(f"  Skipped {skipped_today} incomplete day(s) (today/future)")
 
-        return len(results)
+        return len(results) - skipped_today
 
     def process_house(
         self,

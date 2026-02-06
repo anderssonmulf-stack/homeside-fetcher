@@ -678,46 +678,6 @@ class InfluxDBWriter:
             self._log_influx_error("Thermal data point write failed", e, "write_thermal_data_point")
             return False
 
-    def delete_old_forecasts(self) -> bool:
-        """
-        Delete old forecast points that are in the past.
-
-        Only deletes forecasts for PAST times (already resolved), not future times.
-        This allows multiple predictions for the same future time to coexist,
-        enabling lead-time accuracy comparison (24h vs 12h vs 3h predictions).
-
-        Returns:
-            True if delete succeeded, False otherwise
-        """
-        if not self.enabled:
-            return False
-
-        try:
-            delete_api = self.client.delete_api()
-
-            # Only delete PAST forecasts (from -48h to now)
-            # Keep future forecasts to allow lead-time accuracy comparison
-            start = datetime.now(timezone.utc) - timedelta(hours=48)
-            stop = datetime.now(timezone.utc)
-
-            # Delete predicate: measurement and house_id
-            predicate = f'_measurement="temperature_forecast" AND house_id="{self.house_id}"'
-
-            delete_api.delete(
-                start=start,
-                stop=stop,
-                predicate=predicate,
-                bucket=self.bucket,
-                org=self.org
-            )
-
-            self.logger.info("Deleted past forecast points (keeping future forecasts for lead-time comparison)")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Failed to delete old forecasts: {str(e)}")
-            return False
-
     def write_forecast_points(self, forecast_data: List[Dict]) -> bool:
         """
         Write hourly forecast points to InfluxDB with FUTURE timestamps.
@@ -912,6 +872,42 @@ class InfluxDBWriter:
 
         except Exception as e:
             self.logger.error(f"Failed to write energy forecast: {str(e)}")
+            return False
+
+    def delete_future_forecasts(self) -> bool:
+        """
+        Delete future temperature forecast points (keep history, update future).
+
+        This prevents the "curtain" effect where multiple predictions for the
+        same future timestamp accumulate and cause visual artifacts in charts.
+
+        Returns:
+            True if delete succeeded, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            delete_api = self.client.delete_api()
+
+            start = datetime.now(timezone.utc)
+            stop = datetime.now(timezone.utc) + timedelta(days=7)
+
+            predicate = f'_measurement="temperature_forecast" AND house_id="{self.house_id}"'
+
+            delete_api.delete(
+                start=start,
+                stop=stop,
+                predicate=predicate,
+                bucket=self.bucket,
+                org=self.org
+            )
+
+            self.logger.info("Deleted future forecast points (past forecasts kept as history)")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to delete future forecasts: {str(e)}")
             return False
 
     def delete_future_energy_forecasts(self) -> bool:
@@ -1352,6 +1348,277 @@ class InfluxDBWriter:
         except Exception as e:
             self.logger.error(f"Failed to delete old shared weather forecasts: {str(e)}")
             return False
+
+    def write_solar_event(self, event_data: dict) -> bool:
+        """
+        Write a detected solar heating event to InfluxDB.
+
+        Solar events are periods when heating demand dropped due to solar gain.
+        Used for solar coefficient learning (ML2 model).
+
+        Args:
+            event_data: Dictionary from SolarEvent.to_dict():
+                - timestamp: Event start time
+                - end_timestamp: Event end time
+                - duration_minutes: Event duration
+                - avg_supply_return_delta: Average supply-return delta
+                - avg_outdoor_temp, avg_indoor_temp
+                - avg_cloud_cover, avg_sun_elevation, avg_wind_speed
+                - implied_solar_coefficient_ml2: Back-calculated coefficient
+                - observations_count, peak_sun_elevation
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not event_data:
+            return False
+
+        try:
+            # Parse timestamp
+            timestamp = event_data.get('timestamp')
+            if isinstance(timestamp, str):
+                if timestamp.endswith('Z'):
+                    timestamp = timestamp.replace('Z', '+00:00')
+                timestamp = datetime.fromisoformat(timestamp)
+
+            point = Point("solar_event_ml2") \
+                .tag("house_id", self.house_id) \
+                .field("duration_minutes", round(float(event_data.get('duration_minutes', 0)), 1)) \
+                .field("avg_supply_return_delta", round(float(event_data.get('avg_supply_return_delta', 0)), 2)) \
+                .field("avg_outdoor_temp", round(float(event_data.get('avg_outdoor_temp', 0)), 1)) \
+                .field("avg_indoor_temp", round(float(event_data.get('avg_indoor_temp', 0)), 1)) \
+                .field("avg_cloud_cover", round(float(event_data.get('avg_cloud_cover', 0)), 1)) \
+                .field("avg_sun_elevation", round(float(event_data.get('avg_sun_elevation', 0)), 1)) \
+                .field("avg_wind_speed", round(float(event_data.get('avg_wind_speed', 0)), 1)) \
+                .field("implied_solar_coefficient_ml2", round(float(event_data.get('implied_solar_coefficient_ml2', 0)), 1)) \
+                .field("observations_count", int(event_data.get('observations_count', 0))) \
+                .field("peak_sun_elevation", round(float(event_data.get('peak_sun_elevation', 0)), 1)) \
+                .time(timestamp, WritePrecision.S)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self.logger.info(
+                f"Wrote solar event: {event_data.get('duration_minutes', 0):.0f}min, "
+                f"coeff={event_data.get('implied_solar_coefficient_ml2', 0):.1f}"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write solar event: {str(e)}")
+            self._log_influx_error("Solar event write failed", e, "write_solar_event")
+            return False
+
+    def write_weather_coefficients_ml2(self, coefficients: dict) -> bool:
+        """
+        Write learned weather coefficients to InfluxDB for tracking over time.
+
+        Args:
+            coefficients: Dictionary with ML2 coefficients:
+                - solar_coefficient_ml2: Learned solar coefficient
+                - wind_coefficient_ml2: Wind coefficient (fixed)
+                - solar_confidence_ml2: Learning confidence
+                - total_solar_events: Total events detected
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not coefficients:
+            return False
+
+        try:
+            point = Point("weather_coefficients_ml2") \
+                .tag("house_id", self.house_id) \
+                .field("solar_coefficient_ml2", round(float(coefficients.get('solar_coefficient_ml2', 6.0)), 1)) \
+                .field("wind_coefficient_ml2", round(float(coefficients.get('wind_coefficient_ml2', 0.15)), 2)) \
+                .field("solar_confidence_ml2", round(float(coefficients.get('solar_confidence_ml2', 0)), 2)) \
+                .field("total_solar_events", int(coefficients.get('total_solar_events', 0))) \
+                .time(datetime.now(timezone.utc), WritePrecision.S)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self.logger.info(
+                f"Wrote ML2 coefficients: solar={coefficients.get('solar_coefficient_ml2', 0):.1f}, "
+                f"confidence={coefficients.get('solar_confidence_ml2', 0):.0%}"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write weather coefficients: {str(e)}")
+            self._log_influx_error("Weather coefficients write failed", e, "write_weather_coefficients_ml2")
+            return False
+
+    def write_thermal_timing_ml2(self, timing: dict) -> bool:
+        """
+        Write learned thermal response timing to InfluxDB.
+
+        Args:
+            timing: Dictionary with timing data:
+                - heat_up_lag_minutes_ml2: Lag for rising effective temp
+                - cool_down_lag_minutes_ml2: Lag for falling effective temp
+                - confidence_ml2: Learning confidence
+                - total_transitions: Total transitions measured
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not timing:
+            return False
+
+        try:
+            point = Point("thermal_timing_ml2") \
+                .tag("house_id", self.house_id) \
+                .field("heat_up_lag_minutes", round(float(timing.get('heat_up_lag_minutes_ml2', 60)), 1)) \
+                .field("cool_down_lag_minutes", round(float(timing.get('cool_down_lag_minutes_ml2', 90)), 1)) \
+                .field("confidence", round(float(timing.get('confidence_ml2', 0)), 2)) \
+                .field("total_transitions", int(timing.get('total_transitions', 0))) \
+                .time(datetime.now(timezone.utc), WritePrecision.S)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self.logger.info(
+                f"Wrote ML2 thermal timing: heat_up={timing.get('heat_up_lag_minutes_ml2', 60):.0f}min, "
+                f"cool_down={timing.get('cool_down_lag_minutes_ml2', 90):.0f}min"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write thermal timing: {str(e)}")
+            self._log_influx_error("Thermal timing write failed", e, "write_thermal_timing_ml2")
+            return False
+
+    def write_solar_early_warning(self, warning: dict) -> bool:
+        """
+        Write solar early warning event to InfluxDB.
+
+        Used to track when predictive solar detection triggered.
+
+        Args:
+            warning: Dictionary with warning data:
+                - start_time: When warning was triggered
+                - outdoor_rise: Temperature rise from baseline
+                - estimated_lead_time_minutes: Expected lead time
+                - confidence: Detection confidence
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not warning:
+            return False
+
+        try:
+            timestamp = warning.get('start_time', datetime.now(timezone.utc))
+            if isinstance(timestamp, str):
+                timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+
+            point = Point("solar_early_warning_ml2") \
+                .tag("house_id", self.house_id) \
+                .field("outdoor_rise", round(float(warning.get('outdoor_rise', 0)), 1)) \
+                .field("lead_time_minutes", round(float(warning.get('estimated_lead_time_minutes', 60)), 1)) \
+                .field("confidence", round(float(warning.get('confidence', 0)), 2)) \
+                .time(timestamp, WritePrecision.S)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self.logger.info(
+                f"Wrote solar early warning: +{warning.get('outdoor_rise', 0):.1f}°C rise, "
+                f"lead_time={warning.get('estimated_lead_time_minutes', 60):.0f}min"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write solar early warning: {str(e)}")
+            self._log_influx_error("Solar early warning write failed", e, "write_solar_early_warning")
+            return False
+
+    def write_thermal_lag_measurement(self, lag: dict) -> bool:
+        """
+        Write a thermal lag measurement to InfluxDB.
+
+        Args:
+            lag: Dictionary with lag measurement:
+                - type: 'rising' or 'falling'
+                - lag_minutes: Measured lag time
+                - effective_temp_change: Effective temp change that triggered
+                - indoor_temp_change: Indoor temp response
+                - confidence: Measurement confidence
+
+        Returns:
+            True if write succeeded, False otherwise
+        """
+        if not self.enabled or not lag:
+            return False
+
+        try:
+            point = Point("thermal_lag_ml2") \
+                .tag("house_id", self.house_id) \
+                .tag("transition_type", lag.get('type', 'unknown')) \
+                .field("lag_minutes", round(float(lag.get('lag_minutes', 0)), 1)) \
+                .field("effective_temp_change", round(float(lag.get('effective_temp_change', 0)), 1)) \
+                .field("indoor_temp_change", round(float(lag.get('indoor_temp_change', 0)), 1)) \
+                .field("confidence", round(float(lag.get('confidence', 0)), 2)) \
+                .time(datetime.now(timezone.utc), WritePrecision.S)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self.logger.debug(
+                f"Wrote thermal lag: {lag.get('type', 'unknown')} {lag.get('lag_minutes', 0):.0f}min"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write thermal lag: {str(e)}")
+            self._log_influx_error("Thermal lag write failed", e, "write_thermal_lag_measurement")
+            return False
+
+    def read_solar_events(self, days: int = 30) -> List[dict]:
+        """
+        Read historical solar events from InfluxDB.
+
+        Used for visualization and coefficient recalculation.
+
+        Args:
+            days: Number of days of history to read
+
+        Returns:
+            List of solar event dictionaries
+        """
+        if not self.enabled:
+            return []
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "solar_event_ml2")
+                |> filter(fn: (r) => r["house_id"] == "{self.house_id}")
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            events = []
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        events.append({
+                            'timestamp': timestamp.isoformat(),
+                            'duration_minutes': record.values.get('duration_minutes'),
+                            'avg_supply_return_delta': record.values.get('avg_supply_return_delta'),
+                            'avg_outdoor_temp': record.values.get('avg_outdoor_temp'),
+                            'avg_indoor_temp': record.values.get('avg_indoor_temp'),
+                            'avg_cloud_cover': record.values.get('avg_cloud_cover'),
+                            'avg_sun_elevation': record.values.get('avg_sun_elevation'),
+                            'avg_wind_speed': record.values.get('avg_wind_speed'),
+                            'implied_solar_coefficient_ml2': record.values.get('implied_solar_coefficient_ml2'),
+                            'observations_count': record.values.get('observations_count'),
+                            'peak_sun_elevation': record.values.get('peak_sun_elevation'),
+                        })
+
+            self.logger.info(f"Read {len(events)} solar events from InfluxDB")
+            return events
+
+        except Exception as e:
+            self.logger.error(f"Failed to read solar events: {str(e)}")
+            return []
 
     def close(self):
         """Close InfluxDB client connection"""

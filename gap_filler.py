@@ -661,7 +661,7 @@ def fill_gaps_on_startup(
     Called from fetcher startup to detect and fill gaps.
 
     Args:
-        Various InfluxDB and Arrigo credentials
+        Various InfluxDB credentials
         settings: Application settings dict
         logger: Logger instance
         latitude: Location latitude for weather data (optional)
@@ -669,55 +669,30 @@ def fill_gaps_on_startup(
 
     Returns:
         True if gaps were filled successfully (or no gaps found)
-    """
-    if not username or not password:
-        logger.info("Gap filling skipped - no Arrigo credentials")
-        return True
 
+    Note:
+        Arrigo-based heating gap filling is DISABLED as of 2026-02-05.
+        Arrigo data (dh_power, energy) was unreliable with gaps.
+        We now rely on:
+        - HomeSide API for real-time heating data (15-min)
+        - Dropbox import for energy meter data (hourly, reliable)
+        - SMHI for weather data (still active below)
+
+        The Arrigo scripts (import_historical_data.py, GapFiller class)
+        are kept for potential future use with new house bootstrapping.
+    """
     try:
         # Check for gaps in last 24 hours
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=24)
 
-        expected_interval = settings.get('data_collection', {}).get('heating_data_interval_minutes', 15)
-
-        # === HEATING DATA GAPS ===
-        filler = GapFiller(
-            influx_url=influx_url,
-            influx_token=influx_token,
-            influx_org=influx_org,
-            influx_bucket=influx_bucket,
-            house_id=house_id,
-            arrigo_username=username,
-            arrigo_password=password,
-            verbose=False
-        )
-
-        # Detect heating data gaps
-        gaps = filler.detect_gaps(start_time, end_time, expected_interval)
-
+        # === HEATING DATA GAPS (DISABLED) ===
+        # Arrigo-based gap filling disabled - data was unreliable
+        # HomeSide API provides real-time data, Dropbox import provides energy
         heating_written = 0
         heating_errors = 0
-
-        if not gaps:
-            logger.info("No heating data gaps detected in last 24 hours")
-            print("✓ No heating data gaps in last 24 hours")
-        else:
-            # Calculate total gap duration
-            total_gap_minutes = sum(
-                (gap_end - gap_start).total_seconds() / 60
-                for gap_start, gap_end in gaps
-            )
-
-            logger.info(f"Detected {len(gaps)} heating gap(s) totaling {total_gap_minutes:.0f} minutes")
-            print(f"ℹ️  Heating: {len(gaps)} gap(s) ({total_gap_minutes:.0f} minutes)")
-
-            # Fill the heating gaps
-            heating_written, _, heating_errors = filler.fill_gaps_in_range(
-                start_time, end_time, expected_interval, dry_run=False
-            )
-
-        filler.close()
+        logger.info("Heating gap filling skipped (Arrigo disabled)")
+        print("ℹ️  Heating gap filling: disabled (using HomeSide + Dropbox only)")
 
         # === WEATHER DATA GAPS ===
         weather_written = 0

@@ -74,6 +74,8 @@ class EnergyForecaster:
     - Hourly heating power (kW)
     - Hourly heating energy (kWh)
     - 24h/72h energy totals
+
+    Supports ML2 learned coefficients for solar/wind sensitivity.
     """
 
     def __init__(
@@ -82,7 +84,10 @@ class EnergyForecaster:
         target_indoor_temp: float = 22.0,
         latitude: float = 58.41,
         longitude: float = 15.62,
-        logger = None
+        logger = None,
+        solar_coefficient_ml2: Optional[float] = None,
+        wind_coefficient_ml2: Optional[float] = None,
+        solar_confidence_ml2: float = 0.0
     ):
         """
         Initialize energy forecaster.
@@ -93,6 +98,9 @@ class EnergyForecaster:
             latitude: Location latitude for solar calculations
             longitude: Location longitude for solar calculations
             logger: Optional logger instance
+            solar_coefficient_ml2: Learned solar coefficient (ML2 model)
+            wind_coefficient_ml2: Learned wind coefficient (ML2 model)
+            solar_confidence_ml2: Confidence in learned ML2 coefficients (0-1)
         """
         self.heat_loss_k = heat_loss_k
         self.target_indoor_temp = target_indoor_temp
@@ -100,8 +108,56 @@ class EnergyForecaster:
         self.longitude = longitude
         self.logger = logger
 
+        # ML2 learned coefficients
+        self.solar_coefficient_ml2 = solar_coefficient_ml2
+        self.wind_coefficient_ml2 = wind_coefficient_ml2
+        self.solar_confidence_ml2 = solar_confidence_ml2
+
         # Weather model for effective temperature calculation
-        self.weather_model = SimpleWeatherModel()
+        # Use learned coefficients if available with sufficient confidence
+        if solar_coefficient_ml2 is not None and solar_confidence_ml2 >= 0.3:
+            self.weather_model = SimpleWeatherModel(
+                solar_coefficient=solar_coefficient_ml2,
+                wind_coefficient=wind_coefficient_ml2 or 0.15
+            )
+            if logger:
+                logger.info(
+                    f"Using ML2 weather model: solar={solar_coefficient_ml2:.1f}, "
+                    f"wind={wind_coefficient_ml2 or 0.15:.2f}"
+                )
+        else:
+            self.weather_model = SimpleWeatherModel()
+
+    @classmethod
+    def from_profile(cls, profile, latitude: float, longitude: float, logger=None) -> 'EnergyForecaster':
+        """
+        Create EnergyForecaster from a CustomerProfile with learned coefficients.
+
+        Args:
+            profile: CustomerProfile instance
+            latitude: Location latitude
+            longitude: Location longitude
+            logger: Optional logger
+
+        Returns:
+            EnergyForecaster with ML2 coefficients if available
+        """
+        heat_loss_k = profile.energy_separation.heat_loss_k
+        if not heat_loss_k:
+            raise ValueError("Profile does not have calibrated heat_loss_k")
+
+        weather_coeffs = profile.learned.weather_coefficients
+
+        return cls(
+            heat_loss_k=heat_loss_k,
+            target_indoor_temp=profile.comfort.target_indoor_temp,
+            latitude=latitude,
+            longitude=longitude,
+            logger=logger,
+            solar_coefficient_ml2=weather_coeffs.solar_coefficient_ml2,
+            wind_coefficient_ml2=weather_coeffs.wind_coefficient_ml2,
+            solar_confidence_ml2=weather_coeffs.solar_confidence_ml2
+        )
 
     def generate_forecast(
         self,

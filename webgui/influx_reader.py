@@ -632,8 +632,8 @@ class InfluxReader:
 
         Returns list of dicts with:
             - timestamp, timestamp_display
-            - dh_supply_temp, dh_return_temp (district heating primary side)
-            - supply_temp, return_temp (house secondary side)
+            - dh_supply_temp, dh_return_temp (district heating primary side from energy_meter)
+            - supply_temp, return_temp (house secondary side from heating_system)
             - outdoor_temperature
             - supply_temp_heat_curve_ml (predicted supply temp using effective temp)
         """
@@ -644,14 +644,13 @@ class InfluxReader:
         try:
             query_api = self.client.query_api()
 
-            query = f'''
+            # Query house-side data from heating_system (15-min resolution)
+            house_query = f'''
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
                 |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) =>
-                    r["_field"] == "dh_supply_temp" or
-                    r["_field"] == "dh_return_temp" or
                     r["_field"] == "supply_temp" or
                     r["_field"] == "return_temp" or
                     r["_field"] == "outdoor_temperature" or
@@ -661,10 +660,38 @@ class InfluxReader:
                 |> sort(columns: ["_time"])
             '''
 
-            tables = query_api.query(query, org=self.org)
+            # Query DH primary side from energy_meter (hourly resolution)
+            dh_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> filter(fn: (r) =>
+                    r["_field"] == "primary_temp_in" or
+                    r["_field"] == "primary_temp_out"
+                )
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            house_tables = query_api.query(house_query, org=self.org)
+            dh_tables = query_api.query(dh_query, org=self.org)
+
+            # Build DH data lookup by hour
+            dh_by_hour = {}
+            for table in dh_tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        # Round to hour for matching
+                        hour_key = timestamp.replace(minute=0, second=0, microsecond=0)
+                        dh_by_hour[hour_key] = {
+                            'dh_supply_temp': record.values.get('primary_temp_in'),
+                            'dh_return_temp': record.values.get('primary_temp_out'),
+                        }
 
             results = []
-            for table in tables:
+            for table in house_tables:
                 for record in table.records:
                     timestamp = record.get_time()
                     if timestamp:
@@ -672,11 +699,15 @@ class InfluxReader:
                             timestamp = timestamp.replace(tzinfo=timezone.utc)
                         swedish_time = timestamp.astimezone(SWEDISH_TZ)
 
+                        # Look up DH data for this hour
+                        hour_key = timestamp.replace(minute=0, second=0, microsecond=0)
+                        dh_data = dh_by_hour.get(hour_key, {})
+
                         results.append({
                             'timestamp': timestamp.isoformat(),
                             'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
-                            'dh_supply_temp': record.values.get('dh_supply_temp'),
-                            'dh_return_temp': record.values.get('dh_return_temp'),
+                            'dh_supply_temp': dh_data.get('dh_supply_temp'),
+                            'dh_return_temp': dh_data.get('dh_return_temp'),
                             'supply_temp': record.values.get('supply_temp'),
                             'return_temp': record.values.get('return_temp'),
                             'outdoor_temperature': record.values.get('outdoor_temperature'),
@@ -942,10 +973,9 @@ class InfluxReader:
 
         Returns list of dicts with:
             - timestamp, timestamp_display
-            - dh_delta_t: DH supply - return (higher = more heat extracted)
-            - house_delta_t: House supply - return
-            - dh_power: Power in kW
-            - dh_flow: Flow rate in l/h
+            - dh_delta_t: DH supply - return (higher = more heat extracted, from energy_meter)
+            - house_delta_t: House supply - return (from heating_system)
+            - dh_flow: Flow rate in l/h (from energy_meter volume)
             - efficiency_ratio: dh_delta_t / house_delta_t (heat transfer efficiency)
         """
         self._ensure_connection()
@@ -955,27 +985,63 @@ class InfluxReader:
         try:
             query_api = self.client.query_api()
 
-            query = f'''
+            # Query house-side data from heating_system
+            house_query = f'''
                 from(bucket: "{self.bucket}")
                 |> range(start: -{hours}h)
                 |> filter(fn: (r) => r["_measurement"] == "heating_system")
                 |> filter(fn: (r) => r["house_id"] == "{house_id}")
                 |> filter(fn: (r) =>
-                    r["_field"] == "dh_supply_temp" or
-                    r["_field"] == "dh_return_temp" or
                     r["_field"] == "supply_temp" or
-                    r["_field"] == "return_temp" or
-                    r["_field"] == "dh_power" or
-                    r["_field"] == "dh_flow"
+                    r["_field"] == "return_temp"
                 )
                 |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
                 |> sort(columns: ["_time"])
             '''
 
-            tables = query_api.query(query, org=self.org)
+            # Query DH primary side from energy_meter (temps and flow)
+            dh_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> filter(fn: (r) =>
+                    r["_field"] == "primary_temp_in" or
+                    r["_field"] == "primary_temp_out" or
+                    r["_field"] == "volume"
+                )
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            house_tables = query_api.query(house_query, org=self.org)
+            dh_tables = query_api.query(dh_query, org=self.org)
+
+            # Build DH data lookup by hour
+            # DH timestamps are at the beginning of each hour (e.g., 20:00 = data for 20:00-21:00)
+            dh_by_hour = {}
+            for table in dh_tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        hour_key = timestamp.replace(minute=0, second=0, microsecond=0)
+                        dh_supply = record.values.get('primary_temp_in')
+                        dh_return = record.values.get('primary_temp_out')
+                        volume = record.values.get('volume')  # m³/h
+
+                        dh_delta_t = None
+                        if dh_supply is not None and dh_return is not None:
+                            dh_delta_t = round(dh_supply - dh_return, 1)
+
+                        dh_by_hour[hour_key] = {
+                            'dh_supply': dh_supply,
+                            'dh_return': dh_return,
+                            'dh_delta_t': dh_delta_t,
+                            'dh_flow': round(volume * 1000, 0) if volume else None,  # Convert m³ to liters
+                        }
 
             results = []
-            for table in tables:
+            for table in house_tables:
                 for record in table.records:
                     timestamp = record.get_time()
                     if timestamp:
@@ -983,25 +1049,22 @@ class InfluxReader:
                             timestamp = timestamp.replace(tzinfo=timezone.utc)
                         swedish_time = timestamp.astimezone(SWEDISH_TZ)
 
-                        dh_supply = record.values.get('dh_supply_temp')
-                        dh_return = record.values.get('dh_return_temp')
                         house_supply = record.values.get('supply_temp')
                         house_return = record.values.get('return_temp')
-                        dh_power = record.values.get('dh_power')
-                        dh_flow = record.values.get('dh_flow')
 
-                        # Calculate delta T values
-                        dh_delta_t = None
+                        # Calculate house delta T
                         house_delta_t = None
-                        efficiency_ratio = None
-
-                        if dh_supply is not None and dh_return is not None:
-                            dh_delta_t = round(dh_supply - dh_return, 1)
-
                         if house_supply is not None and house_return is not None:
                             house_delta_t = round(house_supply - house_return, 1)
 
+                        # Look up DH data for this hour
+                        hour_key = timestamp.replace(minute=0, second=0, microsecond=0)
+                        dh_data = dh_by_hour.get(hour_key, {})
+                        dh_delta_t = dh_data.get('dh_delta_t')
+                        dh_flow = dh_data.get('dh_flow')
+
                         # Efficiency: how well heat is transferred from DH to house
+                        efficiency_ratio = None
                         if dh_delta_t and house_delta_t and house_delta_t > 0:
                             efficiency_ratio = round(dh_delta_t / house_delta_t, 2)
 
@@ -1010,8 +1073,8 @@ class InfluxReader:
                             'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
                             'dh_delta_t': dh_delta_t,
                             'house_delta_t': house_delta_t,
-                            'dh_power': round(dh_power, 1) if dh_power is not None else None,
-                            'dh_flow': round(dh_flow, 0) if dh_flow is not None else None,
+                            'dh_power': None,  # Not available from energy_meter
+                            'dh_flow': dh_flow,
                             'efficiency_ratio': efficiency_ratio,
                         })
 
@@ -1023,14 +1086,16 @@ class InfluxReader:
 
     def get_power_history(self, house_id: str, hours: int = 168) -> dict:
         """
-        Get power consumption history (real-time kW readings).
+        Get power consumption history from imported energy data (Dropbox).
 
-        Falls back to imported energy data (kWh) if no live power data available.
-        For hourly imported data, kWh ≈ average kW for that hour.
+        Uses ONLY imported energy data from energy_meter measurement (hourly kWh).
+        For hourly data, kWh ≈ average kW for that hour.
+
+        Does NOT use Arrigo API dh_power as it's unreliable with data gaps.
 
         Returns dict with:
             - data: list of dicts with timestamp and dh_power
-            - data_source: 'live' or 'imported'
+            - data_source: 'imported' or None
         """
         self._ensure_connection()
         if not self.client:
@@ -1038,14 +1103,16 @@ class InfluxReader:
 
         try:
             query_api = self.client.query_api()
+            days = max(1, hours // 24)
 
-            # First, try to get live power data from heating_system
+            # Query imported energy data from energy_meter (from Dropbox import)
+            # consumption field = hourly kWh (which equals average kW for that hour)
             query = f'''
                 from(bucket: "{self.bucket}")
-                |> range(start: -{hours}h)
-                |> filter(fn: (r) => r["_measurement"] == "heating_system")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "energy_meter")
                 |> filter(fn: (r) => r["house_id"] == "{house_id}")
-                |> filter(fn: (r) => r["_field"] == "dh_power")
+                |> filter(fn: (r) => r["_field"] == "consumption")
                 |> sort(columns: ["_time"])
             '''
 
@@ -1062,93 +1129,21 @@ class InfluxReader:
                             timestamp = timestamp.replace(tzinfo=timezone.utc)
                         swedish_time = timestamp.astimezone(SWEDISH_TZ)
 
+                        # kWh for 1 hour = average kW for that hour
                         results.append({
                             'timestamp': timestamp.isoformat(),
                             'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
                             'dh_power': round(value, 1)
                         })
 
-            # If live data found, return it
             if results:
-                return {'data': results, 'data_source': 'live'}
-
-            # Fall back to imported energy consumption data
-            imported_results = self._get_power_from_imported_energy(house_id, hours, query_api)
-            if imported_results:
-                return {'data': imported_results, 'data_source': 'imported'}
+                return {'data': results, 'data_source': 'imported'}
 
             return {'data': [], 'data_source': None}
 
         except Exception as e:
             print(f"Failed to query power history: {e}")
             return {'data': [], 'data_source': None}
-
-    def _get_power_from_imported_energy(self, house_id: str, hours: int, query_api) -> list:
-        """
-        Get power consumption from imported energy data as fallback.
-
-        Queries energy_consumption measurement and converts kWh to average kW.
-        For hourly data: kWh value ≈ average kW for that hour.
-        """
-        try:
-            days = max(1, hours // 24)
-
-            # Query imported energy data (fjv_total preferred, or fjv_heating)
-            query = f'''
-                from(bucket: "{self.bucket}")
-                |> range(start: -{days}d)
-                |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-                |> filter(fn: (r) => r["house_id"] == "{house_id}")
-                |> filter(fn: (r) => r["_field"] == "value")
-                |> filter(fn: (r) => r["energy_type"] == "fjv_total" or r["energy_type"] == "fjv_heating")
-                |> aggregateWindow(every: 1h, fn: sum, createEmpty: false)
-                |> sort(columns: ["_time"])
-            '''
-
-            tables = query_api.query(query, org=self.org)
-
-            # Collect data, preferring fjv_total over fjv_heating
-            data_by_time = {}
-            for table in tables:
-                for record in table.records:
-                    timestamp = record.get_time()
-                    value = record.get_value()
-                    energy_type = record.values.get('energy_type', 'fjv_total')
-
-                    if timestamp and value is not None:
-                        ts_key = timestamp.isoformat()
-                        # Prefer fjv_total; only use fjv_heating if no fjv_total
-                        if ts_key not in data_by_time or energy_type == 'fjv_total':
-                            data_by_time[ts_key] = {
-                                'timestamp': timestamp,
-                                'value': value,
-                                'energy_type': energy_type
-                            }
-
-            # Convert to results format (kWh per hour ≈ average kW)
-            results = []
-            for ts_key in sorted(data_by_time.keys()):
-                entry = data_by_time[ts_key]
-                timestamp = entry['timestamp']
-
-                if timestamp.tzinfo is None:
-                    timestamp = timestamp.replace(tzinfo=timezone.utc)
-                swedish_time = timestamp.astimezone(SWEDISH_TZ)
-
-                # kWh for 1 hour = average kW for that hour
-                avg_kw = entry['value']
-
-                results.append({
-                    'timestamp': timestamp.isoformat(),
-                    'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
-                    'dh_power': round(avg_kw, 1)
-                })
-
-            return results
-
-        except Exception as e:
-            print(f"Failed to query imported energy data: {e}")
-            return []
 
     def get_energy_separation(self, house_id: str, days: int = 30) -> dict:
         """
@@ -1159,7 +1154,7 @@ class InfluxReader:
             days: Number of days to fetch
 
         Returns dict with:
-            - data: list of daily records with actual, heating, dhw energy
+            - data: list of daily records with actual, heating, dhw, predicted energy
             - totals: summary totals
             - k_value: calibrated heat loss coefficient
         """
@@ -1170,13 +1165,12 @@ class InfluxReader:
         try:
             query_api = self.client.query_api()
 
-            # Filter by homeside_ondemand_dhw method to avoid duplicates from k_calibration
+            # Query energy_separated data (any method - k_calibration or homeside_ondemand_dhw)
             query = f'''
                 from(bucket: "{self.bucket}")
                 |> range(start: -{days}d)
                 |> filter(fn: (r) => r["_measurement"] == "energy_separated")
                 |> filter(fn: (r) => r["house_id"] == "{house_id}")
-                |> filter(fn: (r) => r["method"] == "homeside_ondemand_dhw")
                 |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
                 |> sort(columns: ["_time"])
             '''
@@ -1184,8 +1178,26 @@ class InfluxReader:
             tables = query_api.query(query, org=self.org)
 
             results = []
-            totals = {'actual': 0, 'heating': 0, 'dhw': 0}
+            totals = {'actual': 0, 'heating': 0, 'dhw': 0, 'predicted': 0}
             k_value = None
+            date_to_idx = {}  # Map dates to result indices
+
+            # First, get k_value from k_calibration_history
+            k_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "k_calibration_history")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> filter(fn: (r) => r["_field"] == "k_value")
+                |> last()
+            '''
+            k_tables = query_api.query(k_query, org=self.org)
+            for table in k_tables:
+                for record in table.records:
+                    k_value = record.get_value()
+
+            # Get today's date (Swedish timezone) to filter incomplete days
+            today_swedish = datetime.now(SWEDISH_TZ).strftime('%Y-%m-%d')
 
             for table in tables:
                 for record in table.records:
@@ -1194,6 +1206,16 @@ class InfluxReader:
                         if timestamp.tzinfo is None:
                             timestamp = timestamp.replace(tzinfo=timezone.utc)
                         swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                        date_str = swedish_time.strftime('%Y-%m-%d')
+
+                        # Skip today (incomplete data)
+                        if date_str >= today_swedish:
+                            continue
+
+                        # Skip days with insufficient data coverage (<80%)
+                        data_coverage = record.values.get('data_coverage', 1.0)
+                        if data_coverage < 0.8:
+                            continue
 
                         # Handle both field names: total_energy_kwh (new) and actual_energy_kwh (legacy)
                         actual = record.values.get('total_energy_kwh') or record.values.get('actual_energy_kwh') or 0
@@ -1204,12 +1226,17 @@ class InfluxReader:
                         if k is not None:
                             k_value = k
 
+                        date_to_idx[date_str] = len(results)
+
                         results.append({
                             'timestamp': timestamp.isoformat(),
-                            'timestamp_display': swedish_time.strftime('%Y-%m-%d'),
+                            'timestamp_display': date_str,
+                            'date_key': date_str,
                             'actual_kwh': round(actual, 1),
                             'heating_kwh': round(heating, 1),
                             'dhw_kwh': round(dhw, 1),
+                            'predicted_kwh': None,  # Will be filled in
+                            'avg_outdoor': None,
                             'avg_temp_diff': record.values.get('avg_temp_difference'),
                             'dhw_events': record.values.get('dhw_event_count'),
                         })
@@ -1217,6 +1244,75 @@ class InfluxReader:
                         totals['actual'] += actual
                         totals['heating'] += heating
                         totals['dhw'] += dhw
+
+            # Query stored hourly energy forecasts and aggregate by day (ML2 model)
+            if results:
+                # Query energy_forecast measurement for hourly predictions
+                forecast_query = f'''
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -{days}d)
+                    |> filter(fn: (r) => r["_measurement"] == "energy_forecast")
+                    |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                    |> filter(fn: (r) => r["_field"] == "heating_energy_kwh")
+                '''
+
+                forecast_tables = query_api.query(forecast_query, org=self.org)
+
+                # Aggregate hourly forecasts by day (track count to filter incomplete days)
+                predicted_by_day = {}  # {date: {'sum': float, 'count': int}}
+                for table in forecast_tables:
+                    for record in table.records:
+                        timestamp = record.get_time()
+                        energy = record.get_value()
+                        if timestamp and energy is not None:
+                            date_str = timestamp.strftime('%Y-%m-%d')
+                            if date_str not in predicted_by_day:
+                                predicted_by_day[date_str] = {'sum': 0, 'count': 0}
+                            predicted_by_day[date_str]['sum'] += energy
+                            predicted_by_day[date_str]['count'] += 1
+
+                # Also query outdoor temps for display
+                outdoor_query = f'''
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -{days}d)
+                    |> filter(fn: (r) => r["_measurement"] == "heating_system")
+                    |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                    |> filter(fn: (r) => r["_field"] == "outdoor_temperature")
+                    |> aggregateWindow(every: 1d, fn: mean)
+                '''
+
+                outdoor_tables = query_api.query(outdoor_query, org=self.org)
+                outdoor_by_day = {}
+                for table in outdoor_tables:
+                    for record in table.records:
+                        timestamp = record.get_time()
+                        outdoor = record.get_value()
+                        if timestamp and outdoor is not None:
+                            date_str = timestamp.strftime('%Y-%m-%d')
+                            outdoor_by_day[date_str] = outdoor
+
+                # Match predictions with actual data
+                # Only include predictions for days with sufficient hourly data (>=20 hours)
+                # Also track heating energy for days with predictions (for accuracy calculation)
+                MIN_HOURLY_FORECASTS = 20
+                heating_with_predictions = 0  # Sum of heating kWh for days that have predictions
+                days_with_predictions = 0
+
+                for date_str, idx in date_to_idx.items():
+                    forecast_data = predicted_by_day.get(date_str)
+                    outdoor = outdoor_by_day.get(date_str)
+
+                    # Only show prediction if we have enough hourly forecasts
+                    if forecast_data and forecast_data['count'] >= MIN_HOURLY_FORECASTS:
+                        predicted = forecast_data['sum']
+                        results[idx]['predicted_kwh'] = round(predicted, 1)
+                        totals['predicted'] += predicted
+                        # Track heating energy for days with predictions
+                        heating_with_predictions += results[idx]['heating_kwh']
+                        days_with_predictions += 1
+
+                    if outdoor is not None:
+                        results[idx]['avg_outdoor'] = round(outdoor, 1)
 
             totals = {k: round(v, 1) for k, v in totals.items()}
 
@@ -1227,6 +1323,18 @@ class InfluxReader:
             else:
                 totals['heating_pct'] = 0
                 totals['dhw_pct'] = 0
+
+            # Calculate prediction accuracy (predicted / heating for days with predictions)
+            if heating_with_predictions > 0 and totals['predicted'] > 0:
+                totals['prediction_accuracy'] = round(100 * totals['predicted'] / heating_with_predictions, 1)
+                totals['days_with_predictions'] = days_with_predictions
+            else:
+                totals['prediction_accuracy'] = None
+                totals['days_with_predictions'] = 0
+
+            # Clean up date_key from results
+            for r in results:
+                r.pop('date_key', None)
 
             return {
                 'data': results,
@@ -1300,6 +1408,271 @@ class InfluxReader:
         except Exception as e:
             print(f"Failed to query k-value history: {e}")
             return {'data': [], 'current_k': None}
+
+    def get_solar_events_ml2(self, house_id: str, days: int = 30) -> dict:
+        """
+        Get detected solar heating events (ML2 model) for visualization.
+
+        Solar events indicate when heating demand dropped due to solar gain.
+        Used to visualize when the building is benefiting from free solar heating.
+
+        Args:
+            house_id: House identifier
+            days: Number of days to fetch
+
+        Returns:
+            Dict with 'events' list and summary statistics
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'events': [], 'summary': {}}
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "solar_event_ml2")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            events = []
+            total_duration = 0
+            coefficients = []
+
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        duration = record.values.get('duration_minutes', 0)
+                        coeff = record.values.get('implied_solar_coefficient_ml2', 0)
+
+                        events.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'duration_minutes': duration,
+                            'avg_supply_return_delta': record.values.get('avg_supply_return_delta'),
+                            'avg_outdoor_temp': record.values.get('avg_outdoor_temp'),
+                            'avg_indoor_temp': record.values.get('avg_indoor_temp'),
+                            'avg_cloud_cover': record.values.get('avg_cloud_cover'),
+                            'avg_sun_elevation': record.values.get('avg_sun_elevation'),
+                            'avg_wind_speed': record.values.get('avg_wind_speed'),
+                            'implied_solar_coefficient_ml2': coeff,
+                            'observations_count': record.values.get('observations_count'),
+                            'peak_sun_elevation': record.values.get('peak_sun_elevation'),
+                        })
+
+                        total_duration += duration or 0
+                        if coeff:
+                            coefficients.append(coeff)
+
+            # Calculate summary
+            summary = {
+                'total_events': len(events),
+                'total_duration_hours': round(total_duration / 60, 1),
+                'avg_duration_minutes': round(total_duration / len(events), 0) if events else 0,
+            }
+
+            if coefficients:
+                coefficients.sort()
+                summary['median_coefficient'] = coefficients[len(coefficients) // 2]
+                summary['min_coefficient'] = min(coefficients)
+                summary['max_coefficient'] = max(coefficients)
+
+            return {
+                'events': events,
+                'summary': summary,
+                'days': days
+            }
+
+        except Exception as e:
+            print(f"Failed to query solar events: {e}")
+            return {'events': [], 'summary': {}}
+
+    def get_weather_coefficients_ml2_history(self, house_id: str, days: int = 30) -> dict:
+        """
+        Get ML2 weather coefficient history for convergence visualization.
+
+        Shows how solar coefficient has evolved over time as more events are detected.
+
+        Args:
+            house_id: House identifier
+            days: Number of days to fetch
+
+        Returns:
+            Dict with 'data' list of coefficient updates over time
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'data': [], 'current': {}}
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "weather_coefficients_ml2")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            results = []
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        results.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'solar_coefficient_ml2': record.values.get('solar_coefficient_ml2'),
+                            'wind_coefficient_ml2': record.values.get('wind_coefficient_ml2'),
+                            'solar_confidence_ml2': record.values.get('solar_confidence_ml2'),
+                            'total_solar_events': record.values.get('total_solar_events'),
+                        })
+
+            # Get current values
+            current = {}
+            if results:
+                latest = results[-1]
+                current = {
+                    'solar_coefficient_ml2': latest['solar_coefficient_ml2'],
+                    'wind_coefficient_ml2': latest['wind_coefficient_ml2'],
+                    'solar_confidence_ml2': latest['solar_confidence_ml2'],
+                    'total_solar_events': latest['total_solar_events'],
+                }
+
+            return {
+                'data': results,
+                'current': current,
+                'days': days
+            }
+
+        except Exception as e:
+            print(f"Failed to query weather coefficients history: {e}")
+            return {'data': [], 'current': {}}
+
+    def get_energy_forecast(self, house_id: str, hours: int = 24) -> dict:
+        """
+        Get hourly energy consumption forecast for demand response.
+
+        Returns predicted heating energy (kWh) per hour for the next N hours.
+        This data is essential for:
+        - Homeowner energy planning
+        - Energy company demand response (aggregate load shifting)
+        - Forecast accuracy tracking at different lead times
+
+        Args:
+            house_id: House identifier
+            hours: Number of hours to forecast (default 24)
+
+        Returns:
+            Dict with:
+            - 'forecast': List of hourly predictions with timestamp, energy, power
+            - 'summary': Total energy, peak hour, avg power
+            - 'generated_at': When the forecast was generated
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'forecast': [], 'summary': {}}
+
+        try:
+            query_api = self.client.query_api()
+
+            # Get future forecast points (timestamp > now)
+            now = datetime.now(timezone.utc)
+            end = now + timedelta(hours=hours)
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: now(), stop: {hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "energy_forecast")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            forecast = []
+            total_energy = 0
+            peak_power = 0
+            peak_hour = None
+
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        energy_kwh = record.values.get('heating_energy_kwh', 0) or 0
+                        power_kw = record.values.get('heating_power_kw', 0) or 0
+                        lead_time = record.values.get('lead_time_hours', 0) or 0
+
+                        forecast.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_display': swedish_time.strftime('%H:%M'),
+                            'timestamp_date': swedish_time.strftime('%Y-%m-%d'),
+                            'hour': swedish_time.hour,
+                            'heating_energy_kwh': round(energy_kwh, 2),
+                            'heating_power_kw': round(power_kw, 3),
+                            'outdoor_temp': record.values.get('outdoor_temp'),
+                            'effective_temp': record.values.get('effective_temp'),
+                            'solar_effect': record.values.get('solar_effect'),
+                            'wind_effect': record.values.get('wind_effect'),
+                            'lead_time_hours': round(lead_time, 1),
+                        })
+
+                        total_energy += energy_kwh
+                        if power_kw > peak_power:
+                            peak_power = power_kw
+                            peak_hour = swedish_time.strftime('%H:%M')
+
+            # Calculate summary
+            summary = {
+                'total_energy_kwh': round(total_energy, 1),
+                'avg_power_kw': round(total_energy / len(forecast), 2) if forecast else 0,
+                'peak_power_kw': round(peak_power, 2),
+                'peak_hour': peak_hour,
+                'hours_forecasted': len(forecast),
+            }
+
+            # Get forecast generation time from the lead_time of the first point
+            generated_at = None
+            if forecast and forecast[0].get('lead_time_hours'):
+                first_ts = datetime.fromisoformat(forecast[0]['timestamp'].replace('Z', '+00:00'))
+                lead_hours = forecast[0]['lead_time_hours']
+                gen_time = first_ts - timedelta(hours=lead_hours)
+                generated_at = gen_time.astimezone(SWEDISH_TZ).strftime('%Y-%m-%d %H:%M')
+
+            return {
+                'forecast': forecast,
+                'summary': summary,
+                'generated_at': generated_at,
+                'hours': hours
+            }
+
+        except Exception as e:
+            print(f"Failed to query energy forecast: {e}")
+            return {'forecast': [], 'summary': {}}
 
     def close(self):
         """Close the connection"""

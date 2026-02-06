@@ -49,15 +49,31 @@
     "samples_since_last_update": 0,
     "total_samples": 360,
     "next_update_at_samples": 96,
-    "updated_at": "2026-02-03T19:46:33.069632+00:00"
+    "updated_at": "2026-02-03T19:46:33.069632+00:00",
+    "weather_coefficients": {
+      "solar_coefficient_ml2": 26.9,
+      "wind_coefficient_ml2": 0.15,
+      "solar_confidence_ml2": 0.15,
+      "total_solar_events": 6,
+      "events_since_last_update": 0,
+      "next_update_at_events": 6,
+      "updated_at": "2026-02-04T21:07:58.027360+00:00"
+    },
+    "thermal_timing": {
+      "heat_up_lag_minutes_ml2": 60.0,
+      "cool_down_lag_minutes_ml2": 90.0,
+      "confidence_ml2": 0.0,
+      "total_transitions": 0,
+      "updated_at": null
+    }
   },
   "energy_separation": {
     "enabled": true,
     "method": "homeside_ondemand_dhw",
     "heat_loss_k": 0.05811,
     "k_percentile": 15,
-    "calibration_date": "2026-02-04",
-    "calibration_days": 15,
+    "calibration_date": "2026-02-06",
+    "calibration_days": 16,
     "dhw_percentage": 16.1,
     "dhw_temp_threshold": 45.0,
     "dhw_temp_rise_threshold": 2.0,

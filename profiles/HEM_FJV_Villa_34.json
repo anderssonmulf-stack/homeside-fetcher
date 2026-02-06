@@ -2,8 +2,9 @@
   "schema_version": 1,
   "customer_id": "HEM_FJV_Villa_34",
   "friendly_name": "Glance",
-  "meter_ids": ["735999255020057237"],
-  "energy_data_start_date": "2026-01-01",
+  "meter_ids": [
+    "735999255020057237"
+  ],
   "building": {
     "description": "",
     "thermal_response": "medium"
@@ -48,16 +49,32 @@
     "samples_since_last_update": 0,
     "total_samples": 360,
     "next_update_at_samples": 96,
-    "updated_at": "2026-02-03T19:45:41.412430+00:00"
+    "updated_at": "2026-02-03T19:45:41.412430+00:00",
+    "weather_coefficients": {
+      "solar_coefficient_ml2": 6.0,
+      "wind_coefficient_ml2": 0.15,
+      "solar_confidence_ml2": 0.0,
+      "total_solar_events": 0,
+      "events_since_last_update": 0,
+      "next_update_at_events": 3,
+      "updated_at": null
+    },
+    "thermal_timing": {
+      "heat_up_lag_minutes_ml2": 60.0,
+      "cool_down_lag_minutes_ml2": 90.0,
+      "confidence_ml2": 0.0,
+      "total_transitions": 0,
+      "updated_at": null
+    }
   },
   "energy_separation": {
-    "enabled": false,
-    "method": "k_calibration",
-    "heat_loss_k": null,
+    "enabled": true,
+    "method": "homeside_ondemand_dhw",
+    "heat_loss_k": 0.11691,
     "k_percentile": 15,
-    "calibration_date": null,
-    "calibration_days": 0,
-    "dhw_percentage": null,
+    "calibration_date": "2026-02-06",
+    "calibration_days": 8,
+    "dhw_percentage": 59.3,
     "dhw_temp_threshold": 45.0,
     "dhw_temp_rise_threshold": 2.0,
     "dhw_baseline_temp": 25.0,

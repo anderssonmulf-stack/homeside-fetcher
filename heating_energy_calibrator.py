@@ -94,9 +94,36 @@ class HeatingEnergyCalibrator:
         self.weather_model = get_weather_model('simple')
 
     def fetch_daily_energy(self, house_id: str, start_date: str = "2025-12-01") -> Dict[str, float]:
-        """Fetch daily energy consumption from energy_consumption measurement."""
-        # Use regex anchors for exact match to avoid matching multiple houses
+        """
+        Fetch daily energy consumption.
+
+        Queries energy_meter first (reliable imported Dropbox data),
+        falls back to energy_consumption (legacy) if no data found.
+        """
+        # First try energy_meter (imported from Dropbox - reliable)
         query = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: {start_date})
+            |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["_field"] == "consumption")
+            |> aggregateWindow(every: 1d, fn: sum, createEmpty: false)
+            |> sort(columns: ["_time"])
+        '''
+
+        tables = self.query_api.query(query, org=self.influx_org)
+
+        daily_energy = {}
+        for table in tables:
+            for record in table.records:
+                date = record.get_time().strftime('%Y-%m-%d')
+                daily_energy[date] = record.get_value()
+
+        if daily_energy:
+            return daily_energy
+
+        # Fallback to energy_consumption (legacy measurement)
+        query_legacy = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
@@ -106,9 +133,8 @@ class HeatingEnergyCalibrator:
             |> sort(columns: ["_time"])
         '''
 
-        tables = self.query_api.query(query, org=self.influx_org)
+        tables = self.query_api.query(query_legacy, org=self.influx_org)
 
-        daily_energy = {}
         for table in tables:
             for record in table.records:
                 date = record.get_time().strftime('%Y-%m-%d')
@@ -467,10 +493,27 @@ class HeatingEnergyCalibrator:
         print(f"• DHW minutes = total time hot water was elevated (may include multiple events)")
 
     def write_to_influx(self, house_id: str, analyses: List[DailyEnergyAnalysis], k: float) -> int:
-        """Write separated energy values to InfluxDB."""
+        """Write separated energy values to InfluxDB.
+
+        Only writes days with sufficient data coverage (>=80%) and excludes
+        the current day (incomplete data).
+        """
         points = []
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        skipped_coverage = 0
+        skipped_today = 0
 
         for a in analyses:
+            # Skip days with insufficient data coverage
+            if a.data_coverage < MIN_DATA_COVERAGE:
+                skipped_coverage += 1
+                continue
+
+            # Skip today (incomplete day)
+            if a.date == today:
+                skipped_today += 1
+                continue
+
             # Parse date to timestamp (midnight)
             ts = datetime.strptime(a.date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
 
@@ -497,6 +540,12 @@ class HeatingEnergyCalibrator:
         if points:
             self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
             print(f"\nWrote {len(points)} daily records to InfluxDB (measurement: energy_separated)")
+            if skipped_coverage > 0:
+                print(f"  Skipped {skipped_coverage} days with <{MIN_DATA_COVERAGE*100:.0f}% data coverage")
+            if skipped_today > 0:
+                print(f"  Skipped today (incomplete)")
+        else:
+            print(f"\nNo records to write (all {len(analyses)} days had insufficient coverage or are incomplete)")
 
         return len(points)
 

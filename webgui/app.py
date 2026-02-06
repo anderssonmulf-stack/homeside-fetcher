@@ -638,13 +638,21 @@ def api_effective_temperature(house_id):
     hours = request.args.get('hours', 168, type=int)  # Default 7 days
     hours = min(max(hours, 24), 720)  # Clamp between 1 and 30 days
 
-    # Get house location from profile
+    # Get house location and ML2 coefficients from profile
     from customer_profile import CustomerProfile
     profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    solar_coefficient = None
+    wind_coefficient = None
     try:
         profile = CustomerProfile.load(house_id, profiles_dir)
         latitude = getattr(profile, 'latitude', None)
         longitude = getattr(profile, 'longitude', None)
+        # Get ML2 coefficients from learned parameters
+        if hasattr(profile, 'learned') and profile.learned:
+            wc = getattr(profile.learned, 'weather_coefficients', None)
+            if wc:
+                solar_coefficient = getattr(wc, 'solar_coefficient_ml2', None)
+                wind_coefficient = getattr(wc, 'wind_coefficient_ml2', None)
     except FileNotFoundError:
         latitude = None
         longitude = None
@@ -669,13 +677,18 @@ def api_effective_temperature(house_id):
     if not weather_data:
         return jsonify({'error': 'No weather data available', 'data': [], 'debug': {'hours': hours, 'house_id': house_id}})
 
-    # Calculate effective temperatures
+    # Calculate effective temperatures using ML2 coefficients if available
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-    from energy_models import get_weather_model
-    from energy_models.weather_energy_model import WeatherConditions
+    from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
     from datetime import datetime
 
-    model = get_weather_model('simple')
+    # Create model with ML2 coefficients (or defaults if not available)
+    model_kwargs = {}
+    if solar_coefficient is not None:
+        model_kwargs['solar_coefficient'] = solar_coefficient
+    if wind_coefficient is not None:
+        model_kwargs['wind_coefficient'] = wind_coefficient
+    model = SimpleWeatherModel(**model_kwargs)
 
     results = []
     for w in weather_data:
@@ -733,13 +746,21 @@ def api_forecast_effective_temperature(house_id):
     hours_ahead = request.args.get('hours', 12, type=int)
     hours_ahead = min(max(hours_ahead, 1), 48)
 
-    # Get house location from profile
+    # Get house location and ML2 coefficients from profile
     from customer_profile import CustomerProfile
     profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    solar_coefficient = None
+    wind_coefficient = None
     try:
         profile = CustomerProfile.load(house_id, profiles_dir)
         latitude = getattr(profile, 'latitude', None)
         longitude = getattr(profile, 'longitude', None)
+        # Get ML2 coefficients from learned parameters
+        if hasattr(profile, 'learned') and profile.learned:
+            wc = getattr(profile.learned, 'weather_coefficients', None)
+            if wc:
+                solar_coefficient = getattr(wc, 'solar_coefficient_ml2', None)
+                wind_coefficient = getattr(wc, 'wind_coefficient_ml2', None)
     except FileNotFoundError:
         latitude = None
         longitude = None
@@ -757,13 +778,18 @@ def api_forecast_effective_temperature(house_id):
     if not forecast_data:
         return jsonify({'error': 'No forecast data available', 'data': []})
 
-    # Calculate effective temperatures
+    # Calculate effective temperatures using ML2 coefficients if available
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-    from energy_models import get_weather_model
-    from energy_models.weather_energy_model import WeatherConditions
+    from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
     from datetime import datetime
 
-    model = get_weather_model('simple')
+    # Create model with ML2 coefficients (or defaults if not available)
+    model_kwargs = {}
+    if solar_coefficient is not None:
+        model_kwargs['solar_coefficient'] = solar_coefficient
+    if wind_coefficient is not None:
+        model_kwargs['wind_coefficient'] = wind_coefficient
+    model = SimpleWeatherModel(**model_kwargs)
 
     results = []
     for f in forecast_data:
@@ -807,6 +833,31 @@ def api_forecast_effective_temperature(house_id):
         'model_version': model.model_version,
         'hours_ahead': hours_ahead
     })
+
+
+@app.route('/api/house/<house_id>/energy-forecast')
+@require_login
+def api_energy_forecast(house_id):
+    """
+    API endpoint for hourly heating energy forecast (24h ahead).
+
+    Returns predicted kWh per hour for demand response and planning.
+    This data enables:
+    - Homeowner energy cost estimation
+    - Energy company load aggregation
+    - Demand shifting from peak to off-peak hours
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 24, type=int)
+    hours = min(max(hours, 1), 72)  # Clamp between 1 and 72 hours
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    data = influx.get_energy_forecast(house_id, hours=hours)
+
+    return jsonify(data)
 
 
 @app.route('/api/house/<house_id>/temperature-history')

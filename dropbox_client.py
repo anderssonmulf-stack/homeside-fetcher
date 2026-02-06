@@ -322,7 +322,7 @@ def create_client_from_env() -> Optional[DropboxClient]:
     refresh_token = os.getenv('DROPBOX_REFRESH_TOKEN')
 
     if not all([app_key, app_secret, refresh_token]):
-        logger.warning("Dropbox not configured - missing DROPBOX_APP_KEY, DROPBOX_APP_SECRET, or DROPBOX_REFRESH_TOKEN")
+        logger.info("Dropbox not configured - import handled by main fetcher")
         return None
 
     return DropboxClient(app_key, app_secret, refresh_token)

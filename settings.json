@@ -1,6 +1,6 @@
 {
   "weather": {
-    "forecast_interval_minutes": 120,
+    "forecast_interval_minutes": 60,
     "forecast_hours": 72,
     "observation_enabled": true,
     "nearest_station_cache_hours": 24
@@ -11,8 +11,8 @@
   },
   "data_collection": {
     "heating_data_interval_minutes": 15,
-    "weather_forecast_interval_minutes": 120,
-    "ml_forecast_interval_minutes": 120,
+    "weather_forecast_interval_minutes": 60,
+    "ml_forecast_interval_minutes": 60,
     "failure_error_threshold_minutes": 120
   },
   "calibration": {
