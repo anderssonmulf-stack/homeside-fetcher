@@ -134,6 +134,12 @@ services:
       - dryckesmail_beer-network
     depends_on:
       - influxdb
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if any('building_fetcher' in open(f'/proc/{p}/cmdline').read() for p in os.listdir('/proc') if p.isdigit() and os.path.exists(f'/proc/{p}/cmdline')) else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     logging:
       driver: "json-file"
       options:
