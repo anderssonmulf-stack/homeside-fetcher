@@ -497,6 +497,9 @@ class HeatingEnergyCalibrator:
 
         Only writes days with sufficient data coverage (>=80%) and excludes
         the current day (incomplete data).
+
+        Deletes existing energy_separated records for this house before writing
+        to prevent duplicates from different methods or re-runs.
         """
         points = []
         today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -538,6 +541,21 @@ class HeatingEnergyCalibrator:
             points.append(point)
 
         if points:
+            # Delete existing energy_separated records for this house in the date range
+            # to prevent duplicates from different methods or re-runs
+            dates = [a.date for a in analyses if a.data_coverage >= MIN_DATA_COVERAGE and a.date != today]
+            if dates:
+                start = datetime.strptime(min(dates), '%Y-%m-%d').replace(tzinfo=timezone.utc) - timedelta(hours=1)
+                stop = datetime.strptime(max(dates), '%Y-%m-%d').replace(tzinfo=timezone.utc) + timedelta(hours=25)
+                delete_api = self.client.delete_api()
+                delete_api.delete(
+                    start=start,
+                    stop=stop,
+                    predicate=f'_measurement="energy_separated" AND house_id="{house_id}"',
+                    bucket=self.influx_bucket,
+                    org=self.influx_org
+                )
+
             self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
             print(f"\nWrote {len(points)} daily records to InfluxDB (measurement: energy_separated)")
             if skipped_coverage > 0:

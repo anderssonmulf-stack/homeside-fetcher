@@ -70,10 +70,10 @@
   "energy_separation": {
     "enabled": true,
     "method": "homeside_ondemand_dhw",
-    "heat_loss_k": 0.05811,
+    "heat_loss_k": 0.05743,
     "k_percentile": 15,
     "calibration_date": "2026-02-07",
-    "calibration_days": 16,
+    "calibration_days": 35,
     "dhw_percentage": 16.1,
     "dhw_temp_threshold": 45.0,
     "dhw_temp_rise_threshold": 2.0,
