@@ -68,13 +68,13 @@
     }
   },
   "energy_separation": {
-    "enabled": false,
+    "enabled": true,
     "method": "k_calibration",
-    "heat_loss_k": null,
+    "heat_loss_k": 0.0821,
     "k_percentile": 15,
-    "calibration_date": null,
-    "calibration_days": 0,
-    "dhw_percentage": null,
+    "calibration_date": "2026-02-07",
+    "calibration_days": 30,
+    "dhw_percentage": 37.9,
     "dhw_temp_threshold": 45.0,
     "dhw_temp_rise_threshold": 2.0,
     "dhw_baseline_temp": 25.0,
