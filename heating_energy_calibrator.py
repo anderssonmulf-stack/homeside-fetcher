@@ -76,7 +76,9 @@ class HeatingEnergyCalibrator:
         influx_org: str,
         influx_bucket: str,
         latitude: float = 58.41,
-        longitude: float = 15.62
+        longitude: float = 15.62,
+        solar_coefficient: float = None,
+        wind_coefficient: float = None
     ):
         self.influx_org = influx_org
         self.influx_bucket = influx_bucket
@@ -91,7 +93,12 @@ class HeatingEnergyCalibrator:
         self.query_api = self.client.query_api()
         self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
 
-        self.weather_model = get_weather_model('simple')
+        model_kwargs = {}
+        if solar_coefficient is not None:
+            model_kwargs['solar_coefficient'] = solar_coefficient
+        if wind_coefficient is not None:
+            model_kwargs['wind_coefficient'] = wind_coefficient
+        self.weather_model = get_weather_model('simple', **model_kwargs)
 
     def fetch_daily_energy(self, house_id: str, start_date: str = "2025-12-01") -> Dict[str, float]:
         """
@@ -596,13 +603,31 @@ def main():
         print("ERROR: INFLUXDB_TOKEN not set")
         sys.exit(1)
 
+    # Load per-building weather coefficients from profile
+    solar_coeff = None
+    wind_coeff = None
+    try:
+        from customer_profile import CustomerProfile
+        profile = CustomerProfile.load(args.house, profiles_dir='profiles')
+        wc = profile.learned.weather_coefficients
+        if wc.solar_coefficient_ml2 is not None:
+            solar_coeff = wc.solar_coefficient_ml2
+        if wc.wind_coefficient_ml2 is not None:
+            wind_coeff = wc.wind_coefficient_ml2
+        if solar_coeff or wind_coeff:
+            print(f"Using learned weather coefficients: solar={solar_coeff}, wind={wind_coeff}")
+    except Exception:
+        pass  # Use defaults if profile not found
+
     calibrator = HeatingEnergyCalibrator(
         influx_url=influx_url,
         influx_token=influx_token,
         influx_org=influx_org,
         influx_bucket=influx_bucket,
         latitude=args.lat,
-        longitude=args.lon
+        longitude=args.lon,
+        solar_coefficient=solar_coeff,
+        wind_coefficient=wind_coeff
     )
 
     try:

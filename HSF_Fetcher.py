@@ -374,13 +374,16 @@ def run_energy_pipeline(
                 cal_days = profile.energy_separation.calibration_days or 30
                 start_date = (datetime.now(timezone.utc) - timedelta(days=cal_days)).strftime('%Y-%m-%d')
 
+                wc = profile.learned.weather_coefficients
                 calibrator = HeatingEnergyCalibrator(
                     influx_url=config['influxdb_url'],
                     influx_token=config['influxdb_token'],
                     influx_org=config['influxdb_org'],
                     influx_bucket=config['influxdb_bucket'],
                     latitude=config.get('latitude', 58.41),
-                    longitude=config.get('longitude', 15.62)
+                    longitude=config.get('longitude', 15.62),
+                    solar_coefficient=wc.solar_coefficient_ml2,
+                    wind_coefficient=wc.wind_coefficient_ml2
                 )
                 try:
                     analyses, used_k = calibrator.analyze(
