@@ -353,13 +353,88 @@ def run_energy_pipeline(
             properties={'Error': str(e)}
         )
 
-    # Step 2: Energy separation (DISABLED - k_calibration in Step 3 does this better)
-    # The energy_separation_service used hot water temp detection (homeside_ondemand_dhw)
-    # but the k_calibration method in Step 3 uses the calibrated heat loss coefficient
-    # which is more accurate. Keeping both caused duplicate entries.
-    # The service script is kept for potential future use.
-    print("\n⚡ Step 2: Energy separation (skipped - handled by k_calibration in Step 3)")
-    results['separation'] = {'success': True, 'houses': 0, 'records': 0}
+    # Step 2: Update energy separation (heating vs DHW breakdown)
+    print("\n⚡ Step 2: Updating energy separation...")
+    separation_houses = 0
+    separation_records = 0
+    try:
+        from heating_energy_calibrator import HeatingEnergyCalibrator
+
+        for filename in os.listdir(profiles_dir):
+            if not filename.endswith('.json'):
+                continue
+            try:
+                profile = CustomerProfile.load_by_path(
+                    os.path.join(profiles_dir, filename)
+                )
+                if not profile.energy_separation.enabled:
+                    continue
+
+                k = profile.energy_separation.heat_loss_k
+                k_pct = profile.energy_separation.k_percentile or 15
+                cal_days = profile.energy_separation.calibration_days or 30
+                start_date = (datetime.now(timezone.utc) - timedelta(days=cal_days)).strftime('%Y-%m-%d')
+
+                calibrator = HeatingEnergyCalibrator(
+                    influx_url=config['influxdb_url'],
+                    influx_token=config['influxdb_token'],
+                    influx_org=config['influxdb_org'],
+                    influx_bucket=config['influxdb_bucket'],
+                    latitude=config.get('latitude', 58.41),
+                    longitude=config.get('longitude', 15.62)
+                )
+                try:
+                    analyses, used_k = calibrator.analyze(
+                        house_id=profile.customer_id,
+                        start_date=start_date,
+                        calibrated_k=k,
+                        k_percentile=k_pct,
+                        quiet=True
+                    )
+                    if analyses:
+                        written = calibrator.write_to_influx(profile.customer_id, analyses, used_k)
+                        separation_records += written
+                        separation_houses += 1
+                        print(f"  ✓ {profile.friendly_name}: {written} days written (k={used_k:.4f})")
+                        seq_logger.log(
+                            "Energy separation updated for {House}: {Records} days",
+                            level='Information',
+                            properties={
+                                'House': profile.friendly_name,
+                                'HouseId': profile.customer_id,
+                                'Records': written,
+                                'KValue': round(used_k, 5)
+                            }
+                        )
+                    else:
+                        print(f"  ℹ {profile.friendly_name}: no data to separate")
+                finally:
+                    calibrator.close()
+
+            except Exception as e:
+                logger.warning(f"Energy separation failed for {filename}: {e}")
+                print(f"  ❌ {filename}: {e}")
+
+        results['separation'] = {
+            'success': True,
+            'houses': separation_houses,
+            'records': separation_records
+        }
+
+        if separation_houses > 0:
+            print(f"✓ Separated energy for {separation_houses} house(s), {separation_records} total records")
+        else:
+            print("ℹ No houses ready for energy separation")
+
+    except Exception as e:
+        logger.error(f"Energy separation failed: {e}")
+        print(f"❌ Energy separation failed: {e}")
+        seq_logger.log(
+            "Energy separation failed: {Error}",
+            level='Error',
+            properties={'Error': str(e)}
+        )
+        results['separation'] = {'success': False, 'houses': 0, 'records': 0}
 
     # Step 3: Recalibrate k-values (runs after energy import)
     # This also writes energy_separated data with method="k_calibration"
