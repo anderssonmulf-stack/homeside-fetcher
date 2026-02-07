@@ -175,7 +175,7 @@ class ArrigoAPI:
         Returns:
             True if login successful
         """
-        print(f"Logging in to {self.host} as '{self.username}'...")
+        self.logger.info(f"Logging in to {self.host} as '{self.username}'...")
 
         try:
             payload = {
@@ -208,7 +208,7 @@ class ArrigoAPI:
             self.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
             if not self.auth_token:
-                print("  ERROR: No authToken in response")
+                self.logger.error("No authToken in login response")
                 return False
 
             # Set Bearer auth for all subsequent requests
@@ -216,17 +216,17 @@ class ArrigoAPI:
                 "Authorization": f"Bearer {self.auth_token}"
             })
 
-            print(f"  Logged in (account: {self.account}, expires in {expires_in}s)")
+            self.logger.info(f"Logged in (account: {self.account}, expires in {expires_in}s)")
             self.log(f"Token: {self.auth_token[:30]}...")
 
             return True
 
         except requests.exceptions.HTTPError as e:
-            print(f"  ERROR: Login failed (HTTP {e.response.status_code})")
+            self.logger.error(f"Login failed (HTTP {e.response.status_code})")
             self.log(f"Response: {e.response.text[:500]}")
             return False
         except requests.exceptions.RequestException as e:
-            print(f"  ERROR: Login failed: {e}")
+            self.logger.error(f"Login failed: {e}")
             return False
 
     def is_token_valid(self) -> bool:
@@ -239,7 +239,7 @@ class ArrigoAPI:
         """Ensure we have a valid auth token, refreshing if needed."""
         if self.is_token_valid():
             return True
-        print("  Token expired or missing, re-authenticating...")
+        self.logger.info("Token expired or missing, re-authenticating...")
         return self.login()
 
     # ── GraphQL helpers ──────────────────────────────────────────────
@@ -266,7 +266,7 @@ class ArrigoAPI:
             )
 
             if response.status_code == 401:
-                print("  Token expired, re-authenticating...")
+                self.logger.info("Token expired, re-authenticating...")
                 if self.login():
                     response = self.session.post(
                         self.graphql_url,
@@ -277,23 +277,23 @@ class ArrigoAPI:
                     return None
 
             if response.status_code != 200:
-                print(f"  ERROR: GraphQL returned {response.status_code}")
+                self.logger.error(f"GraphQL returned {response.status_code}")
                 self.log(f"Response: {response.text[:500]}")
                 return None
 
             result = response.json()
 
             if 'errors' in result:
-                print(f"  ERROR: GraphQL errors: {result['errors']}")
+                self.logger.error(f"GraphQL errors: {result['errors']}")
                 return None
 
             return result.get('data')
 
         except requests.exceptions.Timeout:
-            print("  ERROR: GraphQL query timed out")
+            self.logger.error("GraphQL query timed out")
             return None
         except requests.exceptions.RequestException as e:
-            print(f"  ERROR: GraphQL request failed: {e}")
+            self.logger.error(f"GraphQL request failed: {e}")
             return None
 
     # ── Folder / Building Structure ──────────────────────────────────
@@ -366,7 +366,7 @@ class ArrigoAPI:
         Returns:
             True if signals discovered
         """
-        print("\nDiscovering analog signals...")
+        self.logger.debug("Discovering analog signals...")
 
         query = '''
         {
@@ -384,13 +384,11 @@ class ArrigoAPI:
 
         data = self._graphql(query, timeout=120)
         if not data or 'analogs' not in data:
-            print("  ERROR: Could not discover signals")
+            self.logger.error("Could not discover analog signals")
             return False
 
         items = data['analogs'].get('items', [])
         total = data['analogs'].get('totalCount', 0)
-
-        print(f"  Found {total} analog signals ({len(items)} returned)")
 
         self.signal_map = {}
         self.field_to_signal = {}
@@ -415,7 +413,7 @@ class ArrigoAPI:
 
             self.log(f"  Signal: {signal_name} = {value} {unit} (id: {decoded_id})")
 
-        print(f"  Mapped {len(self.signal_map)} signals")
+        self.logger.debug(f"Discovered {total} analog signals, mapped {len(self.signal_map)}")
         return True
 
     def discover_digital_signals(self) -> dict:
@@ -425,7 +423,7 @@ class ArrigoAPI:
         Returns:
             Dict of signal_id -> signal info, or empty dict on error
         """
-        print("\nDiscovering digital signals...")
+        self.logger.debug("Discovering digital signals...")
 
         query = '''
         {
@@ -445,13 +443,13 @@ class ArrigoAPI:
 
         data = self._graphql(query, timeout=120)
         if not data or 'digitals' not in data:
-            print("  ERROR: Could not discover digital signals")
+            self.logger.error("Could not discover digital signals")
             return {}
 
         items = data['digitals'].get('items', [])
         total = data['digitals'].get('totalCount', 0)
 
-        print(f"  Found {total} digital signals ({len(items)} returned)")
+        self.logger.debug(f"Discovered {total} digital signals ({len(items)} returned)")
 
         digital_map = {}
         for item in items:
@@ -586,7 +584,7 @@ class ArrigoAPI:
         items = data['analogsHistory'].get('items', [])
         total = data['analogsHistory'].get('totalCount', 0)
 
-        print(f"  Received {len(items)} data points (total available: {total})")
+        self.logger.debug(f"Received {len(items)} history data points (total: {total})")
         return items
 
     def fetch_digital_history(
@@ -861,7 +859,6 @@ def load_building_config(building_id: str) -> Optional[dict]:
     """
     path = get_building_config_path(building_id)
     if not os.path.exists(path):
-        print(f"Building config not found: {path}")
         return None
 
     with open(path, 'r') as f:

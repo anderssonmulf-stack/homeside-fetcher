@@ -139,7 +139,7 @@ class BuildingInfluxWriter:
 
 def fetch_and_write(client: ArrigoAPI, analog_fetch: dict,
                     influx: BuildingInfluxWriter, config: dict,
-                    logger, dry_run: bool = False) -> bool:
+                    logger, dry_run: bool = False) -> dict:
     """
     Single fetch iteration: get current values from Arrigo, write to InfluxDB.
 
@@ -149,17 +149,17 @@ def fetch_and_write(client: ArrigoAPI, analog_fetch: dict,
         influx: InfluxDB writer (or None for dry run)
         config: Building config dict
         logger: Logger instance
-        dry_run: If True, print values but don't write
+        dry_run: If True, skip InfluxDB writes
 
     Returns:
-        True if successful
+        Dict of fetched values if successful, empty dict on failure
     """
     timestamp = datetime.now(timezone.utc)
 
     # Fetch current analog values
     if not client.discover_signals():
         logger.warning("Failed to discover signals")
-        return False
+        return {}
 
     # Map fetched values to field names
     values = {}
@@ -179,47 +179,25 @@ def fetch_and_write(client: ArrigoAPI, analog_fetch: dict,
 
     if not values:
         logger.error("No values fetched from API")
-        return False
-
-    logger.info(f"Fetched {len(values)}/{len(analog_fetch)} signals "
-                f"({len(missing)} missing)")
+        return {}
 
     if missing and len(missing) <= 10:
         logger.debug(f"Missing signals: {missing}")
 
-    # Print summary of key values
-    key_fields = [
-        'outdoor_temp_fvc', 'dh_power_total', 'dh_primary_supply',
-        'dh_primary_return', 'radiator_supply_temp', 'radiator_return_temp',
-    ]
-    parts = []
-    for f in key_fields:
-        if f in values:
-            parts.append(f"{f}={values[f]:.1f}")
-    if parts:
-        print(f"  {' | '.join(parts)}")
-
-    # Write to InfluxDB
+    # Dry run - just return values without writing
     if dry_run:
-        print(f"\n  [DRY RUN] Would write {len(values)} fields to InfluxDB")
-        for field_name in sorted(values.keys()):
-            v = values[field_name]
-            print(f"    {field_name:35s} = {v:.4f}")
-        return True
+        return values
 
     if influx:
         success = influx.write_analog_signals(values, timestamp)
-        if success:
-            print(f"  Written {len(values)} fields to InfluxDB")
-        else:
+        if not success:
             logger.error("Failed to write to InfluxDB")
-            return False
+            return {}
 
     # Fetch and write alarms if enabled
     alarm_config = config.get('alarm_monitoring', {})
     if alarm_config.get('enabled') and influx:
         try:
-            priorities = alarm_config.get('priorities', ['A', 'B'])
             alarms = client.get_alarms(first=100)
             if alarms:
                 influx.write_alarms(alarms, timestamp)
@@ -229,7 +207,7 @@ def fetch_and_write(client: ArrigoAPI, analog_fetch: dict,
         except Exception as e:
             logger.warning(f"Alarm fetch failed: {e}")
 
-    return True
+    return values
 
 
 def calculate_sleep(interval_minutes: int) -> float:
@@ -311,16 +289,22 @@ def main():
         logger.error("No signals configured for fetching")
         sys.exit(1)
 
-    print("=" * 60)
-    print(f"Building Fetcher: {friendly_name}")
-    print(f"=" * 60)
-    print(f"  Host: {host}")
-    print(f"  Signals: {len(analog_fetch)} analog, {len(digital_fetch)} digital")
-    print(f"  Interval: {interval_minutes} min")
-    print(f"  Mode: {'single fetch' if args.once else 'continuous loop'}")
-    if args.dry_run:
-        print(f"  DRY RUN: no InfluxDB writes")
-    print()
+    # Initialize Seq structured logging
+    seq = None
+    if SEQ_AVAILABLE:
+        seq = SeqLogger(
+            client_id=building_id,
+            friendly_name=friendly_name,
+            username=username,
+            seq_url=os.getenv('SEQ_URL'),
+            seq_api_key=os.getenv('SEQ_API_KEY'),
+            component='BuildingFetcher',
+            display_name_source='friendly_name',
+        )
+
+    logger.info(f"Building Fetcher: {friendly_name} | host={host} | "
+                f"signals={len(analog_fetch)} analog, {len(digital_fetch)} digital | "
+                f"interval={interval_minutes}min")
 
     # Initialize Arrigo API client
     client = ArrigoAPI(
@@ -334,6 +318,9 @@ def main():
     # Authenticate
     if not client.login():
         logger.error("Authentication failed")
+        if seq:
+            seq.log_error("Authentication failed", properties={
+                'EventType': 'AuthFailed', 'Host': host})
         sys.exit(1)
 
     # Initialize InfluxDB writer
@@ -350,13 +337,27 @@ def main():
 
     # ── Single fetch mode ────────────────────────────────────────
     if args.once:
-        success = fetch_and_write(client, analog_fetch, influx, config,
-                                  logger, dry_run=args.dry_run)
+        values = fetch_and_write(client, analog_fetch, influx, config,
+                                 logger, dry_run=args.dry_run)
         if influx:
             influx.close()
-        sys.exit(0 if success else 1)
+        sys.exit(0 if values else 1)
 
     # ── Continuous loop ──────────────────────────────────────────
+    if seq and seq.enabled:
+        seq.log(
+            f"[{friendly_name}] Building fetcher started | "
+            f"{len(analog_fetch)} signals | {interval_minutes}min interval",
+            level='Information',
+            properties={
+                'EventType': 'FetcherStarted',
+                'Host': host,
+                'AnalogSignals': len(analog_fetch),
+                'DigitalSignals': len(digital_fetch),
+                'IntervalMinutes': interval_minutes,
+            }
+        )
+
     iteration = 0
     consecutive_failures = 0
     first_failure_time = None
@@ -365,20 +366,50 @@ def main():
         while True:
             iteration += 1
             now = datetime.now(timezone.utc)
-            local_time = datetime.now().strftime('%H:%M:%S')
-
-            print(f"\n{'─' * 60}")
-            print(f"[{friendly_name}] #{iteration} at {local_time}")
-            print(f"{'─' * 60}")
 
             try:
-                success = fetch_and_write(client, analog_fetch, influx,
-                                          config, logger)
+                values = fetch_and_write(client, analog_fetch, influx,
+                                         config, logger)
 
-                if success:
+                if values:
                     consecutive_failures = 0
                     first_failure_time = None
-                    print(f"  OK")
+
+                    # Build Seq properties from fetched values
+                    props = {
+                        'EventType': 'BuildingDataCollected',
+                        'Iteration': iteration,
+                        'SignalCount': len(values),
+                        'TotalConfigured': len(analog_fetch),
+                    }
+                    # Include key values as structured properties
+                    for field_name, value in values.items():
+                        if isinstance(value, (int, float)):
+                            pascal_key = ''.join(
+                                word.capitalize() for word in field_name.split('_'))
+                            props[pascal_key] = round(float(value), 2)
+
+                    # Build concise message with key readings
+                    msg_parts = [f"#{iteration}"]
+                    key_readings = {
+                        'outdoor_temp_fvc': ('Out', '°C'),
+                        'dh_power_total': ('DH', 'kW'),
+                        'dh_primary_supply': ('Sup', '°C'),
+                        'dh_primary_return': ('Ret', '°C'),
+                    }
+                    for field, (label, unit) in key_readings.items():
+                        if field in values:
+                            msg_parts.append(f"{label}={values[field]:.1f}{unit}")
+
+                    msg_parts.append(f"{len(values)}/{len(analog_fetch)} signals")
+
+                    if seq:
+                        seq.log(
+                            f"[{friendly_name}] {' | '.join(msg_parts)}",
+                            level='Information',
+                            properties=props,
+                        )
+
                 else:
                     consecutive_failures += 1
                     if first_failure_time is None:
@@ -392,27 +423,41 @@ def main():
                     # Escalate to error after 2 hours of failures
                     failure_duration = (now - first_failure_time).total_seconds() / 60
                     if failure_duration > 120:
-                        logger.error(f"Persistent failure for {failure_duration:.0f} min")
+                        if seq:
+                            seq.log_error(
+                                f"Persistent failure for {failure_duration:.0f} min",
+                                properties={
+                                    'EventType': 'PersistentFailure',
+                                    'FailureMinutes': round(failure_duration),
+                                    'ConsecutiveFailures': consecutive_failures,
+                                })
                     else:
-                        logger.warning(f"Fetch failed (attempt {consecutive_failures})")
+                        if seq:
+                            seq.log_warning(
+                                f"Fetch failed (attempt {consecutive_failures})",
+                                properties={
+                                    'EventType': 'FetchFailed',
+                                    'ConsecutiveFailures': consecutive_failures,
+                                })
 
             except Exception as e:
                 consecutive_failures += 1
-                logger.error(f"Unexpected error in fetch loop: {e}", exc_info=args.verbose)
+                logger.error(f"Unexpected error in fetch loop: {e}",
+                             exc_info=args.verbose)
+                if seq:
+                    seq.log_error("Unexpected error in fetch loop",
+                                  error=e,
+                                  properties={'EventType': 'FetchLoopError'})
 
             # Sleep until next aligned interval
             sleep_seconds = calculate_sleep(interval_minutes)
-            next_run = datetime.now() + timedelta(seconds=sleep_seconds)
-            print(f"  Next fetch at {next_run.strftime('%H:%M:%S')} "
-                  f"(sleeping {sleep_seconds:.0f}s)")
             time.sleep(sleep_seconds)
 
     except KeyboardInterrupt:
-        print(f"\n\nStopping {friendly_name} fetcher...")
+        logger.info(f"Stopping {friendly_name} fetcher...")
     finally:
         if influx:
             influx.close()
-        print("Cleanup complete.")
 
 
 if __name__ == "__main__":

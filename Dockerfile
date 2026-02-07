@@ -11,6 +11,7 @@ COPY *.py .
 COPY variables_config.json .
 COPY settings.json .
 COPY profiles/ ./profiles/
+COPY buildings/ ./buildings/
 COPY energy_models/ ./energy_models/
 
 # Run the fetcher

@@ -111,6 +111,35 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Commercial building: HEM Kontor TE236 (Arrigo BMS)
+  building-fetcher-hem-kontor:
+    build: .
+    container_name: building-fetcher-TE236_HEM_Kontor
+    restart: unless-stopped
+    cpus: "2.4"
+    mem_limit: 3g
+    command: ["python", "-u", "building_fetcher.py", "--building", "TE236_HEM_Kontor"]
+    environment:
+      - ARRIGO_USERNAME=Ulf Andersson
+      - ARRIGO_PASSWORD=Kossanmu2026#
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=homeside_token_2026_secret
+      - INFLUXDB_ORG=homeside
+      - INFLUXDB_BUCKET=heating
+      - SEQ_URL=http://seq:5341
+      - SEQ_API_KEY=hllDhc79UDrWDEJ0HPY2
+    volumes:
+      - ./buildings:/app/buildings
+    networks:
+      - dryckesmail_beer-network
+    depends_on:
+      - influxdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   influxdb:
     image: influxdb:2.7-alpine
     container_name: homeside-influxdb
