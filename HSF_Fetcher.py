@@ -17,7 +17,6 @@ from gap_filler import fill_gaps_on_startup
 from energy_forecaster import EnergyForecaster, format_energy_forecast
 from k_recalibrator import recalibrate_house
 from energy_importer import EnergyImporter
-from energy_separation_service import EnergySeparationService
 from dropbox_client import create_client_from_env
 from weather_sensitivity_learner import WeatherSensitivityLearner
 
