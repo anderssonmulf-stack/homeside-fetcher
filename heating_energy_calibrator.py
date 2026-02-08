@@ -508,6 +508,10 @@ class HeatingEnergyCalibrator:
         Deletes existing energy_separated records for this house before writing
         to prevent duplicates from different methods or re-runs.
         """
+        from write_throttle import WriteThrottle
+        if not WriteThrottle.get().allow("energy_separated", house_id, 3600):
+            return 0
+
         points = []
         today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         skipped_coverage = 0

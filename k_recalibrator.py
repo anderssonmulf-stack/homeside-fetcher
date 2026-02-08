@@ -244,6 +244,11 @@ class KRecalibrator:
             logger.info(f"[DRY RUN] Would write k={result.k_value:.4f} to history")
             return True
 
+        from write_throttle import WriteThrottle
+        if not WriteThrottle.get().allow("k_calibration_history", result.house_id, 3600):
+            logger.info(f"Throttled k-history write for {result.house_id}")
+            return True
+
         try:
             point = Point("k_calibration_history") \
                 .tag("house_id", result.house_id) \

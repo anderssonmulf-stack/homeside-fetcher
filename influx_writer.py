@@ -760,6 +760,10 @@ class InfluxDBWriter:
         if not self.enabled:
             return False
 
+        from write_throttle import WriteThrottle
+        if not WriteThrottle.get().allow("learned_parameters", self.house_id, 3600):
+            return True
+
         try:
             point = Point("learned_parameters") \
                 .tag("house_id", self.house_id) \
@@ -1424,6 +1428,10 @@ class InfluxDBWriter:
         if not self.enabled or not coefficients:
             return False
 
+        from write_throttle import WriteThrottle
+        if not WriteThrottle.get().allow("weather_coefficients_ml2", self.house_id, 3600):
+            return True
+
         try:
             point = Point("weather_coefficients_ml2") \
                 .tag("house_id", self.house_id) \
@@ -1461,6 +1469,10 @@ class InfluxDBWriter:
         """
         if not self.enabled or not timing:
             return False
+
+        from write_throttle import WriteThrottle
+        if not WriteThrottle.get().allow("thermal_timing_ml2", self.house_id, 3600):
+            return True
 
         try:
             point = Point("thermal_timing_ml2") \
