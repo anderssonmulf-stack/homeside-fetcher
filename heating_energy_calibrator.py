@@ -607,19 +607,22 @@ def main():
         print("ERROR: INFLUXDB_TOKEN not set")
         sys.exit(1)
 
-    # Load per-building weather coefficients from profile
+    # Load per-building weather coefficients from profile (only if confidence >= 0.2)
     solar_coeff = None
     wind_coeff = None
     try:
         from customer_profile import CustomerProfile
         profile = CustomerProfile.load(args.house, profiles_dir='profiles')
         wc = profile.learned.weather_coefficients
-        if wc.solar_coefficient_ml2 is not None:
-            solar_coeff = wc.solar_coefficient_ml2
-        if wc.wind_coefficient_ml2 is not None:
-            wind_coeff = wc.wind_coefficient_ml2
-        if solar_coeff or wind_coeff:
-            print(f"Using learned weather coefficients: solar={solar_coeff}, wind={wind_coeff}")
+        if (wc.solar_confidence_ml2 or 0) >= 0.2:
+            if wc.solar_coefficient_ml2 is not None:
+                solar_coeff = wc.solar_coefficient_ml2
+            if wc.wind_coefficient_ml2 is not None:
+                wind_coeff = wc.wind_coefficient_ml2
+            if solar_coeff or wind_coeff:
+                print(f"Using learned weather coefficients: solar={solar_coeff}, wind={wind_coeff}")
+        else:
+            print(f"Solar confidence too low ({wc.solar_confidence_ml2}), using defaults")
     except Exception:
         pass  # Use defaults if profile not found
 

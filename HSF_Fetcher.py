@@ -375,6 +375,9 @@ def run_energy_pipeline(
                 start_date = (datetime.now(timezone.utc) - timedelta(days=cal_days)).strftime('%Y-%m-%d')
 
                 wc = profile.learned.weather_coefficients
+                # Only use learned coefficients if confidence is sufficient
+                solar_coeff = wc.solar_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
+                wind_coeff = wc.wind_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
                 calibrator = HeatingEnergyCalibrator(
                     influx_url=config['influxdb_url'],
                     influx_token=config['influxdb_token'],
@@ -382,14 +385,14 @@ def run_energy_pipeline(
                     influx_bucket=config['influxdb_bucket'],
                     latitude=config.get('latitude', 58.41),
                     longitude=config.get('longitude', 15.62),
-                    solar_coefficient=wc.solar_coefficient_ml2,
-                    wind_coefficient=wc.wind_coefficient_ml2
+                    solar_coefficient=solar_coeff,
+                    wind_coefficient=wind_coeff
                 )
                 try:
                     analyses, used_k = calibrator.analyze(
                         house_id=profile.customer_id,
                         start_date=start_date,
-                        calibrated_k=k,
+                        calibrated_k=None,
                         k_percentile=k_pct,
                         quiet=True
                     )
@@ -779,7 +782,7 @@ def monitor_heating_system(config):
                 )
                 print(f"  - Energy forecast: k={heat_loss_k:.4f} kW/°C")
                 # Show if using ML2 coefficients
-                if energy_forecaster.solar_coefficient_ml2 and energy_forecaster.solar_confidence_ml2 >= 0.3:
+                if energy_forecaster.solar_coefficient_ml2 and energy_forecaster.solar_confidence_ml2 >= 0.2:
                     print(f"    Using ML2 model: solar={energy_forecaster.solar_coefficient_ml2:.1f}")
             else:
                 print("  - Energy forecast: Not calibrated (run heating_energy_calibrator.py)")

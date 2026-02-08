@@ -70,7 +70,7 @@
   "energy_separation": {
     "enabled": true,
     "method": "k_calibration",
-    "heat_loss_k": 0.03821,
+    "heat_loss_k": 0.0644,
     "k_percentile": 15,
     "calibration_date": "2026-02-08",
     "calibration_days": 4,
