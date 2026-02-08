@@ -449,7 +449,6 @@ def run_energy_pipeline(
                 if not filename.endswith('.json'):
                     continue
                 try:
-                    from customer_profile import CustomerProfile
                     profile = CustomerProfile.load_by_path(
                         os.path.join(profiles_dir, filename)
                     )

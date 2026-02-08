@@ -14,5 +14,5 @@ COPY profiles/ ./profiles/
 COPY buildings/ ./buildings/
 COPY energy_models/ ./energy_models/
 
-# Run the fetcher
-CMD ["python", "-u", "HSF_Fetcher.py"]
+# Run the orchestrator (spawns fetcher subprocesses per config)
+CMD ["python", "-u", "orchestrator.py"]
