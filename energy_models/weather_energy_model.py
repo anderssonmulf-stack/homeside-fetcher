@@ -98,7 +98,7 @@ class SimpleWeatherModel(WeatherEnergyModel):
     # Default coefficients (can be overridden per building)
     DEFAULT_WIND_COEFFICIENT = 0.56     # °C per sqrt(m/s) - reduced 20% from 0.7, suitable for brick/metal buildings
     DEFAULT_HUMIDITY_COEFFICIENT = 0.01  # °C per % humidity above 50%
-    DEFAULT_SOLAR_COEFFICIENT = 6.0      # Max °C gain at full sun (doubled based on real-world observations)
+    DEFAULT_SOLAR_COEFFICIENT = 15.0     # Max °C gain at full sun (raised from 6.0 based on learned values ~27)
 
     def __init__(
         self,

@@ -168,8 +168,8 @@ class HeatingEnergyCalibrator:
 
         tables = self.query_api.query(query, org=self.influx_org)
 
-        # Deduplicate by rounded timestamp (to nearest minute)
-        # Some data has 1-second duplicate entries
+        # Deduplicate by rounded timestamp (to nearest 15-min window)
+        # Handles both 1-second duplicates and restart-loop flooding
         seen_times = set()
         results = []
         duplicates = 0
@@ -177,8 +177,8 @@ class HeatingEnergyCalibrator:
         for table in tables:
             for record in table.records:
                 ts = record.get_time()
-                # Round to nearest minute for deduplication
-                rounded_ts = ts.replace(second=0, microsecond=0)
+                # Round to nearest 15-min window for deduplication
+                rounded_ts = ts.replace(minute=(ts.minute // 15) * 15, second=0, microsecond=0)
                 ts_key = rounded_ts.isoformat()
 
                 if ts_key in seen_times:

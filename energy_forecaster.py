@@ -115,7 +115,7 @@ class EnergyForecaster:
 
         # Weather model for effective temperature calculation
         # Use learned coefficients if available with sufficient confidence
-        if solar_coefficient_ml2 is not None and solar_confidence_ml2 >= 0.3:
+        if solar_coefficient_ml2 is not None and solar_confidence_ml2 >= 0.2:
             self.weather_model = SimpleWeatherModel(
                 solar_coefficient=solar_coefficient_ml2,
                 wind_coefficient=wind_coefficient_ml2 or 0.15
