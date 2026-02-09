@@ -389,10 +389,75 @@ class InfluxReader:
                             'cloud_cover': cloud_cover,
                         })
 
-            return results
+            # Sort by timestamp and deduplicate (pivot may return multiple tables
+            # when records have different tag sets, e.g. with/without 'source' tag)
+            results.sort(key=lambda x: x['timestamp'])
+            seen = set()
+            deduped = []
+            for r in results:
+                if r['timestamp'] not in seen:
+                    seen.add(r['timestamp'])
+                    deduped.append(r)
+            return deduped
 
         except Exception as e:
             print(f"Failed to query weather history: {e}")
+            return []
+
+    def get_historical_forecast_weather(self, house_id: str, hours: int = 168) -> list:
+        """
+        Get historical forecast weather data from weather_forecast_hourly measurement.
+
+        Returns past forecast data (what was predicted for hours that have already passed).
+        This allows comparing forecast accuracy against actual observations.
+
+        Args:
+            house_id: House identifier
+            hours: Hours of history to fetch (default 168 = 7 days)
+
+        Returns:
+            List of dicts with timestamp, timestamp_swedish, temperature, wind_speed, humidity, cloud_cover
+        """
+        self._ensure_connection()
+        if not self.client:
+            return []
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h, stop: now())
+                |> filter(fn: (r) => r["_measurement"] == "weather_forecast_hourly")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            results = []
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        results.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_swedish': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'temperature': record.values.get('temperature'),
+                            'wind_speed': record.values.get('wind_speed', 3.0),
+                            'humidity': record.values.get('humidity', 60.0),
+                            'cloud_cover': record.values.get('cloud_cover', 4.0),
+                        })
+
+            return results
+
+        except Exception as e:
+            print(f"Failed to query historical forecast weather: {e}")
             return []
 
     def get_heating_and_weather_history(self, house_id: str, hours: int = 168) -> dict:
@@ -783,6 +848,7 @@ class InfluxReader:
                     r["forecast_type"] == "supply_temp_baseline" or
                     r["forecast_type"] == "supply_temp_ml"
                 )
+                |> filter(fn: (r) => r["_field"] == "value")
                 |> sort(columns: ["_time"])
             '''
 

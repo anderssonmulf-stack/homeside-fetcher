@@ -880,6 +880,35 @@
     }
 
     // Effective Temperature Chart (with forecast)
+    // Insert null entries into data array where time gaps > maxGapMs exist.
+    // This makes Plotly break lines at gaps instead of drawing straight lines across them.
+    // Returns new array with null-valued entries inserted at gap midpoints.
+    function insertGapNulls(data, timestampKey, maxGapMs) {
+        if (!data || data.length < 2) return data;
+        const result = [];
+        for (let i = 0; i < data.length; i++) {
+            result.push(data[i]);
+            if (i < data.length - 1) {
+                const t1 = new Date(data[i][timestampKey]).getTime();
+                const t2 = new Date(data[i + 1][timestampKey]).getTime();
+                if (!isNaN(t1) && !isNaN(t2) && t2 - t1 > maxGapMs) {
+                    // Create a null entry with a midpoint display timestamp
+                    const midTime = new Date((t1 + t2) / 2);
+                    const pad = n => String(n).padStart(2, '0');
+                    const midDisplay = `${midTime.getFullYear()}-${pad(midTime.getMonth()+1)}-${pad(midTime.getDate())} ${pad(midTime.getHours())}:${pad(midTime.getMinutes())}`;
+                    const nullEntry = {};
+                    for (const key of Object.keys(data[i])) {
+                        nullEntry[key] = null;
+                    }
+                    nullEntry['timestamp_display'] = midDisplay;
+                    nullEntry['timestamp'] = midTime.toISOString();
+                    result.push(nullEntry);
+                }
+            }
+        }
+        return result;
+    }
+
     function updateEffectiveTempChart() {
         const hours = document.getElementById('eff-temp-days-select').value;
         const chartDiv = document.getElementById('effective-temp-chart');
@@ -889,18 +918,24 @@
 
         const historyUrl = `/api/house/${houseId}/effective-temperature?hours=${hours}`;
         const forecastUrl = `/api/house/${houseId}/forecast-effective-temperature?hours=12`;
+        const histForecastUrl = `/api/house/${houseId}/historical-forecast-effective-temperature?hours=${hours}`;
 
-        // Fetch both historical and forecast data in parallel
+        // Fetch historical, forecast, and historical forecast data in parallel
         Promise.all([
             fetch(historyUrl).then(r => r.ok ? r.json() : { data: [] }),
-            fetch(forecastUrl).then(r => r.ok ? r.json() : { data: [] })
+            fetch(forecastUrl).then(r => r.ok ? r.json() : { data: [] }),
+            fetch(histForecastUrl).then(r => r.ok ? r.json() : { data: [] })
         ])
-        .then(([historyResult, forecastResult]) => {
+        .then(([historyResult, forecastResult, histForecastResult]) => {
             console.log('History data:', historyResult.data?.length || 0, 'points');
             console.log('Forecast data:', forecastResult.data?.length || 0, 'points');
+            console.log('Hist forecast data:', histForecastResult.data?.length || 0, 'points');
 
-            const histData = historyResult.data || [];
+            // Insert nulls at time gaps > 2 hours to break lines
+            const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+            const histData = insertGapNulls(historyResult.data || [], 'timestamp', TWO_HOURS_MS);
             const forecastData = forecastResult.data || [];
+            const histForecastData = insertGapNulls(histForecastResult.data || [], 'timestamp', TWO_HOURS_MS);
 
             if (histData.length === 0 && forecastData.length === 0) {
                 chartDiv.innerHTML = '<p class="muted">No weather data available.</p>';
@@ -912,9 +947,17 @@
             const histTimestamps = histData.map(d => d.timestamp_display || d.timestamp);
             // Forecast data timestamps
             const forecastTimestamps = forecastData.map(d => d.timestamp_display || d.timestamp);
+            // Historical forecast timestamps
+            const histForecastTimestamps = histForecastData.map(d => d.timestamp_display || d.timestamp);
 
-            // Get current time for "now" line (use last historical point or current time)
-            const nowTime = histTimestamps.length > 0 ? histTimestamps[histTimestamps.length - 1] : null;
+            // Get current time for "now" line (use last non-null historical point)
+            let nowTime = null;
+            for (let i = histData.length - 1; i >= 0; i--) {
+                if (histData[i].actual_temp != null) {
+                    nowTime = histData[i].timestamp_display || histData[i].timestamp;
+                    break;
+                }
+            }
 
             // Main temperature comparison chart with forecast
             const tempTraces = [
@@ -926,6 +969,7 @@
                     mode: 'lines',
                     name: 'Actual Outdoor',
                     line: { color: '#3498db', width: 2 },
+                    connectgaps: false,
                     hovertemplate: '%{x}<br>Actual: %{y}°C<extra></extra>'
                 },
                 // Historical effective temp
@@ -936,9 +980,34 @@
                     mode: 'lines',
                     name: 'Effective Temp',
                     line: { color: '#e74c3c', width: 2, dash: 'dot' },
+                    connectgaps: false,
                     hovertemplate: '%{x}<br>Effective: %{y}°C<extra></extra>'
                 }
             ];
+
+            // Add historical forecast traces if available
+            if (histForecastData.length > 0) {
+                tempTraces.push({
+                    x: histForecastTimestamps,
+                    y: histForecastData.map(d => d.forecast_temp),
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Forecast Outdoor (hist)',
+                    line: { color: '#85c1e9', width: 1.5, dash: 'dash' },
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Fcst Outdoor: %{y}°C<extra></extra>'
+                });
+                tempTraces.push({
+                    x: histForecastTimestamps,
+                    y: histForecastData.map(d => d.effective_temp),
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Forecast Effective (hist)',
+                    line: { color: '#f0b27a', width: 1.5, dash: 'dash' },
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Fcst Effective: %{y}°C<extra></extra>'
+                });
+            }
 
             // Add forecast traces if we have forecast data
             if (forecastData.length > 0) {
@@ -950,6 +1019,7 @@
                     mode: 'lines',
                     name: 'Forecast Outdoor',
                     line: { color: '#3498db', width: 2, dash: 'dash' },
+                    connectgaps: false,
                     hovertemplate: '%{x}<br>Forecast: %{y}°C<extra></extra>'
                 });
                 // Forecast effective temp (dashed + dotted)
@@ -960,6 +1030,7 @@
                     mode: 'lines',
                     name: 'Forecast Effective',
                     line: { color: '#e74c3c', width: 2, dash: 'dashdot' },
+                    connectgaps: false,
                     hovertemplate: '%{x}<br>Forecast Eff: %{y}°C<extra></extra>'
                 });
             }
@@ -1024,6 +1095,7 @@
                     fill: 'tozeroy',
                     line: { color: '#9b59b6', width: 1 },
                     fillcolor: 'rgba(155, 89, 182, 0.3)',
+                    connectgaps: false,
                     hovertemplate: '%{x}<br>Wind: %{y}°C<extra></extra>'
                 },
                 // Historical humidity effect
@@ -1036,6 +1108,7 @@
                     fill: 'tozeroy',
                     line: { color: '#3498db', width: 1 },
                     fillcolor: 'rgba(52, 152, 219, 0.3)',
+                    connectgaps: false,
                     hovertemplate: '%{x}<br>Humidity: %{y}°C<extra></extra>'
                 },
                 // Historical solar effect
@@ -1048,6 +1121,7 @@
                     fill: 'tozeroy',
                     line: { color: '#f39c12', width: 1 },
                     fillcolor: 'rgba(243, 156, 18, 0.3)',
+                    connectgaps: false,
                     hovertemplate: '%{x}<br>Solar: %{y}°C<extra></extra>'
                 }
             ];
@@ -1062,6 +1136,7 @@
                         mode: 'lines',
                         name: 'Wind (forecast)',
                         line: { color: '#9b59b6', width: 2, dash: 'dash' },
+                        connectgaps: false,
                         hovertemplate: '%{x}<br>Wind (fcst): %{y}°C<extra></extra>'
                     },
                     {
@@ -1071,6 +1146,7 @@
                         mode: 'lines',
                         name: 'Humidity (forecast)',
                         line: { color: '#3498db', width: 2, dash: 'dash' },
+                        connectgaps: false,
                         hovertemplate: '%{x}<br>Humidity (fcst): %{y}°C<extra></extra>'
                     },
                     {
@@ -1080,6 +1156,7 @@
                         mode: 'lines',
                         name: 'Solar (forecast)',
                         line: { color: '#f39c12', width: 2, dash: 'dash' },
+                        connectgaps: false,
                         hovertemplate: '%{x}<br>Solar (fcst): %{y}°C<extra></extra>'
                     }
                 );
