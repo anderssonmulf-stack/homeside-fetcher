@@ -164,7 +164,72 @@ Your account has been approved. You can now log in at:
 If you have any questions, please contact us.
         """
 
-        self._send_email(user['email'], subject, html_body, text_body)
+        return self._send_email(user['email'], subject, html_body, text_body)
+
+    def send_invite_email(self, user: Dict, reset_token: str):
+        """Send invite email to a user created by admin, with a password setup link"""
+        subject = "You've been invited to Svenskeb Heating System"
+        setup_url = f"{self.base_url}/reset-password/{reset_token}"
+
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #27ae60;">Welcome, {user['name']}!</h2>
+
+            <p>An account has been created for you on Svenskeb Heating System.</p>
+
+            <p>Your username is: <strong>{user['username']}</strong></p>
+
+            <p>Please click the button below to set your password and get started:</p>
+
+            <p style="margin: 30px 0;">
+                <a href="{setup_url}"
+                   style="display: inline-block; padding: 14px 28px; background-color: #27ae60;
+                          color: white; text-decoration: none; border-radius: 4px;
+                          font-weight: bold;">
+                    Set Your Password
+                </a>
+            </p>
+
+            <p style="color: #e74c3c; font-weight: bold;">
+                This link will expire in 48 hours.
+            </p>
+
+            <h3>What you can do:</h3>
+            <ul>
+                <li>View your heating system status</li>
+                <li>Adjust temperature settings</li>
+                <li>View forecasts and history</li>
+                <li>See system recommendations</li>
+            </ul>
+
+            <p>If you have any questions, please contact us.</p>
+
+            <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
+                This is an automated message from Svenskeb Heating System.<br>
+                If you're having trouble clicking the button, copy and paste this URL into your browser:<br>
+                <span style="word-break: break-all;">{setup_url}</span>
+            </p>
+        </body>
+        </html>
+        """
+
+        text_body = f"""
+Welcome, {user['name']}!
+
+An account has been created for you on Svenskeb Heating System.
+
+Your username is: {user['username']}
+
+Please visit the link below to set your password:
+{setup_url}
+
+This link will expire in 48 hours.
+
+If you have any questions, please contact us.
+        """
+
+        return self._send_email(user['email'], subject, html_body, text_body)
 
     def send_rejection_email(self, user: Dict, reason: str):
         """Send rejection email to user"""

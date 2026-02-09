@@ -1505,6 +1505,166 @@ def admin_users():
                            all_houses=all_houses)
 
 
+@app.route('/admin/users/add', methods=['GET', 'POST'])
+@require_role('admin')
+def admin_add_user():
+    """Admin: Create a new user account directly"""
+    all_houses = get_houses_with_names()
+
+    if request.method == 'POST':
+        import re
+        from datetime import datetime
+
+        username = request.form.get('username', '').strip()
+        name = request.form.get('name', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        confirm_password = request.form.get('confirm_password', '')
+        role = request.form.get('role', 'user')
+        houses = [h for h in request.form.getlist('houses') if h]
+
+        # HomeSide credentials (optional)
+        homeside_username = request.form.get('homeside_username', '').strip()
+        homeside_password = request.form.get('homeside_password', '').strip()
+        house_friendly_name = request.form.get('house_friendly_name', '').strip()
+        meter_number = request.form.get('meter_number', '').strip()
+
+        send_welcome_email = request.form.get('send_welcome_email') == '1'
+
+        # Preserve form values for re-render on error
+        form = {
+            'username': username, 'name': name, 'email': email,
+            'role': role, 'houses': houses,
+            'homeside_username': homeside_username,
+            'homeside_password': homeside_password,
+            'house_friendly_name': house_friendly_name,
+            'meter_number': meter_number,
+            'send_welcome_email': '1' if send_welcome_email else '0',
+        }
+
+        # If no password provided, user will set it via email link
+        needs_invite = not password
+
+        # Validation
+        errors = []
+        if len(username) < 3:
+            errors.append('Username must be at least 3 characters.')
+        elif not re.match(r'^[a-zA-Z0-9._-]+$', username):
+            errors.append('Username may only contain letters, numbers, dots, hyphens, and underscores.')
+        if not name:
+            errors.append('Name is required.')
+        if not email or '@' not in email:
+            errors.append('Valid email is required.')
+        if password and len(password) < 8:
+            errors.append('Password must be at least 8 characters.')
+        if password and password != confirm_password:
+            errors.append('Passwords do not match.')
+        if role not in ('user', 'viewer', 'admin'):
+            errors.append('Invalid role.')
+        if user_manager.user_exists(username):
+            errors.append('Username already taken.')
+        if user_manager.email_exists(email):
+            errors.append('Email already registered.')
+
+        # Verify HomeSide credentials if provided
+        verified_customer_id = ''
+        if homeside_username and homeside_password and not errors:
+            result = _verify_homeside_credentials(homeside_username, homeside_password)
+            if result['valid']:
+                verified_customer_id = result.get('customer_id', '')
+                # Auto-add discovered house to the houses list
+                if verified_customer_id and verified_customer_id not in houses:
+                    houses.append(verified_customer_id)
+            else:
+                errors.append(result.get('error', 'Invalid HomeSide credentials'))
+
+        if errors:
+            for error in errors:
+                flash(error, 'error')
+            return render_template('admin_add_user.html', all_houses=all_houses, form=form)
+
+        # If no password, generate a random one (user will set via invite link)
+        actual_password = password or secrets.token_urlsafe(24)
+
+        # Create user with chosen role (active immediately)
+        user_manager.create_user(
+            username=username,
+            password=actual_password,
+            name=name,
+            email=email,
+            role=role,
+            houses=houses,
+            homeside_username=homeside_username,
+            homeside_password=homeside_password,
+            house_friendly_name=house_friendly_name,
+            verified_customer_id=verified_customer_id,
+            meter_number=meter_number,
+        )
+
+        # Mark as approved by current admin
+        user_manager.update_user(
+            username,
+            approved_by=session.get('user_id'),
+            approved_at=datetime.utcnow().isoformat() + 'Z',
+        )
+
+        # Create htpasswd entry for Grafana access (only if admin set a password)
+        if password:
+            create_htpasswd_entry(username, password)
+
+        # Audit log
+        audit_logger.log('UserCreatedByAdmin', session.get('user_id'), {
+            'created_user': username,
+            'role': role,
+            'houses': houses,
+            'has_homeside': bool(homeside_username),
+            'invite_link': needs_invite,
+        })
+
+        if needs_invite:
+            # Create a 48-hour password setup token and send invite email
+            token = user_manager.create_password_reset_token(email, expires_minutes=2880)
+            user = user_manager.get_user(username)
+            if token and user:
+                email_sent = email_service.send_invite_email(user, token)
+                if email_sent:
+                    audit_logger.log('InviteEmailSent', session.get('user_id'), {
+                        'to_user': username, 'to_email': email,
+                    })
+                    flash(f'User {username} created. Invite email sent to {email}.', 'success')
+                else:
+                    audit_logger.log('InviteEmailFailed', session.get('user_id'), {
+                        'to_user': username, 'to_email': email,
+                    })
+                    setup_url = url_for('reset_password', token=token, _external=True)
+                    flash(f'User {username} created but invite email failed. Setup link: {setup_url}', 'warning')
+            else:
+                setup_url = url_for('reset_password', token=token, _external=True) if token else None
+                if setup_url:
+                    flash(f'User {username} created. Could not send email. Setup link: {setup_url}', 'warning')
+                else:
+                    flash(f'User {username} created but invite email could not be sent.', 'warning')
+        else:
+            # Admin set a password — optionally send welcome email
+            if send_welcome_email:
+                user = user_manager.get_user(username)
+                if user:
+                    email_sent = email_service.send_welcome_email(user)
+                    if not email_sent:
+                        audit_logger.log('WelcomeEmailFailed', session.get('user_id'), {
+                            'to_user': username, 'to_email': email,
+                        })
+                        flash(f'User {username} created but welcome email failed to send.', 'warning')
+                        return redirect(url_for('admin_users'))
+            flash(f'User {username} created successfully.', 'success')
+
+        return redirect(url_for('admin_users'))
+
+    # GET
+    form = {}
+    return render_template('admin_add_user.html', all_houses=all_houses, form=form)
+
+
 @app.route('/admin/users/<username>/approve', methods=['POST'])
 @require_role('admin')
 def admin_approve_user(username):
@@ -1594,14 +1754,24 @@ def admin_approve_user(username):
                 })
 
         # Send welcome email
-        email_service.send_welcome_email(user)
+        email_sent = email_service.send_welcome_email(user)
+        if not email_sent:
+            audit_logger.log('WelcomeEmailFailed', session.get('user_id'), {
+                'to_user': username, 'to_email': user.get('email', ''),
+            })
 
         if deploy_result and deploy_result.get('success'):
-            flash(f'User {username} approved and fetcher deployed for {customer_id}.', 'success')
+            msg = f'User {username} approved and fetcher deployed for {customer_id}.'
+            if not email_sent:
+                msg += ' (Welcome email failed to send)'
+            flash(msg, 'success')
         elif customer_id:
             flash(f'User {username} approved but fetcher deployment failed. Check logs.', 'warning')
         else:
-            flash(f'User {username} approved. No HomeSide credentials for auto-deployment.', 'info')
+            msg = f'User {username} approved. No HomeSide credentials for auto-deployment.'
+            if not email_sent:
+                msg += ' (Welcome email failed to send)'
+            flash(msg, 'info')
     else:
         flash(f'Failed to approve user {username}.', 'error')
 
@@ -1657,6 +1827,42 @@ def _discover_customer_id(homeside_username: str, homeside_password: str) -> dic
         pass
 
     return {}
+
+
+@app.route('/admin/users/<username>/resend-invite', methods=['POST'])
+@require_role('admin')
+def admin_resend_invite(username):
+    """Admin: Resend invite email with a fresh password setup link"""
+    user = user_manager.get_user(username)
+    if not user:
+        flash(f'User {username} not found.', 'error')
+        return redirect(url_for('admin_users'))
+
+    email = user.get('email', '')
+    if not email:
+        flash(f'User {username} has no email address.', 'error')
+        return redirect(url_for('admin_users'))
+
+    # Create a fresh 48-hour token
+    token = user_manager.create_password_reset_token(email, expires_minutes=2880)
+    if not token:
+        flash(f'Could not create invite token for {username}.', 'error')
+        return redirect(url_for('admin_users'))
+
+    email_sent = email_service.send_invite_email(user, token)
+    if email_sent:
+        audit_logger.log('InviteEmailResent', session.get('user_id'), {
+            'to_user': username, 'to_email': email,
+        })
+        flash(f'Invite email resent to {email}.', 'success')
+    else:
+        audit_logger.log('InviteEmailFailed', session.get('user_id'), {
+            'to_user': username, 'to_email': email,
+        })
+        setup_url = url_for('reset_password', token=token, _external=True)
+        flash(f'Email failed to send. Manual setup link: {setup_url}', 'warning')
+
+    return redirect(url_for('admin_users'))
 
 
 @app.route('/admin/users/<username>/reject', methods=['POST'])

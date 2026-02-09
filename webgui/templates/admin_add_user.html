@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Add User{% endblock %}
+
+{% block content %}
+<div class="admin-edit-user">
+    <div class="page-header">
+        <a href="{{ url_for('admin_users') }}" class="back-link">&larr; Back to Users</a>
+        <h1>Add User</h1>
+    </div>
+
+    <form method="POST">
+        <div class="card">
+            <h2>Account Information</h2>
+
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required
+                       value="{{ form.username or '' }}" placeholder="Choose a username"
+                       pattern="[a-zA-Z0-9._-]+" minlength="3"
+                       title="Letters, numbers, dots, hyphens, and underscores">
+            </div>
+
+            <div class="form-group">
+                <label for="name">Full Name</label>
+                <input type="text" id="name" name="name" required
+                       value="{{ form.name or '' }}" placeholder="Full name">
+            </div>
+
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" required
+                       value="{{ form.email or '' }}" placeholder="user@example.com">
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password"
+                       minlength="8" placeholder="At least 8 characters">
+                <small class="help-text">Leave blank to send a password setup link via email instead.</small>
+            </div>
+
+            <div class="form-group" id="confirm-password-group">
+                <label for="confirm_password">Confirm Password</label>
+                <input type="password" id="confirm_password" name="confirm_password"
+                       minlength="8" placeholder="Repeat password">
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Role & Access</h2>
+
+            <div class="form-group">
+                <label for="role">Role</label>
+                <select id="role" name="role">
+                    <option value="user" {% if form.role == 'user' or not form.role %}selected{% endif %}>User (can edit own houses)</option>
+                    <option value="viewer" {% if form.role == 'viewer' %}selected{% endif %}>Viewer (read-only access)</option>
+                    <option value="admin" {% if form.role == 'admin' %}selected{% endif %}>Admin (full access)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Houses</label>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="houses" value="*" {% if form.houses and '*' in form.houses %}checked{% endif %}>
+                        <span>All Houses (*)</span>
+                    </label>
+                    {% for house in all_houses %}
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="houses" value="{{ house.id }}" {% if form.houses and house.id in form.houses %}checked{% endif %}>
+                        <span>{{ house.friendly_name }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>HomeSide Credentials <span style="font-weight: normal; font-size: 0.85em; color: #666;">(optional)</span></h2>
+            <p style="color: #666; font-size: 0.9em; margin-bottom: 1rem;">If the user has a HomeSide heating system, enter their credentials to connect their house.</p>
+
+            <div class="form-group">
+                <label for="homeside_username">HomeSide Username</label>
+                <input type="text" id="homeside_username" name="homeside_username"
+                       value="{{ form.homeside_username or '' }}" placeholder="e.g., FC 2000123456">
+            </div>
+
+            <div class="form-group">
+                <label for="homeside_password">HomeSide Password</label>
+                <input type="text" id="homeside_password" name="homeside_password"
+                       value="{{ form.homeside_password or '' }}" placeholder="HomeSide password">
+            </div>
+
+            <div class="form-group">
+                <label for="house_friendly_name">House Name</label>
+                <input type="text" id="house_friendly_name" name="house_friendly_name"
+                       value="{{ form.house_friendly_name or '' }}" placeholder="e.g., Villa Solsidan">
+            </div>
+
+            <div class="form-group">
+                <label for="meter_number">District Heating Meter Number</label>
+                <input type="text" id="meter_number" name="meter_number"
+                       value="{{ form.meter_number or '' }}" placeholder="e.g., 12345678">
+            </div>
+        </div>
+
+        <div class="card" id="options-card">
+            <h2>Options</h2>
+
+            <div class="form-group" id="welcome-email-option">
+                <label class="checkbox-label">
+                    <input type="checkbox" name="send_welcome_email" value="1" {% if form.send_welcome_email != '0' %}checked{% endif %}>
+                    <span>Send welcome email to user</span>
+                </label>
+            </div>
+            <p id="invite-email-note" style="display: none; color: #666; font-size: 0.9em;">
+                An invite email with a password setup link will be sent automatically.
+            </p>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Create User</button>
+            <a href="{{ url_for('admin_users') }}" class="btn">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+    const passwordField = document.getElementById('password');
+    const confirmGroup = document.getElementById('confirm-password-group');
+    const welcomeOption = document.getElementById('welcome-email-option');
+    const inviteNote = document.getElementById('invite-email-note');
+
+    function toggle() {
+        const hasPassword = passwordField.value.length > 0;
+        confirmGroup.style.display = hasPassword ? '' : 'none';
+        welcomeOption.style.display = hasPassword ? '' : 'none';
+        inviteNote.style.display = hasPassword ? 'none' : '';
+    }
+
+    passwordField.addEventListener('input', toggle);
+    toggle();
+})();
+</script>
+{% endblock %}

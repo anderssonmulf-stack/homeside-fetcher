@@ -88,7 +88,10 @@
     {% endif %}
 
     <section class="section">
-        <h2>Active Users</h2>
+        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+            <h2 style="margin: 0;">Active Users</h2>
+            <a href="{{ url_for('admin_add_user') }}" class="btn btn-primary btn-small">+ Add User</a>
+        </div>
 
         <table class="table">
             <thead>
@@ -133,6 +136,15 @@
                     <td>
                         <a href="{{ url_for('admin_edit_user', username=username) }}"
                            class="btn btn-small">Edit</a>
+                        {% if not user.homeside_username and user.email %}
+                        <form method="POST" action="{{ url_for('admin_resend_invite', username=username) }}"
+                              style="display: inline;">
+                            <button type="submit" class="btn btn-small btn-info"
+                                    onclick="return confirm('Resend invite email to {{ user.email }}?');">
+                                Resend Invite
+                            </button>
+                        </form>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
