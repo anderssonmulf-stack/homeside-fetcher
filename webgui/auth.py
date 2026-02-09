@@ -165,9 +165,12 @@ class UserManager:
         return True
 
     def user_exists(self, username: str) -> bool:
-        """Check if username exists"""
+        """Check if username exists (case-insensitive)"""
         data = self._load_data()
-        return username in data['users']
+        if username in data['users']:
+            return True
+        username_lower = username.lower()
+        return any(u.lower() == username_lower for u in data['users'])
 
     def email_exists(self, email: str) -> bool:
         """Check if email is already registered"""
@@ -210,10 +213,22 @@ class UserManager:
         - Regular username with webgui password
         - HomeSide username (with or without space) with HomeSide password
         """
-        # First try regular username with webgui password
+        # First try exact username match
         user = self.get_user(username)
         if user and self._verify_password(password, user.get('password_hash', '')):
             return user
+
+        # Try case-insensitive username match
+        if not user:
+            data = self._load_data()
+            username_lower = username.lower()
+            for stored_username, stored_user in data['users'].items():
+                if stored_username.lower() == username_lower:
+                    if self._verify_password(password, stored_user.get('password_hash', '')):
+                        user_copy = stored_user.copy()
+                        user_copy['username'] = stored_username
+                        return user_copy
+                    break
 
         # Try HomeSide username with HomeSide password
         user = self.get_user_by_homeside_username(username)
@@ -228,11 +243,11 @@ class UserManager:
     # Password Reset
     # =========================================================================
 
-    def create_password_reset_token(self, email: str) -> Optional[str]:
+    def create_password_reset_token(self, email: str, expires_minutes: int = 15) -> Optional[str]:
         """Create a password reset token for the user with this email.
 
         Returns the token if created, None if email not found.
-        Token is valid for 15 minutes.
+        Token validity is configurable (default 15 minutes).
         """
         user = self.get_user_by_email(email)
         if not user:
@@ -249,7 +264,7 @@ class UserManager:
             'username': user['username'],
             'email': email,
             'created_at': datetime.utcnow().isoformat() + 'Z',
-            'expires_at': (datetime.utcnow() + timedelta(minutes=15)).isoformat() + 'Z',
+            'expires_at': (datetime.utcnow() + timedelta(minutes=expires_minutes)).isoformat() + 'Z',
             'used': False
         }
 

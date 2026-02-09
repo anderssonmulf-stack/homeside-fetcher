@@ -772,6 +772,8 @@ class InfluxReader:
                         })
 
             # Query forecast data (future predictions)
+            # Note: forecast_type is a tag, so different values end up in
+            # separate Flux tables. We skip pivot and merge in Python instead.
             forecast_query = f'''
                 from(bucket: "{self.bucket}")
                 |> range(start: now(), stop: 24h)
@@ -781,27 +783,37 @@ class InfluxReader:
                     r["forecast_type"] == "supply_temp_baseline" or
                     r["forecast_type"] == "supply_temp_ml"
                 )
-                |> pivot(rowKey: ["_time"], columnKey: ["forecast_type"], valueColumn: "_value")
                 |> sort(columns: ["_time"])
             '''
 
             forecast_tables = query_api.query(forecast_query, org=self.org)
 
-            forecast = []
+            # Merge forecast types by timestamp in Python
+            forecast_by_time = {}
             for table in forecast_tables:
                 for record in table.records:
                     timestamp = record.get_time()
-                    if timestamp:
-                        if timestamp.tzinfo is None:
-                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                    if not timestamp:
+                        continue
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=timezone.utc)
+                    forecast_type = record.values.get('forecast_type')
+                    value = record.get_value()
+                    ts_key = timestamp.isoformat()
+                    if ts_key not in forecast_by_time:
                         swedish_time = timestamp.astimezone(SWEDISH_TZ)
-
-                        forecast.append({
-                            'timestamp': timestamp.isoformat(),
+                        forecast_by_time[ts_key] = {
+                            'timestamp': ts_key,
                             'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
-                            'supply_baseline': record.values.get('supply_temp_baseline'),
-                            'supply_ml': record.values.get('supply_temp_ml'),
-                        })
+                            'supply_baseline': None,
+                            'supply_ml': None,
+                        }
+                    if forecast_type == 'supply_temp_baseline':
+                        forecast_by_time[ts_key]['supply_baseline'] = value
+                    elif forecast_type == 'supply_temp_ml':
+                        forecast_by_time[ts_key]['supply_ml'] = value
+
+            forecast = sorted(forecast_by_time.values(), key=lambda x: x['timestamp'])
 
             return {'history': history, 'forecast': forecast}
 

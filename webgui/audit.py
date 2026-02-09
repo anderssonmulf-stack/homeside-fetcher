@@ -58,6 +58,8 @@ class AuditLogger:
             return f"rejected user {properties.get('rejected_user', 'unknown')}"
         elif event_type == 'UserModified':
             return f"modified user {properties.get('modified_user', 'unknown')}"
+        elif event_type == 'UserCreatedByAdmin':
+            return f"created user {properties.get('created_user', 'unknown')} with role {properties.get('role', 'unknown')}"
         elif event_type == 'SettingChanged':
             setting = properties.get('setting', 'unknown')
             old_val = properties.get('old_value', '?')

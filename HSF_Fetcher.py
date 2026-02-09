@@ -1053,7 +1053,6 @@ def monitor_heating_system(config):
                             )
 
                     # Calculate baseline supply temp from heat curve based on raw outdoor temp
-                    # (ML supply temp using effective_temp calculated after weather fetch)
                     if heat_curve and 'outdoor_temperature' in extracted_data:
                         baseline_supply, _ = heat_curve.get_supply_temps_for_outdoor(
                             extracted_data['outdoor_temperature']
@@ -1061,38 +1060,10 @@ def monitor_heating_system(config):
                         if baseline_supply is not None:
                             extracted_data['supply_temp_heat_curve'] = round(baseline_supply, 2)
 
-                    # Add data to thermal analyzer for learning
-                    thermal.add_data_point(extracted_data)
-
-                    # Update forecaster with thermal coefficient from analyzer
-                    if forecaster and customer_profile:
-                        coeff = thermal.calculate_thermal_coefficient()
-                        if coeff:
-                            customer_profile.update_learned_params(
-                                thermal_coefficient=coeff['coefficient'],
-                                confidence=coeff['confidence']
-                            )
-
-                        # Check if it's time to update hourly bias
-                        if forecaster.should_update_learning():
-                            logger.info("Updating forecaster hourly bias...")
-                            new_bias = forecaster.update_hourly_bias()
-                            if new_bias and influx:
-                                # Write learned parameters to InfluxDB for tracking
-                                influx.write_learned_parameters({
-                                    'thermal_coefficient': customer_profile.learned.thermal_coefficient,
-                                    'thermal_coefficient_confidence': customer_profile.learned.thermal_coefficient_confidence,
-                                    'total_samples': customer_profile.learned.total_samples,
-                                    'hourly_bias': customer_profile.learned.hourly_bias
-                                })
-
-                    # Write to InfluxDB
-                    if influx:
-                        influx.write_heating_data(extracted_data)
-
                     # =====================================================
                     # WEATHER: Current observations (every iteration)
                     # Uses shared cache for neighbors with same coordinates
+                    # Moved before InfluxDB write so effective_temp is included
                     # =====================================================
                     weather_obs = None
                     weather_obs_data = None  # Dict version for effective_temp calculation
@@ -1177,6 +1148,35 @@ def monitor_heating_system(config):
                         _, current_supply = heat_curve.get_supply_temps_for_outdoor(effective_temp)
                         if current_supply is not None:
                             extracted_data['supply_temp_heat_curve_ml'] = round(current_supply, 2)
+
+                    # Add data to thermal analyzer for learning
+                    thermal.add_data_point(extracted_data)
+
+                    # Update forecaster with thermal coefficient from analyzer
+                    if forecaster and customer_profile:
+                        coeff = thermal.calculate_thermal_coefficient()
+                        if coeff:
+                            customer_profile.update_learned_params(
+                                thermal_coefficient=coeff['coefficient'],
+                                confidence=coeff['confidence']
+                            )
+
+                        # Check if it's time to update hourly bias
+                        if forecaster.should_update_learning():
+                            logger.info("Updating forecaster hourly bias...")
+                            new_bias = forecaster.update_hourly_bias()
+                            if new_bias and influx:
+                                # Write learned parameters to InfluxDB for tracking
+                                influx.write_learned_parameters({
+                                    'thermal_coefficient': customer_profile.learned.thermal_coefficient,
+                                    'thermal_coefficient_confidence': customer_profile.learned.thermal_coefficient_confidence,
+                                    'total_samples': customer_profile.learned.total_samples,
+                                    'hourly_bias': customer_profile.learned.hourly_bias
+                                })
+
+                    # Write to InfluxDB (includes supply_temp_heat_curve_ml from effective temp)
+                    if influx:
+                        influx.write_heating_data(extracted_data)
 
                     # =====================================================
                     # WEATHER SENSITIVITY LEARNING (ML2)
