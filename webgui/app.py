@@ -371,6 +371,10 @@ def dashboard():
     # Sort by name
     houses.sort(key=lambda x: x['name'].lower())
 
+    # Add "All houses" virtual card at the beginning (only if multiple houses)
+    if len(houses) > 1:
+        houses.insert(0, {'id': '__all__', 'name': 'All houses', 'is_aggregate': True})
+
     # Get recent changes for user's houses
     recent_changes = audit_logger.get_recent_changes(house_ids, limit=10)
 
@@ -487,115 +491,127 @@ def house_dashboard(customer_id):
 @require_login
 def house_graphs(house_id):
     """Display data availability and graphs for a house."""
-    if not user_manager.can_access_house(session.get('user_id'), house_id):
+    # Handle aggregate "All houses" view
+    is_aggregate = (house_id == '__all__')
+
+    if not is_aggregate and not user_manager.can_access_house(session.get('user_id'), house_id):
         flash('Access denied.', 'error')
         return redirect(url_for('dashboard'))
 
-    # Get house info from profile
-    from customer_profile import CustomerProfile
-    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
-    try:
-        profile = CustomerProfile.load(house_id, profiles_dir)
-        friendly_name = profile.friendly_name or house_id
-    except FileNotFoundError:
-        friendly_name = house_id
+    if is_aggregate:
+        friendly_name = 'All houses'
+        availability = {'categories': []}
+        realtime_data = None
+    else:
+        # Get house info from profile
+        from customer_profile import CustomerProfile
+        profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+        try:
+            profile = CustomerProfile.load(house_id, profiles_dir)
+            friendly_name = profile.friendly_name or house_id
+        except FileNotFoundError:
+            friendly_name = house_id
 
-    # Get data availability and real-time data
-    from influx_reader import get_influx_reader
-    influx = get_influx_reader()
-    availability = influx.get_data_availability(house_id, days=30)
-    realtime_data = influx.get_latest_heating_data(house_id)
+        # Get data availability and real-time data
+        from influx_reader import get_influx_reader
+        influx = get_influx_reader()
+        availability = influx.get_data_availability(house_id, days=30)
+        realtime_data = influx.get_latest_heating_data(house_id)
 
     # Build Plotly chart data - using heatmap for data availability
     import plotly.graph_objects as go
     import json
 
-    fig = go.Figure()
+    graph_json = '{}'
+    config_json = '{}'
 
-    if availability['categories']:
-        # Collect all unique dates
-        all_dates = set()
-        for cat in availability['categories']:
-            for d in cat['data']:
-                all_dates.add(d['date'])
-        all_dates = sorted(all_dates)
+    if not is_aggregate:
+        fig = go.Figure()
 
-        # Build heatmap data matrix
-        category_names = [c['name'] for c in availability['categories']]
-        category_types = [c['type'] for c in availability['categories']]
+        if availability['categories']:
+            # Collect all unique dates
+            all_dates = set()
+            for cat in availability['categories']:
+                for d in cat['data']:
+                    all_dates.add(d['date'])
+            all_dates = sorted(all_dates)
 
-        # Create z-values matrix (categories x dates)
-        z_values = []
-        for cat in availability['categories']:
-            date_to_count = {d['date']: d['count'] for d in cat['data']}
-            row = [date_to_count.get(date, 0) for date in all_dates]
-            z_values.append(row)
+            # Build heatmap data matrix
+            category_names = [c['name'] for c in availability['categories']]
+            category_types = [c['type'] for c in availability['categories']]
 
-        # Custom colorscale: white (0) to blue (measured)
-        # We'll use annotations to show predicted vs measured distinction
-        fig.add_trace(go.Heatmap(
-            z=z_values,
-            x=all_dates,
-            y=category_names,
-            colorscale=[
-                [0, '#f8f9fa'],      # No data - light gray
-                [0.01, '#e3f2fd'],   # Very few points - very light blue
-                [0.25, '#90caf9'],   # Some data - light blue
-                [0.5, '#42a5f5'],    # Good coverage - medium blue
-                [1, '#1565c0']       # Full coverage - dark blue
-            ],
-            showscale=True,
-            colorbar=dict(
-                title=dict(text='Data points', side='right')
-            ),
-            hovertemplate='%{x}<br>%{y}: %{z} points<extra></extra>'
-        ))
+            # Create z-values matrix (categories x dates)
+            z_values = []
+            for cat in availability['categories']:
+                date_to_count = {d['date']: d['count'] for d in cat['data']}
+                row = [date_to_count.get(date, 0) for date in all_dates]
+                z_values.append(row)
 
-        # Add markers for predicted data types (dotted border effect via annotations)
-        for i, cat_type in enumerate(category_types):
-            if cat_type == 'predicted':
-                # Add a subtle indicator that this is predicted data
-                fig.add_annotation(
-                    x=-0.02,
-                    y=category_names[i],
-                    xref='paper',
-                    yref='y',
-                    text='*',
-                    showarrow=False,
-                    font=dict(size=14, color='#9b59b6')
-                )
+            # Custom colorscale: white (0) to blue (measured)
+            # We'll use annotations to show predicted vs measured distinction
+            fig.add_trace(go.Heatmap(
+                z=z_values,
+                x=all_dates,
+                y=category_names,
+                colorscale=[
+                    [0, '#f8f9fa'],      # No data - light gray
+                    [0.01, '#e3f2fd'],   # Very few points - very light blue
+                    [0.25, '#90caf9'],   # Some data - light blue
+                    [0.5, '#42a5f5'],    # Good coverage - medium blue
+                    [1, '#1565c0']       # Full coverage - dark blue
+                ],
+                showscale=True,
+                colorbar=dict(
+                    title=dict(text='Data points', side='right')
+                ),
+                hovertemplate='%{x}<br>%{y}: %{z} points<extra></extra>'
+            ))
 
-    # Update layout
-    fig.update_layout(
-        title=None,
-        xaxis=dict(
-            title='Date',
-            showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)',
-            tickangle=-45
-        ),
-        yaxis=dict(
+            # Add markers for predicted data types (dotted border effect via annotations)
+            for i, cat_type in enumerate(category_types):
+                if cat_type == 'predicted':
+                    # Add a subtle indicator that this is predicted data
+                    fig.add_annotation(
+                        x=-0.02,
+                        y=category_names[i],
+                        xref='paper',
+                        yref='y',
+                        text='*',
+                        showarrow=False,
+                        font=dict(size=14, color='#9b59b6')
+                    )
+
+        # Update layout
+        fig.update_layout(
             title=None,
-            autorange='reversed'  # First category at top
-        ),
-        height=max(300, len(availability['categories']) * 40 + 150),
-        margin=dict(l=130, r=80, t=20, b=80),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='#ffffff',
-        font=dict(family='system-ui, -apple-system, sans-serif'),
-        dragmode='pan'
-    )
+            xaxis=dict(
+                title='Date',
+                showgrid=True,
+                gridcolor='rgba(0,0,0,0.1)',
+                tickangle=-45
+            ),
+            yaxis=dict(
+                title=None,
+                autorange='reversed'  # First category at top
+            ),
+            height=max(300, len(availability['categories']) * 40 + 150),
+            margin=dict(l=130, r=80, t=20, b=80),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='#ffffff',
+            font=dict(family='system-ui, -apple-system, sans-serif'),
+            dragmode='pan'
+        )
 
-    # Add config for interactivity
-    graph_config = {
-        'displayModeBar': True,
-        'modeBarButtonsToRemove': ['lasso2d', 'select2d', 'autoScale2d'],
-        'displaylogo': False,
-        'scrollZoom': True
-    }
+        # Add config for interactivity
+        graph_config = {
+            'displayModeBar': True,
+            'modeBarButtonsToRemove': ['lasso2d', 'select2d', 'autoScale2d'],
+            'displaylogo': False,
+            'scrollZoom': True
+        }
 
-    graph_json = json.dumps(fig.to_dict())
-    config_json = json.dumps(graph_config)
+        graph_json = json.dumps(fig.to_dict())
+        config_json = json.dumps(graph_config)
 
     return render_template('house_graphs.html',
         house_id=house_id,
@@ -604,7 +620,8 @@ def house_graphs(house_id):
         config_json=config_json,
         availability=availability,
         realtime=realtime_data,
-        current_house_name=friendly_name
+        current_house_name=friendly_name,
+        is_aggregate=is_aggregate
     )
 
 
@@ -847,7 +864,7 @@ def api_energy_forecast(house_id):
     - Energy company load aggregation
     - Demand shifting from peak to off-peak hours
     """
-    if not user_manager.can_access_house(session.get('user_id'), house_id):
+    if house_id != '__all__' and not user_manager.can_access_house(session.get('user_id'), house_id):
         return jsonify({'error': 'Access denied'}), 403
 
     hours = request.args.get('hours', 24, type=int)
@@ -855,7 +872,11 @@ def api_energy_forecast(house_id):
 
     from influx_reader import get_influx_reader
     influx = get_influx_reader()
-    data = influx.get_energy_forecast(house_id, hours=hours)
+
+    if house_id == '__all__':
+        data = influx.get_energy_forecast_all(hours=hours)
+    else:
+        data = influx.get_energy_forecast(house_id, hours=hours)
 
     return jsonify(data)
 
@@ -938,7 +959,7 @@ def api_energy_separated(house_id):
     API endpoint for energy separation chart (heating vs DHW).
     Returns calibrated separation based on k × degree-hours model.
     """
-    if not user_manager.can_access_house(session.get('user_id'), house_id):
+    if house_id != '__all__' and not user_manager.can_access_house(session.get('user_id'), house_id):
         return jsonify({'error': 'Access denied'}), 403
 
     days = request.args.get('days', 30, type=int)
@@ -946,7 +967,11 @@ def api_energy_separated(house_id):
 
     from influx_reader import get_influx_reader
     influx = get_influx_reader()
-    result = influx.get_energy_separation(house_id, days=days)
+
+    if house_id == '__all__':
+        result = influx.get_energy_separation_all(days=days)
+    else:
+        result = influx.get_energy_separation(house_id, days=days)
 
     return jsonify(result)
 

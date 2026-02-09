@@ -4,12 +4,19 @@
 {% block content %}
 <div class="house-detail">
     <div class="page-header">
+        {% if is_aggregate %}
+        <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to Dashboard</a>
+        <h1 class="friendly-name">🏘️ All Houses - Aggregated View</h1>
+        <p class="subtitle">Combined energy data across all houses</p>
+        {% else %}
         <a href="{{ url_for('house_detail', house_id=house_id) }}" class="back-link">&larr; Back to {{ friendly_name }}</a>
         <h1 class="friendly-name">Data Overview</h1>
         <p class="subtitle">{{ friendly_name }}</p>
+        {% endif %}
     </div>
 
     <!-- Current Status Widgets -->
+    {% if not is_aggregate %}
     <div class="status-widgets">
         {% if realtime %}
         <div class="stat-widget">
@@ -61,7 +68,9 @@
         {% if realtime.age_minutes %}({{ realtime.age_minutes|int }} min ago){% endif %}
     </p>
     {% endif %}
+    {% endif %}{# end not is_aggregate #}
 
+    {% if not is_aggregate %}
     <!-- Supply & Return Temperatures & Forecast Chart -->
     <div class="card">
         <div class="card-header-flex">
@@ -193,6 +202,7 @@
         <div id="efficiency-chart" class="chart-container"></div>
         <div id="efficiency-summary" class="metric-summary"></div>
     </div>
+    {% endif %}{# end not is_aggregate for per-house charts #}
 
     <!-- Energy Forecast Chart (24h ahead) -->
     <div class="card">
@@ -217,6 +227,34 @@
         <div id="energy-forecast-chart" class="chart-container"></div>
         <div id="energy-forecast-summary" class="metric-summary"></div>
     </div>
+
+    {% if is_aggregate %}
+    <!-- Flexibility Chart (aggregate only) -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Flexibility</h2>
+            <div class="chart-controls">
+                <select id="flexibility-hours-select" class="role-select" onchange="updateFlexibilityChart()">
+                    <option value="12">Next 12h</option>
+                    <option value="24" selected>Next 24h</option>
+                    <option value="48">Next 48h</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Potential to <strong>reduce heating</strong> based on outdoor temperature trend.
+            <strong style="color:#27ae60;">Green</strong> = temperature rising (safe to cut).
+            <strong style="color:#e74c3c;">Red</strong> = temperature dropping (avoid cutting).
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color" style="background:#27ae60;"></span> Rising (+2°C/h)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#f1c40f;"></span> Stable (0°C/h)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#e74c3c;"></span> Dropping (-2°C/h)</span>
+            </span>
+        </p>
+        <div id="flexibility-chart" class="chart-container"></div>
+        <div id="flexibility-summary" class="metric-summary"></div>
+    </div>
+    {% endif %}
 
     <!-- Energy Separation Chart (Heating vs DHW) -->
     <div class="card">
@@ -243,6 +281,7 @@
         <div id="separation-summary" class="metric-summary"></div>
     </div>
 
+    {% if not is_aggregate %}
     <!-- Prediction Accuracy Trend Chart -->
     <div class="card">
         <div class="card-header-flex">
@@ -339,6 +378,7 @@
         <div id="cost-chart" class="chart-container"></div>
         <div id="cost-summary" class="cost-summary-box"></div>
     </div>
+    {% endif %}{# end not is_aggregate for remaining charts #}
 </div>
 
 <style>
@@ -581,6 +621,7 @@
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <script>
     const houseId = "{{ house_id }}";
+    const isAggregate = {{ 'true' if is_aggregate else 'false' }};
     let currentChart = null;
 
     // Initial chart data from server
@@ -1619,15 +1660,21 @@
                 const solarEffect = forecast.map(d => d.solar_effect);
 
                 // Create hover text with details
-                const hoverText = forecast.map(d =>
-                    `${d.timestamp_display}<br>` +
-                    `Energy: ${d.heating_energy_kwh.toFixed(2)} kWh<br>` +
-                    `Power: ${d.heating_power_kw.toFixed(2)} kW<br>` +
-                    `Outdoor: ${d.outdoor_temp?.toFixed(1) || '-'}°C<br>` +
-                    `Effective: ${d.effective_temp?.toFixed(1) || '-'}°C<br>` +
-                    `Solar effect: ${d.solar_effect?.toFixed(2) || '-'}°C<br>` +
-                    `Lead time: ${d.lead_time_hours?.toFixed(0) || '-'}h`
-                );
+                const hoverText = forecast.map(d => {
+                    let text = `${d.timestamp_display}<br>` +
+                        `Energy: ${d.heating_energy_kwh.toFixed(2)} kWh<br>` +
+                        `Power: ${d.heating_power_kw.toFixed(2)} kW<br>` +
+                        `Outdoor: ${d.outdoor_temp?.toFixed(1) || '-'}°C`;
+                    if (!isAggregate) {
+                        text += `<br>Effective: ${d.effective_temp?.toFixed(1) || '-'}°C` +
+                            `<br>Solar effect: ${d.solar_effect?.toFixed(2) || '-'}°C` +
+                            `<br>Lead time: ${d.lead_time_hours?.toFixed(0) || '-'}h`;
+                    }
+                    if (isAggregate && d.house_count != null) {
+                        text += `<br>(${d.house_count} house${d.house_count !== 1 ? 's' : ''})`;
+                    }
+                    return text;
+                });
 
                 // Energy bar chart
                 const energyTrace = {
@@ -1727,6 +1774,22 @@
                                 </span>
                             `;
                         }
+
+                        // Show house count for aggregate view
+                        if (isAggregate && forecast.length > 0 && forecast[0].house_count != null) {
+                            const counts = forecast.map(d => d.house_count);
+                            const maxCount = Math.max(...counts);
+                            const minCount = Math.min(...counts);
+                            const countLabel = minCount === maxCount
+                                ? `${maxCount} houses`
+                                : `${minCount}-${maxCount} houses`;
+                            summaryDiv.innerHTML += `
+                                <span class="metric">
+                                    <span class="value">${countLabel}</span>
+                                    <span class="label">Included</span>
+                                </span>
+                            `;
+                        }
                     })
                     .catch(err => {
                         console.error('Plotly render error:', err);
@@ -1736,6 +1799,193 @@
             .catch(error => {
                 console.error('Failed to load energy forecast:', error);
                 chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy forecast.</div>';
+            });
+    }
+
+    // Flexibility Chart (aggregate only) - shows energy with color based on temp trend
+    function updateFlexibilityChart() {
+        const selectEl = document.getElementById('flexibility-hours-select');
+        if (!selectEl) return;
+        const hours = parseInt(selectEl.value);
+        const chartDiv = document.getElementById('flexibility-chart');
+        const summaryDiv = document.getElementById('flexibility-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading flexibility data...</div>';
+        summaryDiv.innerHTML = '';
+
+        fetch(`/api/house/${houseId}/energy-forecast?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
+            .then(result => {
+                const forecast = result.forecast || [];
+
+                if (forecast.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No forecast data available for flexibility analysis.</div>';
+                    return;
+                }
+
+                // Calculate hourly temperature change rate
+                const tempRates = forecast.map((d, i) => {
+                    if (i === 0) {
+                        // Use forward difference for first point
+                        if (forecast.length > 1 && forecast[1].outdoor_temp != null && d.outdoor_temp != null) {
+                            return forecast[1].outdoor_temp - d.outdoor_temp;
+                        }
+                        return 0;
+                    }
+                    if (d.outdoor_temp != null && forecast[i - 1].outdoor_temp != null) {
+                        return d.outdoor_temp - forecast[i - 1].outdoor_temp;
+                    }
+                    return 0;
+                });
+
+                // Color mapping: -2°C/h = red, 0 = yellow, +2°C/h = green
+                function rateToColor(rate) {
+                    const clamped = Math.max(-2, Math.min(2, rate));
+                    const t = (clamped + 2) / 4;  // 0 (red) to 1 (green), 0.5 = yellow
+
+                    let r, g, b;
+                    if (t <= 0.5) {
+                        // Red to yellow (0 -> 0.5)
+                        const s = t / 0.5;
+                        r = 231;
+                        g = Math.round(76 + (196 - 76) * s);
+                        b = Math.round(60 + (15 - 60) * s);
+                    } else {
+                        // Yellow to green (0.5 -> 1)
+                        const s = (t - 0.5) / 0.5;
+                        r = Math.round(241 + (39 - 241) * s);
+                        g = Math.round(196 + (174 - 196) * s);
+                        b = Math.round(15 + (96 - 15) * s);
+                    }
+                    return `rgb(${r},${g},${b})`;
+                }
+
+                const timestamps = forecast.map(d => d.timestamp_display);
+                const energyKwh = forecast.map(d => d.heating_energy_kwh);
+                const barColors = tempRates.map(r => rateToColor(r));
+
+                // Hover text
+                const hoverText = forecast.map((d, i) => {
+                    const rate = tempRates[i];
+                    const rateStr = rate >= 0 ? `+${rate.toFixed(1)}` : rate.toFixed(1);
+                    let flexibility = 'Moderate';
+                    if (rate >= 1.5) flexibility = 'High - safe to reduce';
+                    else if (rate >= 0.5) flexibility = 'Good';
+                    else if (rate <= -1.5) flexibility = 'Low - avoid reducing';
+                    else if (rate <= -0.5) flexibility = 'Limited';
+                    return `${d.timestamp_display}<br>` +
+                        `Energy: ${d.heating_energy_kwh.toFixed(2)} kWh<br>` +
+                        `Outdoor: ${d.outdoor_temp?.toFixed(1) || '-'}°C<br>` +
+                        `Trend: ${rateStr}°C/h<br>` +
+                        `Flexibility: ${flexibility}`;
+                });
+
+                const energyTrace = {
+                    x: timestamps,
+                    y: energyKwh,
+                    type: 'bar',
+                    name: 'Energy (kWh)',
+                    marker: { color: barColors },
+                    text: hoverText,
+                    hoverinfo: 'text'
+                };
+
+                // Temperature change rate line
+                const rateTrace = {
+                    x: timestamps,
+                    y: tempRates,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Temp trend (°C/h)',
+                    yaxis: 'y2',
+                    line: { color: '#555', width: 2 },
+                    marker: { size: 4 },
+                    hoverinfo: 'skip'
+                };
+
+                // Zero line reference
+                const zeroTrace = {
+                    x: [timestamps[0], timestamps[timestamps.length - 1]],
+                    y: [0, 0],
+                    type: 'scatter',
+                    mode: 'lines',
+                    yaxis: 'y2',
+                    line: { color: '#aaa', width: 1, dash: 'dot' },
+                    showlegend: false,
+                    hoverinfo: 'skip'
+                };
+
+                const layout = {
+                    height: 350,
+                    margin: { l: 60, r: 60, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: 'pan',
+                    hovermode: 'x unified',
+                    xaxis: {
+                        title: 'Hour',
+                        tickangle: -45,
+                        gridcolor: '#e8e8e8'
+                    },
+                    yaxis: {
+                        title: 'Energy (kWh)',
+                        gridcolor: '#e8e8e8',
+                        rangemode: 'tozero'
+                    },
+                    yaxis2: {
+                        title: 'Temp trend (°C/h)',
+                        titlefont: { color: '#555' },
+                        tickfont: { color: '#555' },
+                        overlaying: 'y',
+                        side: 'right',
+                        zeroline: false
+                    },
+                    legend: {
+                        orientation: 'h',
+                        y: -0.2
+                    },
+                    bargap: 0.1
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('flexibility-chart', [energyTrace, rateTrace, zeroTrace], layout, chartConfig)
+                    .then(() => {
+                        // Calculate flexibility summary
+                        const greenHours = tempRates.filter(r => r >= 1.0).length;
+                        const yellowHours = tempRates.filter(r => r > -0.5 && r < 1.0).length;
+                        const redHours = tempRates.filter(r => r <= -0.5).length;
+                        const totalSaveable = forecast
+                            .filter((d, i) => tempRates[i] >= 0.5)
+                            .reduce((sum, d) => sum + d.heating_energy_kwh, 0);
+
+                        summaryDiv.innerHTML = `
+                            <span class="metric">
+                                <span class="value" style="color:#27ae60">${greenHours}</span>
+                                <span class="label">Good hours</span>
+                            </span>
+                            <span class="metric">
+                                <span class="value" style="color:#f1c40f">${yellowHours}</span>
+                                <span class="label">Neutral hours</span>
+                            </span>
+                            <span class="metric">
+                                <span class="value" style="color:#e74c3c">${redHours}</span>
+                                <span class="label">Avoid cutting</span>
+                            </span>
+                            <span class="metric">
+                                <span class="value">${totalSaveable.toFixed(1)}</span>
+                                <span class="label">kWh in green window</span>
+                            </span>
+                        `;
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load flexibility data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load flexibility data.</div>';
             });
     }
 
@@ -1781,6 +2031,8 @@
 
                 const timestamps = data.map(d => d.timestamp_display);
                 const hasNoBreakdown = data.some(d => d.no_breakdown);
+                const hasHouseCount = isAggregate && data.some(d => d.house_count != null);
+                const houseCountSuffix = (d) => hasHouseCount ? `<br>(${d.house_count} house${d.house_count !== 1 ? 's' : ''})` : '';
 
                 // Stacked bar chart: Heating (bottom) + DHW (top)
                 // Days without breakdown show 0 for heating/dhw (grey bar handles them)
@@ -1791,7 +2043,9 @@
                         type: 'bar',
                         name: 'Heating',
                         marker: { color: '#3498db' },
-                        hovertemplate: '%{x}<br>Heating: %{y} kWh<extra></extra>'
+                        text: hasHouseCount ? data.map(d => d.house_count) : null,
+                        hovertext: data.map(d => `${d.timestamp_display}<br>Heating: ${d.no_breakdown ? 0 : d.heating_kwh} kWh${houseCountSuffix(d)}`),
+                        hoverinfo: 'text'
                     },
                     {
                         x: timestamps,
@@ -1799,7 +2053,8 @@
                         type: 'bar',
                         name: 'Hot Water (DHW)',
                         marker: { color: '#e67e22' },
-                        hovertemplate: '%{x}<br>Hot Water: %{y} kWh<extra></extra>'
+                        hovertext: data.map(d => `${d.timestamp_display}<br>Hot Water: ${d.no_breakdown ? 0 : d.dhw_kwh} kWh${houseCountSuffix(d)}`),
+                        hoverinfo: 'text'
                     }
                 ];
 
@@ -1811,7 +2066,8 @@
                         type: 'bar',
                         name: 'Total (no breakdown)',
                         marker: { color: '#bdc3c7' },
-                        hovertemplate: '%{x}<br>Total: %{y} kWh<br>(insufficient temp data)<extra></extra>'
+                        hovertext: data.map(d => d.no_breakdown ? `${d.timestamp_display}<br>Total: ${d.actual_kwh} kWh<br>(insufficient temp data)${houseCountSuffix(d)}` : ''),
+                        hoverinfo: 'text'
                     });
                 }
 
@@ -1823,8 +2079,29 @@
                     mode: 'markers',
                     name: 'Actual Total',
                     marker: { color: '#2c3e50', size: 8, symbol: 'diamond' },
-                    hovertemplate: '%{x}<br>Actual: %{y} kWh<extra></extra>'
+                    hovertext: data.map(d => `${d.timestamp_display}<br>Actual: ${d.actual_kwh} kWh${houseCountSuffix(d)}`),
+                    hoverinfo: 'text'
                 });
+
+                // For aggregate view, add house count as text annotations on bars
+                if (hasHouseCount) {
+                    const maxCount = Math.max(...data.map(d => d.house_count));
+                    const hasVariation = data.some(d => d.house_count !== maxCount);
+                    if (hasVariation) {
+                        traces.push({
+                            x: timestamps,
+                            y: data.map(d => d.actual_kwh),
+                            type: 'scatter',
+                            mode: 'text',
+                            name: 'Houses',
+                            text: data.map(d => d.house_count < maxCount ? `${d.house_count}/${maxCount}` : ''),
+                            textposition: 'top center',
+                            textfont: { size: 10, color: '#e74c3c' },
+                            showlegend: false,
+                            hoverinfo: 'skip'
+                        });
+                    }
+                }
 
                 // Add prediction line (if available)
                 const hasPredictions = data.some(d => d.predicted_kwh !== null);
@@ -1902,6 +2179,23 @@
                             </div>
                         `;
                     }
+                    // For aggregate view, show house count info instead of k-value
+                    let houseCountHtml = '';
+                    if (isAggregate && data.length > 0 && data[0].house_count != null) {
+                        const counts = data.map(d => d.house_count);
+                        const maxCount = Math.max(...counts);
+                        const minCount = Math.min(...counts);
+                        const countLabel = minCount === maxCount
+                            ? `${maxCount}`
+                            : `${minCount}-${maxCount}`;
+                        houseCountHtml = `
+                            <div class="metric-item">
+                                <div class="metric-value" style="color: #7f8c8d; font-size: 1.2em">${countLabel}</div>
+                                <div class="metric-label">Houses Included</div>
+                            </div>
+                        `;
+                    }
+
                     summaryDiv.innerHTML = `
                         <div class="metric-item">
                             <div class="metric-value">${totals.actual || 0} kWh</div>
@@ -1915,10 +2209,12 @@
                             <div class="metric-value" style="color: #e67e22">${totals.dhw || 0} kWh</div>
                             <div class="metric-label">Hot Water (${totals.dhw_pct || 0}%)</div>
                         </div>
+                        ${isAggregate ? houseCountHtml : `
                         <div class="metric-item">
                             <div class="metric-value" style="color: #7f8c8d; font-size: 1.2em">${kDisplay}</div>
                             <div class="metric-label">Heat Loss Coeff (k)</div>
                         </div>
+                        `}
                         ${accuracyHtml}
                     `;
                 }
@@ -2474,6 +2770,14 @@
 
     // Initialize all charts on page load
     document.addEventListener('DOMContentLoaded', function() {
+        if (isAggregate) {
+            // Aggregate view: energy forecast, flexibility, and energy breakdown
+            updateEnergyForecastChart();
+            setTimeout(() => updateFlexibilityChart(), 100);
+            setTimeout(() => updateEnergySeparationChart(), 200);
+            return;
+        }
+
         // Supply & Return chart (top priority - shown first)
         updateSupplyReturnChart();
 
