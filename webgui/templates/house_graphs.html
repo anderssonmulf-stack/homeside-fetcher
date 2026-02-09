@@ -243,6 +243,57 @@
         <div id="separation-summary" class="metric-summary"></div>
     </div>
 
+    <!-- Prediction Accuracy Trend Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Prediction Accuracy Trend</h2>
+            <div class="chart-controls">
+                <select id="accuracy-days-select" class="role-select" onchange="updateAccuracyChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Daily prediction accuracy: <strong>predicted heating ÷ actual heating × 100%</strong>.
+            Green zone (90–110%) indicates good model fit.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color" style="background:#27ae60;"></span> Good (90–110%)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#f39c12;"></span> Fair (80–120%)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#e74c3c;"></span> Poor</span>
+            </span>
+        </p>
+        <div id="accuracy-chart" class="chart-container"></div>
+        <div id="accuracy-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- Energy Signature Plot -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Energy Signature</h2>
+            <div class="chart-controls" style="display: flex; gap: 8px; align-items: center;">
+                <div class="btn-group" style="display: inline-flex; border: 1px solid #ddd; border-radius: 6px; overflow: hidden;">
+                    <button type="button" class="sig-res-btn" data-res="hour" onclick="switchSignatureResolution('hour')" style="padding: 4px 10px; border: none; background: #fff; cursor: pointer; font-size: 0.85em; border-right: 1px solid #ddd;">Hour</button>
+                    <button type="button" class="sig-res-btn active" data-res="day" onclick="switchSignatureResolution('day')" style="padding: 4px 10px; border: none; background: #3498db; color: #fff; cursor: pointer; font-size: 0.85em; border-right: 1px solid #ddd;">Day</button>
+                    <button type="button" class="sig-res-btn" data-res="month" onclick="switchSignatureResolution('month')" style="padding: 4px 10px; border: none; background: #fff; cursor: pointer; font-size: 0.85em;">Month</button>
+                </div>
+                <select id="signature-days-select" class="role-select" onchange="updateSignatureChart()">
+                    <option value="30">Last 30 days</option>
+                    <option value="90" selected>Last 90 days</option>
+                    <option value="180">Last 180 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Industry-standard plot of <strong>energy vs outdoor temperature</strong>.
+            The regression slope gives an independent estimate of the building's heat loss coefficient (k).
+            Switch resolution to see hourly, daily, or monthly aggregation.
+        </p>
+        <div id="signature-chart" class="chart-container"></div>
+        <div id="signature-summary" class="metric-summary"></div>
+    </div>
+
     <!-- K-Value History Chart -->
     <div class="card">
         <div class="card-header-flex">
@@ -1729,12 +1780,14 @@
                 }
 
                 const timestamps = data.map(d => d.timestamp_display);
+                const hasNoBreakdown = data.some(d => d.no_breakdown);
 
                 // Stacked bar chart: Heating (bottom) + DHW (top)
+                // Days without breakdown show 0 for heating/dhw (grey bar handles them)
                 const traces = [
                     {
                         x: timestamps,
-                        y: data.map(d => d.heating_kwh),
+                        y: data.map(d => d.no_breakdown ? 0 : d.heating_kwh),
                         type: 'bar',
                         name: 'Heating',
                         marker: { color: '#3498db' },
@@ -1742,13 +1795,25 @@
                     },
                     {
                         x: timestamps,
-                        y: data.map(d => d.dhw_kwh),
+                        y: data.map(d => d.no_breakdown ? 0 : d.dhw_kwh),
                         type: 'bar',
                         name: 'Hot Water (DHW)',
                         marker: { color: '#e67e22' },
                         hovertemplate: '%{x}<br>Hot Water: %{y} kWh<extra></extra>'
                     }
                 ];
+
+                // Grey bar for days without enough temperature data for breakdown
+                if (hasNoBreakdown) {
+                    traces.push({
+                        x: timestamps,
+                        y: data.map(d => d.no_breakdown ? d.actual_kwh : 0),
+                        type: 'bar',
+                        name: 'Total (no breakdown)',
+                        marker: { color: '#bdc3c7' },
+                        hovertemplate: '%{x}<br>Total: %{y} kWh<br>(insufficient temp data)<extra></extra>'
+                    });
+                }
 
                 // Add markers for actual consumption (no line, just hover info)
                 traces.push({
@@ -1863,6 +1928,409 @@
                 console.error('Failed to load energy separation data:', error);
                 if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy separation data.</div>';
             });
+    }
+
+    // Linear regression helper
+    function linearRegression(xArr, yArr) {
+        const n = xArr.length;
+        if (n < 2) return { slope: 0, intercept: 0, r2: 0 };
+        let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
+        for (let i = 0; i < n; i++) {
+            sumX += xArr[i]; sumY += yArr[i];
+            sumXY += xArr[i] * yArr[i];
+            sumX2 += xArr[i] * xArr[i];
+            sumY2 += yArr[i] * yArr[i];
+        }
+        const denom = n * sumX2 - sumX * sumX;
+        if (denom === 0) return { slope: 0, intercept: sumY / n, r2: 0 };
+        const slope = (n * sumXY - sumX * sumY) / denom;
+        const intercept = (sumY - slope * sumX) / n;
+        const ssRes = yArr.reduce((s, y, i) => s + Math.pow(y - (slope * xArr[i] + intercept), 2), 0);
+        const meanY = sumY / n;
+        const ssTot = yArr.reduce((s, y) => s + Math.pow(y - meanY, 2), 0);
+        const r2 = ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+        return { slope, intercept, r2 };
+    }
+
+    // Prediction Accuracy Trend Chart
+    function updateAccuracyChart() {
+        const days = parseInt(document.getElementById('accuracy-days-select').value);
+        const chartDiv = document.getElementById('accuracy-chart');
+        const summaryDiv = document.getElementById('accuracy-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading prediction accuracy data...</div>';
+        summaryDiv.innerHTML = '';
+
+        fetch(`/api/house/${houseId}/energy-separated?days=${days}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                const data = result.data || [];
+
+                // Filter for days with both predicted and actual heating > 0
+                const valid = data.filter(d => d.predicted_kwh !== null && d.predicted_kwh > 0 && d.heating_kwh > 0);
+
+                if (valid.length < 2) {
+                    chartDiv.innerHTML = '<div class="no-data-message">Not enough prediction data yet. Need at least 2 days with both predicted and actual heating energy.</div>';
+                    summaryDiv.innerHTML = '';
+                    return;
+                }
+
+                const dates = valid.map(d => d.timestamp_display);
+                const accuracies = valid.map(d => Math.round(d.predicted_kwh / d.heating_kwh * 1000) / 10);
+
+                // Color-code each marker
+                const colors = accuracies.map(a => {
+                    if (a >= 90 && a <= 110) return '#27ae60';
+                    if (a >= 80 && a <= 120) return '#f39c12';
+                    return '#e74c3c';
+                });
+
+                const traces = [
+                    // Green "good" zone band
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [110, 110],
+                        mode: 'lines',
+                        line: { color: 'rgba(39,174,96,0)', width: 0 },
+                        showlegend: false,
+                        hoverinfo: 'skip'
+                    },
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [90, 90],
+                        mode: 'lines',
+                        line: { color: 'rgba(39,174,96,0)', width: 0 },
+                        fill: 'tonexty',
+                        fillcolor: 'rgba(39,174,96,0.1)',
+                        showlegend: false,
+                        hoverinfo: 'skip'
+                    },
+                    // 100% reference line
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [100, 100],
+                        mode: 'lines',
+                        name: 'Perfect (100%)',
+                        line: { color: '#95a5a6', width: 1, dash: 'dash' },
+                        hoverinfo: 'skip'
+                    },
+                    // Accuracy line with colored markers
+                    {
+                        x: dates,
+                        y: accuracies,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: 'Accuracy',
+                        line: { color: '#3498db', width: 2 },
+                        marker: { color: colors, size: 9, line: { color: '#fff', width: 1 } },
+                        hovertemplate: '%{x}<br>Accuracy: %{y}%<extra></extra>'
+                    }
+                ];
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: 'Accuracy (%)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        zeroline: false
+                    },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('accuracy-chart', traces, layout, chartConfig)
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Summary stats
+                const avgAcc = Math.round(accuracies.reduce((s, v) => s + v, 0) / accuracies.length * 10) / 10;
+                const bestDay = valid[accuracies.indexOf(accuracies.reduce((best, v) => Math.abs(v - 100) < Math.abs(best - 100) ? v : best))];
+                const worstDay = valid[accuracies.indexOf(accuracies.reduce((worst, v) => Math.abs(v - 100) > Math.abs(worst - 100) ? v : worst))];
+
+                // Trend: compare first half average to second half average
+                const half = Math.floor(accuracies.length / 2);
+                const firstHalf = accuracies.slice(0, half);
+                const secondHalf = accuracies.slice(half);
+                const firstAvgDev = firstHalf.reduce((s, v) => s + Math.abs(v - 100), 0) / firstHalf.length;
+                const secondAvgDev = secondHalf.reduce((s, v) => s + Math.abs(v - 100), 0) / secondHalf.length;
+                const trendDiff = firstAvgDev - secondAvgDev;
+                let trend, trendColor;
+                if (trendDiff > 2) { trend = 'Improving'; trendColor = '#27ae60'; }
+                else if (trendDiff < -2) { trend = 'Declining'; trendColor = '#e74c3c'; }
+                else { trend = 'Stable'; trendColor = '#7f8c8d'; }
+
+                const avgColor = avgAcc >= 90 && avgAcc <= 110 ? '#27ae60' : (avgAcc >= 80 && avgAcc <= 120 ? '#f39c12' : '#e74c3c');
+
+                summaryDiv.innerHTML = `
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: ${avgColor}">${avgAcc}%</div>
+                        <div class="metric-label">Avg Accuracy (${valid.length} days)</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #27ae60">${Math.round(bestDay.predicted_kwh / bestDay.heating_kwh * 1000) / 10}%</div>
+                        <div class="metric-label">Best (${bestDay.timestamp_display})</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #e74c3c">${Math.round(worstDay.predicted_kwh / worstDay.heating_kwh * 1000) / 10}%</div>
+                        <div class="metric-label">Worst (${worstDay.timestamp_display})</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: ${trendColor}">${trend}</div>
+                        <div class="metric-label">Trend</div>
+                    </div>
+                `;
+            })
+            .catch(error => {
+                console.error('Failed to load accuracy data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load prediction accuracy data.</div>';
+            });
+    }
+
+    // Energy Signature Plot — resolution state
+    let signatureResolution = 'day';  // 'hour', 'day', 'month'
+
+    function switchSignatureResolution(res) {
+        signatureResolution = res;
+        // Update button styles
+        document.querySelectorAll('.sig-res-btn').forEach(btn => {
+            if (btn.dataset.res === res) {
+                btn.style.background = '#3498db';
+                btn.style.color = '#fff';
+                btn.classList.add('active');
+            } else {
+                btn.style.background = '#fff';
+                btn.style.color = '#333';
+                btn.classList.remove('active');
+            }
+        });
+        updateSignatureChart();
+    }
+
+    function renderSignaturePlot(xVals, yVals, kValue, resolution, chartDiv, summaryDiv) {
+        const reg = linearRegression(xVals, yVals);
+
+        // Extend regression line 5°C beyond data range on each side
+        const dataXMin = Math.min(...xVals);
+        const dataXMax = Math.max(...xVals);
+        const xMin = dataXMin - 5;
+        const xMax = dataXMax + 5;
+        const regLineX = [xMin, xMax];
+        const regLineY = regLineX.map(x => Math.max(0, reg.slope * x + reg.intercept));
+
+        // k from regression: slope depends on resolution
+        // Day: kWh/day per °C → divide by 24 to get kW/°C
+        // Hour: kWh/h per °C → already kW/°C
+        // Month: kWh/month per °C → divide by ~720 to get kW/°C
+        let kDivisor, yLabel, pointLabel;
+        if (resolution === 'hour') {
+            kDivisor = 1;
+            yLabel = 'Energy (kWh/h)';
+            pointLabel = 'Hourly Total';
+        } else if (resolution === 'month') {
+            kDivisor = 720;
+            yLabel = 'Heating Energy (kWh/month)';
+            pointLabel = 'Monthly Heating';
+        } else {
+            kDivisor = 24;
+            yLabel = 'Heating Energy (kWh/day)';
+            pointLabel = 'Daily Heating';
+        }
+
+        const regK = Math.round(Math.abs(reg.slope) / kDivisor * 1000) / 1000;
+
+        const traces = [
+            {
+                x: xVals,
+                y: yVals,
+                mode: 'markers',
+                type: 'scatter',
+                name: pointLabel,
+                marker: {
+                    color: '#3498db',
+                    size: resolution === 'hour' ? 5 : 10,
+                    opacity: resolution === 'hour' ? 0.4 : 0.7,
+                    line: { color: '#2980b9', width: resolution === 'hour' ? 0 : 1 }
+                },
+                hovertemplate: 'Outdoor: %{x}°C<br>Energy: %{y} kWh<extra></extra>'
+            },
+            {
+                x: regLineX,
+                y: regLineY,
+                mode: 'lines',
+                name: `Regression (k\u2248${regK} kW/\u00b0C)`,
+                line: { color: '#e74c3c', width: 2, dash: 'dash' },
+                hoverinfo: 'skip'
+            }
+        ];
+
+        const layout = {
+            xaxis: {
+                title: resolution === 'hour' ? 'Outdoor Temperature (\u00b0C)' : 'Effective Outdoor Temperature (\u00b0C)',
+                showgrid: true,
+                gridcolor: 'rgba(0,0,0,0.1)',
+                zeroline: true,
+                zerolinecolor: 'rgba(0,0,0,0.2)',
+                range: [xMin, xMax]
+            },
+            yaxis: {
+                title: yLabel,
+                showgrid: true,
+                gridcolor: 'rgba(0,0,0,0.1)',
+                rangemode: 'tozero'
+            },
+            height: 400,
+            margin: { l: 60, r: 30, t: 30, b: 60 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: '#ffffff',
+            font: { family: 'system-ui, -apple-system, sans-serif' },
+            legend: {
+                orientation: 'h',
+                yanchor: 'bottom',
+                y: 1.02,
+                xanchor: 'right',
+                x: 1
+            },
+            dragmode: 'pan',
+            hovermode: 'closest'
+        };
+
+        chartDiv.innerHTML = '';
+        Plotly.newPlot('signature-chart', traces, layout, chartConfig)
+            .catch(err => {
+                console.error('Plotly render error:', err);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+            });
+
+        // Summary
+        const calibratedK = kValue ? `${kValue} kW/\u00b0C` : 'N/A';
+        const r2Pct = Math.round(reg.r2 * 100);
+        const r2Color = r2Pct >= 80 ? '#27ae60' : (r2Pct >= 60 ? '#f39c12' : '#e74c3c');
+        const r2Label = r2Pct >= 80 ? 'Good fit' : (r2Pct >= 60 ? 'Fair fit' : 'Weak fit');
+
+        summaryDiv.innerHTML = `
+            <div class="metric-item">
+                <div class="metric-value" style="color: #7f8c8d">${calibratedK}</div>
+                <div class="metric-label">Calibrated k</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color: #e74c3c">${regK} kW/\u00b0C</div>
+                <div class="metric-label">Regression k</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color: ${r2Color}">${r2Pct}% (R\u00b2)</div>
+                <div class="metric-label">${r2Label}</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value">${xVals.length}</div>
+                <div class="metric-label">Data Points${resolution === 'hour' ? ' (total energy)' : ''}</div>
+            </div>
+        `;
+    }
+
+    function updateSignatureChart() {
+        const days = parseInt(document.getElementById('signature-days-select').value);
+        const chartDiv = document.getElementById('signature-chart');
+        const summaryDiv = document.getElementById('signature-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading energy signature data...</div>';
+        summaryDiv.innerHTML = '';
+
+        if (signatureResolution === 'hour') {
+            // Hourly: fetch from dedicated hourly endpoint (total consumption vs outdoor temp)
+            fetch(`/api/house/${houseId}/energy-signature-hourly?days=${days}`)
+                .then(r => r.ok ? r.json() : { data: [] })
+                .then(result => {
+                    const data = result.data || [];
+                    if (data.length < 5) {
+                        chartDiv.innerHTML = '<div class="no-data-message">Not enough hourly data. Need imported energy meter data and outdoor temperature readings.</div>';
+                        summaryDiv.innerHTML = '';
+                        return;
+                    }
+                    const xVals = data.map(d => d.outdoor_temp);
+                    const yVals = data.map(d => d.consumption_kwh);
+                    renderSignaturePlot(xVals, yVals, null, 'hour', chartDiv, summaryDiv);
+                })
+                .catch(error => {
+                    console.error('Failed to load hourly signature:', error);
+                    chartDiv.innerHTML = '<div class="no-data-message">Failed to load hourly energy signature data.</div>';
+                });
+
+        } else {
+            // Day or Month: fetch from energy-separated endpoint
+            const fetchDays = signatureResolution === 'month' ? Math.max(days, 90) : days;
+            fetch(`/api/house/${houseId}/energy-separated?days=${fetchDays}`)
+                .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+                .then(result => {
+                    const data = result.data || [];
+                    const kValue = result.k_value;
+
+                    if (signatureResolution === 'month') {
+                        // Aggregate daily data into monthly buckets
+                        const monthly = {};
+                        data.forEach(d => {
+                            if (d.heating_kwh > 0 && d.avg_effective_outdoor !== null && d.avg_effective_outdoor !== undefined) {
+                                const monthKey = d.timestamp_display.substring(0, 7); // YYYY-MM
+                                if (!monthly[monthKey]) monthly[monthKey] = { heating: 0, tempSum: 0, count: 0 };
+                                monthly[monthKey].heating += d.heating_kwh;
+                                monthly[monthKey].tempSum += d.avg_effective_outdoor;
+                                monthly[monthKey].count += 1;
+                            }
+                        });
+                        // Only include months with at least 15 days of data
+                        const xVals = [], yVals = [];
+                        Object.values(monthly).forEach(m => {
+                            if (m.count >= 15) {
+                                xVals.push(Math.round(m.tempSum / m.count * 10) / 10);
+                                yVals.push(Math.round(m.heating * 10) / 10);
+                            }
+                        });
+
+                        if (xVals.length < 2) {
+                            chartDiv.innerHTML = '<div class="no-data-message">Not enough monthly data. Need at least 2 months with 15+ days each. Try extending the period.</div>';
+                            summaryDiv.innerHTML = '';
+                            return;
+                        }
+                        renderSignaturePlot(xVals, yVals, kValue, 'month', chartDiv, summaryDiv);
+
+                    } else {
+                        // Daily (default)
+                        const valid = data.filter(d => d.heating_kwh > 0 && d.avg_effective_outdoor !== null && d.avg_effective_outdoor !== undefined);
+                        if (valid.length < 3) {
+                            chartDiv.innerHTML = '<div class="no-data-message">Not enough data for energy signature. Need at least 3 days with heating energy and effective outdoor temperature.</div>';
+                            summaryDiv.innerHTML = '';
+                            return;
+                        }
+                        const xVals = valid.map(d => d.avg_effective_outdoor);
+                        const yVals = valid.map(d => d.heating_kwh);
+                        renderSignaturePlot(xVals, yVals, kValue, 'day', chartDiv, summaryDiv);
+                    }
+                })
+                .catch(error => {
+                    console.error('Failed to load energy signature data:', error);
+                    chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy signature data.</div>';
+                });
+        }
     }
 
     // K-Value History Chart
@@ -2020,8 +2488,10 @@
         setTimeout(() => updateEfficiencyChart(), 200);
         setTimeout(() => updateEnergyForecastChart(), 250);  // Energy forecast (24h ahead)
         setTimeout(() => updateEnergySeparationChart(), 350);
-        setTimeout(() => updateKValueChart(), 450);
-        setTimeout(() => updateCostChart(), 550);
+        setTimeout(() => updateAccuracyChart(), 400);
+        setTimeout(() => updateSignatureChart(), 450);
+        setTimeout(() => updateKValueChart(), 500);
+        setTimeout(() => updateCostChart(), 600);
     });
 </script>
 {% endblock %}

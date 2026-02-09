@@ -1145,6 +1145,73 @@ class InfluxReader:
             print(f"Failed to query power history: {e}")
             return {'data': [], 'data_source': None}
 
+    def get_energy_signature_hourly(self, house_id: str, days: int = 90) -> dict:
+        """
+        Get hourly energy consumption paired with outdoor temperature for energy signature plot.
+        Returns list of {consumption_kwh, outdoor_temp} pairs from energy_meter + heating_system.
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'data': []}
+
+        try:
+            query_api = self.client.query_api()
+
+            # Query hourly consumption from energy_meter
+            consumption_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> filter(fn: (r) => r["_field"] == "consumption")
+                |> sort(columns: ["_time"])
+            '''
+
+            # Query outdoor temperature averaged per hour from heating_system
+            outdoor_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "heating_system")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> filter(fn: (r) => r["_field"] == "outdoor_temperature")
+                |> aggregateWindow(every: 1h, fn: mean)
+                |> filter(fn: (r) => exists r["_value"])
+            '''
+
+            consumption_tables = query_api.query(consumption_query, org=self.org)
+            outdoor_tables = query_api.query(outdoor_query, org=self.org)
+
+            # Build outdoor temp lookup by hour key (YYYY-MM-DD HH)
+            outdoor_by_hour = {}
+            for table in outdoor_tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    val = record.get_value()
+                    if ts and val is not None:
+                        hour_key = ts.strftime('%Y-%m-%d %H')
+                        outdoor_by_hour[hour_key] = val
+
+            # Match consumption with outdoor temp
+            results = []
+            for table in consumption_tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    consumption = record.get_value()
+                    if ts and consumption is not None and consumption > 0:
+                        hour_key = ts.strftime('%Y-%m-%d %H')
+                        outdoor = outdoor_by_hour.get(hour_key)
+                        if outdoor is not None:
+                            results.append({
+                                'consumption_kwh': round(consumption, 2),
+                                'outdoor_temp': round(outdoor, 1),
+                            })
+
+            return {'data': results}
+
+        except Exception as e:
+            print(f"Failed to query hourly energy signature: {e}")
+            return {'data': []}
+
     def get_energy_separation(self, house_id: str, days: int = 30) -> dict:
         """
         Get energy separation data (heating vs DHW) from calibration.
@@ -1212,16 +1279,17 @@ class InfluxReader:
                         if date_str >= today_swedish:
                             continue
 
-                        # Skip days with insufficient data coverage (<80%)
-                        data_coverage = record.values.get('data_coverage', 1.0)
-                        if data_coverage < 0.8:
-                            continue
-
                         # Handle both field names: total_energy_kwh (new) and actual_energy_kwh (legacy)
                         actual = record.values.get('total_energy_kwh') or record.values.get('actual_energy_kwh') or 0
                         heating = record.values.get('heating_energy_kwh') or 0
                         dhw = record.values.get('dhw_energy_kwh') or 0
                         k = record.values.get('k_value')
+                        no_breakdown = bool(record.values.get('no_breakdown', 0))
+
+                        # Legacy: skip low-coverage days that lack the no_breakdown field
+                        data_coverage = record.values.get('data_coverage', 1.0)
+                        if data_coverage < 0.8 and not no_breakdown:
+                            continue
 
                         if k is not None:
                             k_value = k
@@ -1235,15 +1303,19 @@ class InfluxReader:
                             'actual_kwh': round(actual, 1),
                             'heating_kwh': round(heating, 1),
                             'dhw_kwh': round(dhw, 1),
+                            'no_breakdown': no_breakdown,
                             'predicted_kwh': None,  # Will be filled in
                             'avg_outdoor': None,
                             'avg_temp_diff': record.values.get('avg_temp_difference'),
                             'dhw_events': record.values.get('dhw_event_count'),
+                            'avg_effective_outdoor': round(record.values.get('avg_effective_outdoor_temp', 0), 1) if record.values.get('avg_effective_outdoor_temp') is not None else None,
                         })
 
                         totals['actual'] += actual
-                        totals['heating'] += heating
-                        totals['dhw'] += dhw
+                        # Only count heating/dhw for days with full breakdown
+                        if not no_breakdown:
+                            totals['heating'] += heating
+                            totals['dhw'] += dhw
 
             # Query stored hourly energy forecasts and aggregate by day (ML2 model)
             if results:
@@ -1258,21 +1330,24 @@ class InfluxReader:
 
                 forecast_tables = query_api.query(forecast_query, org=self.org)
 
-                # Aggregate hourly forecasts by day (track count to filter incomplete days)
+                # Aggregate hourly forecasts by Swedish day (track count to filter incomplete days)
                 predicted_by_day = {}  # {date: {'sum': float, 'count': int}}
                 for table in forecast_tables:
                     for record in table.records:
                         timestamp = record.get_time()
                         energy = record.get_value()
                         if timestamp and energy is not None:
-                            date_str = timestamp.strftime('%Y-%m-%d')
+                            swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                            date_str = swedish_time.strftime('%Y-%m-%d')
                             if date_str not in predicted_by_day:
                                 predicted_by_day[date_str] = {'sum': 0, 'count': 0}
                             predicted_by_day[date_str]['sum'] += energy
                             predicted_by_day[date_str]['count'] += 1
 
-                # Also query outdoor temps for display
+                # Also query outdoor temps for display (group by Swedish day)
                 outdoor_query = f'''
+                    import "timezone"
+                    option location = timezone.location(name: "Europe/Stockholm")
                     from(bucket: "{self.bucket}")
                     |> range(start: -{days}d)
                     |> filter(fn: (r) => r["_measurement"] == "heating_system")
@@ -1288,7 +1363,10 @@ class InfluxReader:
                         timestamp = record.get_time()
                         outdoor = record.get_value()
                         if timestamp and outdoor is not None:
-                            date_str = timestamp.strftime('%Y-%m-%d')
+                            # With timezone option, window end is at Swedish midnight
+                            # Convert to Swedish time for correct date label
+                            swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                            date_str = swedish_time.strftime('%Y-%m-%d')
                             outdoor_by_day[date_str] = outdoor
 
                 # Match predictions with actual data
@@ -1303,13 +1381,15 @@ class InfluxReader:
                     outdoor = outdoor_by_day.get(date_str)
 
                     # Only show prediction if we have enough hourly forecasts
+                    # and the day has a full breakdown (no_breakdown days excluded)
                     if forecast_data and forecast_data['count'] >= MIN_HOURLY_FORECASTS:
                         predicted = forecast_data['sum']
                         results[idx]['predicted_kwh'] = round(predicted, 1)
                         totals['predicted'] += predicted
-                        # Track heating energy for days with predictions
-                        heating_with_predictions += results[idx]['heating_kwh']
-                        days_with_predictions += 1
+                        # Track heating energy for days with predictions (exclude no-breakdown)
+                        if not results[idx].get('no_breakdown'):
+                            heating_with_predictions += results[idx]['heating_kwh']
+                            days_with_predictions += 1
 
                     if outdoor is not None:
                         results[idx]['avg_outdoor'] = round(outdoor, 1)

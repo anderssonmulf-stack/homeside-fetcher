@@ -352,73 +352,60 @@ def run_energy_pipeline(
             properties={'Error': str(e)}
         )
 
-    # Step 2: Update energy separation (heating vs DHW breakdown)
+    # Step 2: Update energy separation (heating vs DHW breakdown) — own house only
     print("\n⚡ Step 2: Updating energy separation...")
     separation_houses = 0
     separation_records = 0
     try:
-        from heating_energy_calibrator import HeatingEnergyCalibrator
+        if customer_profile and customer_profile.energy_separation.enabled:
+            from heating_energy_calibrator import HeatingEnergyCalibrator
 
-        for filename in os.listdir(profiles_dir):
-            if not filename.endswith('.json'):
-                continue
+            profile = customer_profile
+            k_pct = profile.energy_separation.k_percentile or 15
+            cal_days = profile.energy_separation.calibration_days or 30
+            start_date = (datetime.now(timezone.utc) - timedelta(days=cal_days)).strftime('%Y-%m-%d')
+
+            wc = profile.learned.weather_coefficients
+            # Only use learned coefficients if confidence is sufficient
+            solar_coeff = wc.solar_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
+            wind_coeff = wc.wind_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
+            calibrator = HeatingEnergyCalibrator(
+                influx_url=config['influxdb_url'],
+                influx_token=config['influxdb_token'],
+                influx_org=config['influxdb_org'],
+                influx_bucket=config['influxdb_bucket'],
+                latitude=config.get('latitude', 58.41),
+                longitude=config.get('longitude', 15.62),
+                solar_coefficient=solar_coeff,
+                wind_coefficient=wind_coeff
+            )
             try:
-                profile = CustomerProfile.load_by_path(
-                    os.path.join(profiles_dir, filename)
+                analyses, used_k = calibrator.analyze(
+                    house_id=profile.customer_id,
+                    start_date=start_date,
+                    calibrated_k=None,
+                    k_percentile=k_pct,
+                    quiet=True
                 )
-                if not profile.energy_separation.enabled:
-                    continue
-
-                k = profile.energy_separation.heat_loss_k
-                k_pct = profile.energy_separation.k_percentile or 15
-                cal_days = profile.energy_separation.calibration_days or 30
-                start_date = (datetime.now(timezone.utc) - timedelta(days=cal_days)).strftime('%Y-%m-%d')
-
-                wc = profile.learned.weather_coefficients
-                # Only use learned coefficients if confidence is sufficient
-                solar_coeff = wc.solar_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
-                wind_coeff = wc.wind_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
-                calibrator = HeatingEnergyCalibrator(
-                    influx_url=config['influxdb_url'],
-                    influx_token=config['influxdb_token'],
-                    influx_org=config['influxdb_org'],
-                    influx_bucket=config['influxdb_bucket'],
-                    latitude=config.get('latitude', 58.41),
-                    longitude=config.get('longitude', 15.62),
-                    solar_coefficient=solar_coeff,
-                    wind_coefficient=wind_coeff
-                )
-                try:
-                    analyses, used_k = calibrator.analyze(
-                        house_id=profile.customer_id,
-                        start_date=start_date,
-                        calibrated_k=None,
-                        k_percentile=k_pct,
-                        quiet=True
+                if analyses:
+                    written = calibrator.write_to_influx(profile.customer_id, analyses, used_k)
+                    separation_records += written
+                    separation_houses += 1
+                    print(f"  ✓ {profile.friendly_name}: {written} days written (k={used_k:.4f})")
+                    seq_logger.log(
+                        "Energy separation updated for {House}: {Records} days",
+                        level='Information',
+                        properties={
+                            'House': profile.friendly_name,
+                            'HouseId': profile.customer_id,
+                            'Records': written,
+                            'KValue': round(used_k, 5)
+                        }
                     )
-                    if analyses:
-                        written = calibrator.write_to_influx(profile.customer_id, analyses, used_k)
-                        separation_records += written
-                        separation_houses += 1
-                        print(f"  ✓ {profile.friendly_name}: {written} days written (k={used_k:.4f})")
-                        seq_logger.log(
-                            "Energy separation updated for {House}: {Records} days",
-                            level='Information',
-                            properties={
-                                'House': profile.friendly_name,
-                                'HouseId': profile.customer_id,
-                                'Records': written,
-                                'KValue': round(used_k, 5)
-                            }
-                        )
-                    else:
-                        print(f"  ℹ {profile.friendly_name}: no data to separate")
-                finally:
-                    calibrator.close()
-
-            except Exception as e:
-                logger.warning(f"Energy separation failed for {filename}: {e}")
-                print(f"  ❌ {filename}: {e}")
+                else:
+                    print(f"  ℹ {profile.friendly_name}: no data to separate")
+            finally:
+                calibrator.close()
 
         results['separation'] = {
             'success': True,
@@ -441,49 +428,36 @@ def run_energy_pipeline(
         )
         results['separation'] = {'success': False, 'houses': 0, 'records': 0}
 
-    # Step 3: Recalibrate k-values (runs after energy import)
-    # This also writes energy_separated data with method="k_calibration"
+    # Step 3: Recalibrate k-values (runs after energy import) — own house only
     print("\n📊 Step 3: Recalibrating k-values...")
     if results['import']['success']:
         calibrated_count = 0
         try:
-            # Get all enabled houses
-            for filename in os.listdir(profiles_dir):
-                if not filename.endswith('.json'):
-                    continue
-                try:
-                    profile = CustomerProfile.load_by_path(
-                        os.path.join(profiles_dir, filename)
+            if customer_profile and customer_profile.energy_separation.enabled:
+                result = recalibrate_house(
+                    house_id=customer_profile.customer_id,
+                    influx_url=config['influxdb_url'],
+                    influx_token=config['influxdb_token'],
+                    influx_org=config['influxdb_org'],
+                    influx_bucket=config['influxdb_bucket'],
+                    profiles_dir=profiles_dir,
+                    days=calibration_days,
+                    update_profile=True
+                )
+                if result:
+                    calibrated_count += 1
+                    print(f"  ✓ {customer_profile.friendly_name}: k={result.k_value:.4f} kW/°C ({result.confidence:.0%} confidence)")
+                    seq_logger.log(
+                        "K-value calibrated for {House}: {KValue} kW/°C",
+                        level='Information',
+                        properties={
+                            'House': customer_profile.friendly_name,
+                            'HouseId': customer_profile.customer_id,
+                            'KValue': round(result.k_value, 5),
+                            'Confidence': round(result.confidence, 2),
+                            'DaysUsed': result.days_used
+                        }
                     )
-                    if not profile.energy_separation.enabled:
-                        continue
-
-                    result = recalibrate_house(
-                        house_id=profile.customer_id,
-                        influx_url=config['influxdb_url'],
-                        influx_token=config['influxdb_token'],
-                        influx_org=config['influxdb_org'],
-                        influx_bucket=config['influxdb_bucket'],
-                        profiles_dir=profiles_dir,
-                        days=calibration_days,
-                        update_profile=True
-                    )
-                    if result:
-                        calibrated_count += 1
-                        print(f"  ✓ {profile.friendly_name}: k={result.k_value:.4f} kW/°C ({result.confidence:.0%} confidence)")
-                        seq_logger.log(
-                            "K-value calibrated for {House}: {KValue} kW/°C",
-                            level='Information',
-                            properties={
-                                'House': profile.friendly_name,
-                                'HouseId': profile.customer_id,
-                                'KValue': round(result.k_value, 5),
-                                'Confidence': round(result.confidence, 2),
-                                'DaysUsed': result.days_used
-                            }
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to calibrate {filename}: {e}")
 
             results['calibration'] = {
                 'success': True,
@@ -533,6 +507,128 @@ def run_energy_pipeline(
     )
 
     return results
+
+
+def check_dropbox_and_separate(
+    config: dict,
+    seq_logger,
+    logger,
+    customer_profile=None,
+    profiles_dir: str = "profiles",
+    calibration_days: int = 30
+) -> int:
+    """
+    Check Dropbox for new energy files, import them, and immediately
+    run energy separation + k-calibration for this subprocess's house.
+
+    The Dropbox import is shared (idempotent — files deleted after import),
+    but separation and calibration only process the calling subprocess's house.
+
+    Called periodically (e.g. every hour) so new energy data gets
+    processed without waiting for the daily 08:00 pipeline.
+
+    Returns:
+        Number of records imported (0 means nothing new).
+    """
+    try:
+        dropbox_client = create_client_from_env()
+        if not dropbox_client:
+            return 0
+
+        importer = EnergyImporter(
+            dropbox_client=dropbox_client,
+            influx_url=config.get('influxdb_url'),
+            influx_token=config.get('influxdb_token'),
+            influx_org=config.get('influxdb_org'),
+            influx_bucket=config.get('influxdb_bucket'),
+            profiles_dir=profiles_dir,
+            dry_run=False
+        )
+        import_result = importer.run(sync_meters=True)
+        importer.close()
+
+        records = import_result.get('records', 0)
+        if records == 0:
+            return 0
+
+        # New data imported — run separation + calibration for own house only
+        print(f"\n📥 Dropbox import: {records} records from {import_result.get('files', 0)} file(s)")
+        seq_logger.log(
+            "Dropbox import (periodic): {Records} records from {Files} file(s)",
+            level='Information',
+            properties={'Records': records, 'Files': import_result.get('files', 0)}
+        )
+
+        # Energy separation — own house only
+        separation_done = False
+        if customer_profile and customer_profile.energy_separation.enabled:
+            print("⚡ Running energy separation after import...")
+            from heating_energy_calibrator import HeatingEnergyCalibrator
+
+            profile = customer_profile
+            k_pct = profile.energy_separation.k_percentile or 15
+            cal_days = profile.energy_separation.calibration_days or 30
+            start_date = (datetime.now(timezone.utc) - timedelta(days=cal_days)).strftime('%Y-%m-%d')
+
+            wc = profile.learned.weather_coefficients
+            solar_coeff = wc.solar_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
+            wind_coeff = wc.wind_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
+            calibrator = HeatingEnergyCalibrator(
+                influx_url=config['influxdb_url'],
+                influx_token=config['influxdb_token'],
+                influx_org=config['influxdb_org'],
+                influx_bucket=config['influxdb_bucket'],
+                latitude=config.get('latitude', 58.41),
+                longitude=config.get('longitude', 15.62),
+                solar_coefficient=solar_coeff,
+                wind_coefficient=wind_coeff
+            )
+            try:
+                analyses, used_k = calibrator.analyze(
+                    house_id=profile.customer_id,
+                    start_date=start_date,
+                    calibrated_k=None,
+                    k_percentile=k_pct,
+                    quiet=True
+                )
+                if analyses:
+                    written = calibrator.write_to_influx(profile.customer_id, analyses, used_k)
+                    separation_done = True
+                    print(f"  ✓ {profile.friendly_name}: {written} days separated (k={used_k:.4f})")
+            finally:
+                calibrator.close()
+
+            # K-value recalibration — own house only
+            if separation_done:
+                print("📊 Running k-value recalibration after import...")
+                try:
+                    result = recalibrate_house(
+                        house_id=profile.customer_id,
+                        influx_url=config['influxdb_url'],
+                        influx_token=config['influxdb_token'],
+                        influx_org=config['influxdb_org'],
+                        influx_bucket=config['influxdb_bucket'],
+                        profiles_dir=profiles_dir,
+                        days=calibration_days,
+                        update_profile=True
+                    )
+                    if result:
+                        print(f"  ✓ {profile.friendly_name}: k={result.k_value:.4f} kW/°C")
+                except Exception as e:
+                    logger.warning(f"Post-import calibration failed for {profile.friendly_name}: {e}")
+
+                print(f"✓ Post-import pipeline complete ({profile.friendly_name})")
+                seq_logger.log(
+                    "Post-import separation+calibration done for {House}",
+                    level='Information',
+                    properties={'House': profile.friendly_name}
+                )
+
+        return records
+
+    except Exception as e:
+        logger.warning(f"Dropbox check failed: {e}")
+        return 0
 
 
 def check_daily_tasks(
@@ -857,6 +953,10 @@ def monitor_heating_system(config):
     recalibration_hours = calibration_settings.get('k_recalibration_hours', 72)
     recalibration_days = calibration_settings.get('k_calibration_days', 30)
     recalibration_enabled = calibration_settings.get('enabled', True)
+
+    # Track periodic Dropbox import check (every hour)
+    last_dropbox_check_time = None
+    dropbox_check_interval_hours = 1
 
     # Track daily task execution (by date)
     daily_task_last_run = {}
@@ -1508,6 +1608,25 @@ def monitor_heating_system(config):
                 seq_logger=seq_logger,
                 logger=logger
             )
+
+            # Periodic Dropbox import check — picks up new energy files hourly
+            # and immediately runs separation + calibration so data is fresh
+            if (last_dropbox_check_time is None or
+                (now - last_dropbox_check_time).total_seconds() >= dropbox_check_interval_hours * 3600):
+                imported = check_dropbox_and_separate(
+                    config=config,
+                    seq_logger=seq_logger,
+                    logger=logger,
+                    customer_profile=customer_profile,
+                    profiles_dir="profiles",
+                    calibration_days=calibration_settings.get('k_calibration_days', 30)
+                )
+                last_dropbox_check_time = now
+                if imported > 0 and customer_profile:
+                    # Reload profile in case k-value was updated
+                    customer_profile = find_profile_for_client_id(api.clientid, profiles_dir="profiles")
+                    if energy_forecaster and customer_profile.energy_separation.heat_loss_k:
+                        energy_forecaster.heat_loss_k = customer_profile.energy_separation.heat_loss_k
 
             # Check if k-value recalibration is due (every 72h) - fallback if daily pipeline hasn't run
             if (recalibration_enabled and customer_profile and

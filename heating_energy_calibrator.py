@@ -102,19 +102,22 @@ class HeatingEnergyCalibrator:
 
     def fetch_daily_energy(self, house_id: str, start_date: str = "2025-12-01") -> Dict[str, float]:
         """
-        Fetch daily energy consumption.
+        Fetch daily energy consumption grouped by Swedish date.
 
         Queries energy_meter first (reliable imported Dropbox data),
         falls back to energy_consumption (legacy) if no data found.
+
+        Groups hourly data by Swedish calendar day (CET/CEST), not UTC,
+        since energy bills and user expectations follow local time.
         """
         # First try energy_meter (imported from Dropbox - reliable)
+        # Fetch hourly data and group by Swedish date in Python
         query = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "energy_meter")
             |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "consumption")
-            |> aggregateWindow(every: 1d, fn: sum, createEmpty: false)
             |> sort(columns: ["_time"])
         '''
 
@@ -123,8 +126,13 @@ class HeatingEnergyCalibrator:
         daily_energy = {}
         for table in tables:
             for record in table.records:
-                date = record.get_time().strftime('%Y-%m-%d')
-                daily_energy[date] = record.get_value()
+                ts = record.get_time()
+                val = record.get_value()
+                if ts and val is not None:
+                    # Convert UTC timestamp to Swedish time for correct day grouping
+                    swedish_time = ts.astimezone(SWEDISH_TZ)
+                    date = swedish_time.strftime('%Y-%m-%d')
+                    daily_energy[date] = daily_energy.get(date, 0) + val
 
         if daily_energy:
             return daily_energy
@@ -136,7 +144,6 @@ class HeatingEnergyCalibrator:
             |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
             |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "value")
-            |> aggregateWindow(every: 1d, fn: sum, createEmpty: false)
             |> sort(columns: ["_time"])
         '''
 
@@ -144,8 +151,12 @@ class HeatingEnergyCalibrator:
 
         for table in tables:
             for record in table.records:
-                date = record.get_time().strftime('%Y-%m-%d')
-                daily_energy[date] = record.get_value()
+                ts = record.get_time()
+                val = record.get_value()
+                if ts and val is not None:
+                    swedish_time = ts.astimezone(SWEDISH_TZ)
+                    date = swedish_time.strftime('%Y-%m-%d')
+                    daily_energy[date] = daily_energy.get(date, 0) + val
 
         return daily_energy
 
@@ -288,10 +299,11 @@ class HeatingEnergyCalibrator:
         if not quiet:
             print(f"Hot water baseline: {hw_baseline:.1f}°C")
 
-        # Group heating data by day
+        # Group heating data by Swedish calendar day
         daily_heating = {}
         for d in heating_data:
-            date = d['timestamp'].strftime('%Y-%m-%d')
+            swedish_time = d['timestamp'].astimezone(SWEDISH_TZ)
+            date = swedish_time.strftime('%Y-%m-%d')
             if date not in daily_heating:
                 daily_heating[date] = []
             daily_heating[date].append(d)
@@ -502,27 +514,21 @@ class HeatingEnergyCalibrator:
     def write_to_influx(self, house_id: str, analyses: List[DailyEnergyAnalysis], k: float) -> int:
         """Write separated energy values to InfluxDB.
 
-        Only writes days with sufficient data coverage (>=80%) and excludes
-        the current day (incomplete data).
+        Excludes the current day (incomplete data). Days with insufficient
+        data coverage (<80%) are written with no_breakdown=1 and zero
+        heating/dhw split — the chart shows them as grey "total only" bars.
 
-        Deletes existing energy_separated records for this house before writing
-        to prevent duplicates from different methods or re-runs.
+        Each subprocess only writes its own house's data, so InfluxDB's native
+        upsert (same measurement + tags + timestamp = overwrite) handles
+        idempotency without needing delete-before-write.
         """
-        from write_throttle import WriteThrottle
-        if not WriteThrottle.get().allow("energy_separated", house_id, 3600):
-            return 0
-
         points = []
-        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        skipped_coverage = 0
+        today = datetime.now(SWEDISH_TZ).strftime('%Y-%m-%d')
         skipped_today = 0
+        full_days = 0
+        partial_days = 0
 
         for a in analyses:
-            # Skip days with insufficient data coverage
-            if a.data_coverage < MIN_DATA_COVERAGE:
-                skipped_coverage += 1
-                continue
-
             # Skip today (incomplete day)
             if a.date == today:
                 skipped_today += 1
@@ -531,14 +537,16 @@ class HeatingEnergyCalibrator:
             # Parse date to timestamp (midnight)
             ts = datetime.strptime(a.date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
 
+            has_breakdown = a.data_coverage >= MIN_DATA_COVERAGE
+
             point = Point("energy_separated") \
                 .tag("house_id", house_id) \
                 .tag("method", "k_calibration") \
                 .time(ts, WritePrecision.S) \
                 .field("actual_energy_kwh", float(a.actual_energy_kwh)) \
-                .field("heating_energy_kwh", float(a.estimated_heating_kwh)) \
-                .field("dhw_energy_kwh", float(max(0, a.excess_energy_kwh))) \
-                .field("excess_energy_kwh", float(a.excess_energy_kwh)) \
+                .field("heating_energy_kwh", float(a.estimated_heating_kwh) if has_breakdown else 0.0) \
+                .field("dhw_energy_kwh", float(max(0, a.excess_energy_kwh)) if has_breakdown else 0.0) \
+                .field("excess_energy_kwh", float(a.excess_energy_kwh) if has_breakdown else 0.0) \
                 .field("avg_temp_difference", float(a.avg_temp_difference)) \
                 .field("degree_hours", float(a.degree_hours)) \
                 .field("k_value", float(k)) \
@@ -547,34 +555,25 @@ class HeatingEnergyCalibrator:
                 .field("dhw_minutes", int(a.dhw_minutes)) \
                 .field("data_coverage", float(a.data_coverage)) \
                 .field("avg_indoor_temp", float(a.avg_indoor_temp)) \
-                .field("avg_effective_outdoor_temp", float(a.avg_effective_outdoor_temp))
+                .field("avg_effective_outdoor_temp", float(a.avg_effective_outdoor_temp)) \
+                .field("no_breakdown", 1 if not has_breakdown else 0)
 
             points.append(point)
+            if has_breakdown:
+                full_days += 1
+            else:
+                partial_days += 1
 
         if points:
-            # Delete existing energy_separated records for this house in the date range
-            # to prevent duplicates from different methods or re-runs
-            dates = [a.date for a in analyses if a.data_coverage >= MIN_DATA_COVERAGE and a.date != today]
-            if dates:
-                start = datetime.strptime(min(dates), '%Y-%m-%d').replace(tzinfo=timezone.utc) - timedelta(hours=1)
-                stop = datetime.strptime(max(dates), '%Y-%m-%d').replace(tzinfo=timezone.utc) + timedelta(hours=25)
-                delete_api = self.client.delete_api()
-                delete_api.delete(
-                    start=start,
-                    stop=stop,
-                    predicate=f'_measurement="energy_separated" AND house_id="{house_id}"',
-                    bucket=self.influx_bucket,
-                    org=self.influx_org
-                )
-
             self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
-            print(f"\nWrote {len(points)} daily records to InfluxDB (measurement: energy_separated)")
-            if skipped_coverage > 0:
-                print(f"  Skipped {skipped_coverage} days with <{MIN_DATA_COVERAGE*100:.0f}% data coverage")
+            msg = f"\nWrote {len(points)} daily records to InfluxDB (measurement: energy_separated)"
+            if partial_days > 0:
+                msg += f" ({partial_days} without breakdown)"
+            print(msg)
             if skipped_today > 0:
                 print(f"  Skipped today (incomplete)")
         else:
-            print(f"\nNo records to write (all {len(analyses)} days had insufficient coverage or are incomplete)")
+            print(f"\nNo records to write (all {len(analyses)} days are incomplete)")
 
         return len(points)
 

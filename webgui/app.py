@@ -951,6 +951,25 @@ def api_energy_separated(house_id):
     return jsonify(result)
 
 
+@app.route('/api/house/<house_id>/energy-signature-hourly')
+@require_login
+def api_energy_signature_hourly(house_id):
+    """
+    API endpoint for hourly energy signature data (consumption vs outdoor temp).
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 90, type=int)
+    days = min(max(days, 7), 365)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_energy_signature_hourly(house_id, days=days)
+
+    return jsonify(result)
+
+
 @app.route('/api/house/<house_id>/k-value-history')
 @require_login
 def api_k_value_history(house_id):
@@ -1386,6 +1405,52 @@ def confirm_energy_import(house_id):
             print(f"[INFO] Synced meter requests to Dropbox after energy import for {house_id}")
         except Exception as e:
             print(f"[WARNING] Failed to sync meters to Dropbox: {e}")
+
+        # Run energy separation immediately after import
+        try:
+            from datetime import datetime, timedelta
+            from customer_profile import CustomerProfile
+            import glob as glob_mod
+            profile_files = glob_mod.glob(f'profiles/*{house_id}*.json') or glob_mod.glob('profiles/*.json')
+            for pf in profile_files:
+                profile = CustomerProfile.load_by_path(pf)
+                if profile.customer_id != house_id:
+                    continue
+                if not profile.energy_separation.enabled:
+                    break
+
+                from heating_energy_calibrator import HeatingEnergyCalibrator
+                cal_days = profile.energy_separation.calibration_days or 30
+                start_date = (datetime.now() - timedelta(days=cal_days)).strftime('%Y-%m-%d')
+                wc = profile.learned.weather_coefficients
+                solar_coeff = wc.solar_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
+                wind_coeff = wc.wind_coefficient_ml2 if (wc.solar_confidence_ml2 or 0) >= 0.2 else None
+                calibrator = HeatingEnergyCalibrator(
+                    influx_url=os.environ.get('INFLUXDB_URL', 'http://localhost:8086'),
+                    influx_token=os.environ.get('INFLUXDB_TOKEN'),
+                    influx_org=os.environ.get('INFLUXDB_ORG', 'homeside'),
+                    influx_bucket=os.environ.get('INFLUXDB_BUCKET', 'heating'),
+                    latitude=float(os.environ.get('LATITUDE', 58.41)),
+                    longitude=float(os.environ.get('LONGITUDE', 15.62)),
+                    solar_coefficient=solar_coeff,
+                    wind_coefficient=wind_coeff
+                )
+                try:
+                    analyses, used_k = calibrator.analyze(
+                        house_id=house_id,
+                        start_date=start_date,
+                        calibrated_k=None,
+                        k_percentile=profile.energy_separation.k_percentile or 15,
+                        quiet=True
+                    )
+                    if analyses:
+                        written = calibrator.write_to_influx(house_id, analyses, used_k)
+                        print(f"[INFO] Energy separation done for {house_id}: {written} days (k={used_k:.4f})")
+                finally:
+                    calibrator.close()
+                break
+        except Exception as e:
+            print(f"[WARNING] Post-import energy separation failed: {e}")
 
         flash(f"Successfully imported {result['rows_written']} rows ({pending['new_kwh']:.1f} kWh).", 'success')
     else:
