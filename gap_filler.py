@@ -18,9 +18,11 @@ Usage:
     python3 gap_filler.py --username FC... --password "..." --from-midnight --dry-run
 """
 
+import json
 import os
 import sys
 import argparse
+import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -644,6 +646,885 @@ class WeatherGapFiller:
         self.client.close()
 
 
+class ArrigoBootstrapper:
+    """
+    Bootstraps a new building with 5-min historical Arrigo data.
+
+    Full pipeline:
+      Phase 1: Fetch 5-min Arrigo data (per-signal to stay under 50k limit)
+      Phase 2: Fetch SMHI weather history (~4 months via latest-months)
+      Phase 3: Copy energy_meter data from source house
+      Phase 4: Sanity checks (stale signals, coverage, range)
+      Phase 5: Write to InfluxDB (heating_system, thermal_history, weather, energy)
+      Phase 6: Run calibration pipeline (energy separation + k recalibration)
+    """
+
+    RANGE_CHECKS = {
+        'outdoor_temperature': (-40, 45),
+        'room_temperature': (10, 35),
+        'supply_temp': (15, 80),
+        'return_temp': (10, 70),
+        'hot_water_temp': (5, 80),
+        'system_pressure': (0, 10),
+    }
+
+    def __init__(
+        self,
+        influx_url: str,
+        influx_token: str,
+        influx_org: str,
+        influx_bucket: str,
+        house_id: str,
+        source_house_id: str,
+        username: str,
+        password: str,
+        latitude: float,
+        longitude: float,
+        days: int = 90,
+        resolution: int = 5,
+        arrigo_host: str = None,
+        verbose: bool = False
+    ):
+        self.influx_url = influx_url
+        self.influx_token = influx_token
+        self.influx_org = influx_org
+        self.influx_bucket = influx_bucket
+        self.house_id = house_id
+        self.source_house_id = source_house_id
+        self.username = username
+        self.password = password
+        self.latitude = latitude
+        self.longitude = longitude
+        self.days = days
+        self.resolution = resolution
+        self.arrigo_host = arrigo_host
+        self.verbose = verbose
+
+        self.arrigo_client = None
+        self.influx_client = None
+
+    def log(self, msg):
+        if self.verbose:
+            print(f"  [DEBUG] {msg}")
+
+    def _init_arrigo(self) -> bool:
+        """Authenticate with Arrigo and discover signals."""
+        self.arrigo_client = ArrigoHistoricalClient(
+            username=self.username,
+            password=self.password,
+            arrigo_host=self.arrigo_host,
+            verbose=self.verbose
+        )
+
+        if not self.arrigo_client.authenticate():
+            print("ERROR: Failed to authenticate with Arrigo")
+            return False
+
+        if not self.arrigo_client.select_house(0):
+            print("ERROR: Failed to select house")
+            return False
+
+        if not self.arrigo_client.login_to_arrigo():
+            print("ERROR: Failed to login to Arrigo server")
+            return False
+
+        if not self.arrigo_client.discover_signals():
+            print("ERROR: Failed to discover signals")
+            return False
+
+        return True
+
+    def _init_influx(self):
+        """Initialize InfluxDB client."""
+        if not self.influx_client:
+            self.influx_client = InfluxDBClient(
+                url=self.influx_url,
+                token=self.influx_token,
+                org=self.influx_org
+            )
+
+    def _fetch_signal_history(self, signal_id, field_name, start_time, end_time, resolution_seconds):
+        """
+        Fetch history for a single signal via GraphQL.
+        Uses cursor pagination if >50k points.
+
+        Returns list of (timestamp, value) tuples.
+        """
+        query = '''
+        query GetHistory($first: Int!, $after: String, $filter: AnalogEventFilter) {
+            analogsHistory(first: $first, after: $after, filter: $filter) {
+                totalCount
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
+                items {
+                    time
+                    value
+                    reliability
+                }
+            }
+        }
+        '''
+
+        all_points = []
+        cursor = None
+        page = 0
+
+        while True:
+            page += 1
+            variables = {
+                'first': 50000,
+                'filter': {
+                    'signalId': [signal_id],
+                    'ranges': [{
+                        'from': start_time.isoformat(),
+                        'to': end_time.isoformat()
+                    }],
+                    'timeLength': resolution_seconds,
+                    'timeLengthComparer': 'equal'
+                }
+            }
+            if cursor:
+                variables['after'] = cursor
+
+            try:
+                response = self.arrigo_client.arrigo_session.post(
+                    self.arrigo_client.graphql_url,
+                    json={'query': query, 'variables': variables},
+                    timeout=300
+                )
+
+                if response.status_code != 200:
+                    print(f"    ERROR: GraphQL returned {response.status_code} for {field_name}")
+                    break
+
+                result = response.json()
+                if 'errors' in result:
+                    # Fallback: retry without timeLengthComparer (may not be supported)
+                    if page == 1 and 'timeLengthComparer' in str(result['errors']):
+                        self.log(f"timeLengthComparer not supported, retrying without it")
+                        del variables['filter']['timeLengthComparer']
+                        response = self.arrigo_client.arrigo_session.post(
+                            self.arrigo_client.graphql_url,
+                            json={'query': query, 'variables': variables},
+                            timeout=300
+                        )
+                        result = response.json()
+                        if 'errors' in result:
+                            print(f"    ERROR: {result['errors']}")
+                            break
+                    else:
+                        print(f"    ERROR: {result['errors']}")
+                        break
+
+                history = result.get('data', {}).get('analogsHistory', {})
+                items = history.get('items', [])
+                total = history.get('totalCount', 0)
+                page_info = history.get('pageInfo', {})
+
+                if page == 1:
+                    self.log(f"  {field_name}: {total} total points available")
+
+                for item in items:
+                    value = item.get('value')
+                    if value is not None:
+                        time_str = item['time']
+                        try:
+                            ts = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                        except ValueError:
+                            ts = datetime.fromisoformat(time_str)
+                        all_points.append((ts, float(value)))
+
+                # Check for more pages
+                if page_info.get('hasNextPage'):
+                    cursor = page_info.get('endCursor')
+                    self.log(f"  {field_name}: fetched page {page}, continuing...")
+                else:
+                    break
+
+            except Exception as e:
+                print(f"    ERROR fetching {field_name}: {e}")
+                break
+
+        return all_points
+
+    def _phase1_fetch_arrigo(self, start_time, end_time):
+        """Phase 1: Fetch 5-min Arrigo data, one signal at a time."""
+        print(f"\n{'='*60}")
+        print("Phase 1: Fetch Arrigo historical data")
+        print(f"{'='*60}")
+        print(f"  Resolution: {self.resolution} min")
+        print(f"  Time range: {start_time.date()} to {end_time.date()}")
+        print(f"  Signals: {len(self.arrigo_client.signal_map)}")
+
+        resolution_seconds = self.resolution * 60
+        data_by_time = {}  # timestamp -> {field: value}
+        signal_stats = {}
+
+        for signal_id, info in self.arrigo_client.signal_map.items():
+            field_name = info['field_name']
+            print(f"  Fetching {field_name}...", end=' ', flush=True)
+
+            points = self._fetch_signal_history(
+                signal_id, field_name, start_time, end_time, resolution_seconds
+            )
+
+            print(f"{len(points)} points")
+            signal_stats[field_name] = len(points)
+
+            for ts, value in points:
+                if ts not in data_by_time:
+                    data_by_time[ts] = {}
+                data_by_time[ts][field_name] = value
+
+        # Summary
+        print(f"\n  Total unique timestamps: {len(data_by_time)}")
+        mem_estimate = len(data_by_time) * len(signal_stats) * 16 / 1024 / 1024
+        print(f"  Estimated memory: ~{mem_estimate:.1f} MB")
+
+        return data_by_time, signal_stats
+
+    def _phase2_fetch_weather(self, start_time, end_time):
+        """Phase 2: Fetch SMHI weather history for the bootstrap period."""
+        print(f"\n{'='*60}")
+        print("Phase 2: Fetch SMHI weather history")
+        print(f"{'='*60}")
+
+        smhi = SMHIWeather(
+            latitude=self.latitude,
+            longitude=self.longitude,
+            logger=DummyLogger()
+        )
+
+        observations = smhi.get_historical_observations(start_time, end_time)
+
+        if observations:
+            print(f"  Retrieved {len(observations)} hourly observations from SMHI")
+            first_ts = observations[0]['timestamp']
+            last_ts = observations[-1]['timestamp']
+            days_covered = (last_ts - first_ts).days
+            print(f"  Coverage: {first_ts.date()} to {last_ts.date()} ({days_covered} days)")
+            station = observations[0].get('station_name', 'unknown')
+            print(f"  Station: {station}")
+        else:
+            print("  WARNING: No SMHI historical data available")
+            print("  (SMHI latest-months covers ~4 months back)")
+
+        return observations
+
+    def _phase3_copy_energy(self, start_time, end_time):
+        """Phase 3: Copy energy_meter data from source house."""
+        print(f"\n{'='*60}")
+        print(f"Phase 3: Copy energy_meter data from {self.source_house_id}")
+        print(f"{'='*60}")
+
+        if not self.source_house_id:
+            print("  Skipped (no --source-house-id)")
+            return []
+
+        self._init_influx()
+        query_api = self.influx_client.query_api()
+
+        query = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
+            |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+            |> filter(fn: (r) => r["house_id"] == "{self.source_house_id}")
+            |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+            |> sort(columns: ["_time"])
+        '''
+
+        try:
+            tables = query_api.query(query, org=self.influx_org)
+            records = []
+            for table in tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    fields = {}
+                    meter_id = record.values.get('meter_id', '')
+                    for key, value in record.values.items():
+                        if key.startswith('_') or key in ['result', 'table', 'house_id', 'meter_id']:
+                            continue
+                        if value is not None:
+                            try:
+                                fields[key] = float(value)
+                            except (ValueError, TypeError):
+                                pass
+                    if fields:
+                        records.append({
+                            'timestamp': ts,
+                            'fields': fields,
+                            'meter_id': meter_id
+                        })
+
+            print(f"  Found {len(records)} energy_meter records from source")
+            if records:
+                first_ts = records[0]['timestamp']
+                last_ts = records[-1]['timestamp']
+                print(f"  Date range: {first_ts.date()} to {last_ts.date()}")
+            return records
+
+        except Exception as e:
+            print(f"  ERROR: Failed to query source energy data: {e}")
+            return []
+
+    def _phase4_sanity_check(self, data_by_time, signal_stats, weather_data, energy_data):
+        """Phase 4: Validate data quality before writing."""
+        print(f"\n{'='*60}")
+        print("Phase 4: Sanity checks")
+        print(f"{'='*60}")
+
+        issues = []
+        warnings = []
+
+        # Check 1: Stale value detection (stddev near 0)
+        # Setpoints and constants are expected to be stable - only warn, don't flag
+        non_varying_signals = {'target_temp_setpoint', 'supply_setpoint', 'outdoor_temp_24h_avg'}
+        print("\n  Stale signal detection:")
+        for field_name in sorted(signal_stats):
+            values = [data_by_time[ts][field_name]
+                      for ts in data_by_time if field_name in data_by_time[ts]]
+            if len(values) < 10:
+                continue
+            stddev = statistics.stdev(values) if len(values) > 1 else 0
+            mean_val = statistics.mean(values)
+            status = "OK"
+            if stddev < 0.01 and mean_val != 0:
+                if field_name in non_varying_signals or 'setpoint' in field_name.lower():
+                    status = "CONST"
+                    warnings.append(f"Signal '{field_name}' is constant ({mean_val:.2f}) - expected for setpoint")
+                else:
+                    status = "STUCK"
+                    issues.append(f"Signal '{field_name}' appears stuck (stddev={stddev:.4f}, mean={mean_val:.2f})")
+            elif stddev < 0.1:
+                status = "LOW_VAR"
+                warnings.append(f"Signal '{field_name}' has low variance (stddev={stddev:.4f})")
+            print(f"    {field_name:30s} stddev={stddev:8.3f}  mean={mean_val:8.2f}  [{status}]")
+
+        # Check 2: Data coverage (only core signals are critical)
+        print("\n  Data coverage:")
+        from import_historical_data import CORE_SIGNALS
+        expected_slots = self.days * 24 * (60 // self.resolution)
+        for field_name in sorted(signal_stats):
+            count = signal_stats[field_name]
+            coverage = count / expected_slots * 100 if expected_slots > 0 else 0
+            status = "OK" if coverage > 50 else "LOW"
+            is_core = field_name in CORE_SIGNALS
+            if coverage < 20 and is_core:
+                issues.append(f"Core signal '{field_name}' has very low coverage ({coverage:.0f}%)")
+            elif coverage < 20:
+                warnings.append(f"Signal '{field_name}' has low coverage ({coverage:.0f}%)")
+            print(f"    {field_name:30s} {count:>6} / {expected_slots} ({coverage:.0f}%)  [{status}]{'  (core)' if is_core else ''}")
+
+        # Check 3: Range checks
+        print("\n  Range checks:")
+        for field_name, (lo, hi) in self.RANGE_CHECKS.items():
+            values = [data_by_time[ts][field_name]
+                      for ts in data_by_time if field_name in data_by_time[ts]]
+            if not values:
+                continue
+            min_val = min(values)
+            max_val = max(values)
+            out_of_range = sum(1 for v in values if v < lo or v > hi)
+            pct_oor = out_of_range / len(values) * 100
+            status = "OK" if pct_oor < 5 else "WARN"
+            if pct_oor > 20:
+                issues.append(f"Signal '{field_name}' has {pct_oor:.0f}% out of range [{lo}, {hi}]")
+            print(f"    {field_name:30s} [{min_val:.1f}, {max_val:.1f}] expected [{lo}, {hi}]  {pct_oor:.1f}% OOR  [{status}]")
+
+        # Check 4: Core signals present
+        print("\n  Core signals:")
+        from import_historical_data import CORE_SIGNALS
+        for sig in CORE_SIGNALS:
+            present = sig in signal_stats and signal_stats[sig] > 0
+            status = "OK" if present else "MISSING"
+            if not present:
+                issues.append(f"Core signal '{sig}' is missing")
+            print(f"    {sig:30s} [{status}]")
+
+        # Check 5: Weather and energy data
+        print(f"\n  Weather data: {len(weather_data)} observations")
+        if not weather_data:
+            warnings.append("No weather history (effective temp will use defaults)")
+        print(f"  Energy meter data: {len(energy_data)} records")
+        if not energy_data:
+            warnings.append("No energy meter data (calibration needs manual energy import)")
+
+        # Summary
+        print(f"\n  {'='*40}")
+        if issues:
+            print(f"  ISSUES ({len(issues)}):")
+            for issue in issues:
+                print(f"    - {issue}")
+        if warnings:
+            print(f"  WARNINGS ({len(warnings)}):")
+            for w in warnings:
+                print(f"    - {w}")
+        if not issues and not warnings:
+            print("  All checks passed!")
+
+        return len(issues) == 0
+
+    def _get_all_house_ids(self):
+        """Get all house_ids from profiles/ and buildings/ directories.
+
+        Excludes auxiliary files like *_signals.json which are metadata,
+        not actual house/building profiles.
+        """
+        house_ids = set()
+        for directory in ['profiles', 'buildings']:
+            if os.path.isdir(directory):
+                for filename in os.listdir(directory):
+                    if filename.endswith('.json') and '_signals.json' not in filename:
+                        house_ids.add(filename.replace('.json', ''))
+        return sorted(house_ids)
+
+    def _get_existing_weather_timestamps(self, house_id, start_time, end_time):
+        """Query existing weather_observation timestamps for a house."""
+        self._init_influx()
+        query_api = self.influx_client.query_api()
+
+        query = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
+            |> filter(fn: (r) => r["_measurement"] == "weather_observation")
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["_field"] == "temperature")
+            |> keep(columns: ["_time"])
+        '''
+
+        try:
+            tables = query_api.query(query, org=self.influx_org)
+            timestamps = set()
+            for table in tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    if ts:
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        # Round to nearest hour for comparison (SMHI data is hourly)
+                        ts = ts.replace(minute=0, second=0, microsecond=0)
+                        timestamps.add(ts)
+            return timestamps
+        except Exception as e:
+            self.log(f"Failed to query existing weather for {house_id}: {e}")
+            return set()
+
+    def _save_signal_metadata(self, data_by_time, signal_stats):
+        """Save signal discovery and quality metadata to a JSON file.
+
+        Creates a file like buildings/TE236_HEM_Kontor.json but for villa profiles,
+        documenting each Arrigo signal: its ID, name, unit, quality status (stale,
+        zero, workable), and basic stats from the fetched data.
+        """
+        from import_historical_data import CORE_SIGNALS
+
+        expected_slots = self.days * 24 * (60 // self.resolution)
+        non_varying_signals = {'target_temp_setpoint', 'supply_setpoint', 'outdoor_temp_24h_avg'}
+
+        signals_meta = {}
+        for signal_id, info in self.arrigo_client.signal_map.items():
+            field_name = info['field_name']
+            arrigo_name = info.get('arrigo_name', '')
+            unit = info.get('unit', '')
+            current_value = info.get('current_value')
+
+            # Compute quality stats from fetched data
+            values = [data_by_time[ts][field_name]
+                      for ts in data_by_time if field_name in data_by_time[ts]]
+            count = signal_stats.get(field_name, 0)
+            coverage_pct = round(count / expected_slots * 100, 1) if expected_slots > 0 else 0
+
+            if len(values) > 1:
+                stddev = round(statistics.stdev(values), 4)
+                mean_val = round(statistics.mean(values), 2)
+                min_val = round(min(values), 2)
+                max_val = round(max(values), 2)
+            elif len(values) == 1:
+                stddev = 0.0
+                mean_val = round(values[0], 2)
+                min_val = mean_val
+                max_val = mean_val
+            else:
+                stddev = None
+                mean_val = None
+                min_val = None
+                max_val = None
+
+            # Determine status
+            if count == 0:
+                status = "no_data"
+                fetch = False
+            elif stddev is not None and stddev < 0.01 and mean_val == 0:
+                status = "always_zero"
+                fetch = False
+            elif stddev is not None and stddev < 0.01:
+                if field_name in non_varying_signals or 'setpoint' in field_name.lower():
+                    status = "constant_setpoint"
+                    fetch = True
+                else:
+                    status = "stale"
+                    fetch = False
+            elif coverage_pct < 20:
+                status = "low_coverage"
+                fetch = True
+            else:
+                status = "ok"
+                fetch = True
+
+            signals_meta[arrigo_name] = {
+                "signal_id": signal_id,
+                "field_name": field_name,
+                "unit": unit,
+                "is_core": field_name in CORE_SIGNALS,
+                "fetch": fetch,
+                "status": status,
+                "discovered_value": current_value,
+                "stats": {
+                    "points": count,
+                    "coverage_pct": coverage_pct,
+                    "mean": mean_val,
+                    "stddev": stddev,
+                    "min": min_val,
+                    "max": max_val,
+                }
+            }
+
+        # Build the metadata document
+        metadata = {
+            "schema_version": 1,
+            "house_id": self.house_id,
+            "bootstrap_date": datetime.now(timezone.utc).isoformat(),
+            "source": "arrigo_bootstrap",
+            "resolution_minutes": self.resolution,
+            "days_fetched": self.days,
+            "expected_slots": expected_slots,
+            "total_signals_discovered": len(self.arrigo_client.signal_map),
+            "signals": signals_meta
+        }
+
+        # Write to profiles/<house_id>_signals.json
+        out_path = os.path.join("profiles", f"{self.house_id}_signals.json")
+        with open(out_path, 'w') as f:
+            json.dump(metadata, f, indent=2, default=str)
+        print(f"\n  Signal metadata saved to {out_path}")
+
+        # Print summary
+        status_counts = {}
+        for sig in signals_meta.values():
+            s = sig['status']
+            status_counts[s] = status_counts.get(s, 0) + 1
+        summary_parts = [f"{count} {status}" for status, count in sorted(status_counts.items())]
+        print(f"  Signal summary: {', '.join(summary_parts)}")
+
+    def _phase5_write_influx(self, data_by_time, weather_data, energy_data, dry_run=False):
+        """Phase 5: Write all data to InfluxDB in batches.
+
+        Weather data is written for ALL buildings (shared station) with
+        deduplication: only timestamps not already present are written.
+        """
+        print(f"\n{'='*60}")
+        print(f"Phase 5: Write to InfluxDB{' (DRY RUN)' if dry_run else ''}")
+        print(f"{'='*60}")
+
+        total_heating = sum(1 for ts in data_by_time
+                            if 'room_temperature' in data_by_time[ts]
+                            and 'outdoor_temperature' in data_by_time[ts])
+
+        # Determine weather write plan (all houses, deduped)
+        all_house_ids = self._get_all_house_ids()
+        weather_ts_set = {obs['timestamp'].replace(minute=0, second=0, microsecond=0)
+                          for obs in weather_data} if weather_data else set()
+
+        if dry_run:
+            self._init_influx()
+            print(f"  Would write {total_heating} heating_system + thermal_history points for {self.house_id}")
+            print(f"  Would write {len(energy_data)} energy_meter points for {self.house_id}")
+            print(f"\n  Weather dedup check ({len(weather_data)} SMHI observations, {len(all_house_ids)} buildings):")
+            for hid in all_house_ids:
+                if weather_data:
+                    start_ts = min(weather_ts_set)
+                    end_ts = max(weather_ts_set) + timedelta(hours=1)
+                    existing = self._get_existing_weather_timestamps(hid, start_ts, end_ts)
+                    new_count = len(weather_ts_set - existing)
+                    print(f"    {hid:40s} {len(existing):>5} existing, {new_count:>5} new")
+                else:
+                    print(f"    {hid:40s} (no weather data to write)")
+            return
+
+        self._init_influx()
+
+        # Delete existing heating/thermal/energy data for bootstrap house only
+        # (NOT weather - we handle that with dedup below)
+        delete_api = self.influx_client.delete_api()
+        now = datetime.now(timezone.utc)
+        start_delete = now - timedelta(days=self.days + 1)
+
+        for measurement in ['heating_system', 'thermal_history', 'energy_meter']:
+            predicate = f'_measurement="{measurement}" AND house_id="{self.house_id}"'
+            try:
+                delete_api.delete(start_delete, now, predicate,
+                                  bucket=self.influx_bucket, org=self.influx_org)
+                self.log(f"Deleted existing {measurement} for {self.house_id}")
+            except Exception as e:
+                self.log(f"Delete {measurement} (may not exist): {e}")
+
+        write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
+        batch_size = 500
+
+        # === Write heating_system + thermal_history (bootstrap house only) ===
+        print(f"  Writing heating_system + thermal_history...", end=' ', flush=True)
+        points = []
+        for ts in sorted(data_by_time.keys()):
+            fields = data_by_time[ts]
+            if 'room_temperature' not in fields or 'outdoor_temperature' not in fields:
+                continue
+
+            hp = Point("heating_system").tag("house_id", self.house_id).time(ts, WritePrecision.S)
+            for field, value in fields.items():
+                hp.field(field, round(float(value), 2))
+            points.append(hp)
+
+            tp = Point("thermal_history").tag("house_id", self.house_id).time(ts, WritePrecision.S)
+            tp.field("room_temperature", round(float(fields['room_temperature']), 2))
+            tp.field("outdoor_temperature", round(float(fields['outdoor_temperature']), 2))
+            if 'supply_temp' in fields:
+                tp.field("supply_temp", round(float(fields['supply_temp']), 2))
+            if 'return_temp' in fields:
+                tp.field("return_temp", round(float(fields['return_temp']), 2))
+            points.append(tp)
+
+            if len(points) >= batch_size:
+                write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+                points = []
+        if points:
+            write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+        print(f"{total_heating} points")
+
+        # === Write weather for ALL buildings (deduped per house) ===
+        if weather_data:
+            print(f"  Writing weather_observation (all buildings, deduped):")
+            start_ts = min(weather_ts_set)
+            end_ts = max(weather_ts_set) + timedelta(hours=1)
+
+            for hid in all_house_ids:
+                existing_ts = self._get_existing_weather_timestamps(hid, start_ts, end_ts)
+                new_obs = [obs for obs in weather_data
+                           if obs['timestamp'].replace(minute=0, second=0, microsecond=0)
+                           not in existing_ts]
+
+                if not new_obs:
+                    print(f"    {hid}: 0 new (all {len(existing_ts)} already exist)")
+                    continue
+
+                points = []
+                for obs in new_obs:
+                    p = Point("weather_observation") \
+                        .tag("house_id", hid) \
+                        .tag("station_name", obs.get('station_name', 'unknown')) \
+                        .tag("station_id", str(obs.get('station_id', 0))) \
+                        .tag("source", "bootstrap") \
+                        .field("temperature", round(float(obs['temperature']), 2)) \
+                        .time(obs['timestamp'])
+
+                    if obs.get('wind_speed') is not None:
+                        p.field("wind_speed", round(float(obs['wind_speed']), 2))
+                    if obs.get('humidity') is not None:
+                        p.field("humidity", round(float(obs['humidity']), 2))
+                    if obs.get('distance_km') is not None:
+                        p.field("distance_km", round(float(obs['distance_km']), 2))
+                    points.append(p)
+
+                    if len(points) >= batch_size:
+                        write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+                        points = []
+                if points:
+                    write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+                print(f"    {hid}: {len(new_obs)} new (skipped {len(existing_ts)} existing)")
+
+        # === Write energy_meter (bootstrap house only) ===
+        if energy_data:
+            print(f"  Writing energy_meter...", end=' ', flush=True)
+            points = []
+            for record in energy_data:
+                p = Point("energy_meter") \
+                    .tag("house_id", self.house_id) \
+                    .tag("meter_id", record.get('meter_id', '')) \
+                    .time(record['timestamp'])
+                for field, value in record['fields'].items():
+                    p.field(field, float(value))
+                points.append(p)
+
+                if len(points) >= batch_size:
+                    write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+                    points = []
+            if points:
+                write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+            print(f"{len(energy_data)} points")
+
+        print(f"  Done!")
+
+    def _phase6_calibrate(self):
+        """Phase 6: Run energy separation + k recalibration."""
+        print(f"\n{'='*60}")
+        print("Phase 6: Run calibration pipeline")
+        print(f"{'='*60}")
+
+        from heating_energy_calibrator import HeatingEnergyCalibrator
+        from k_recalibrator import recalibrate_house
+
+        # Step 1: Energy separation
+        print(f"\n  Running energy separation for {self.house_id}...")
+        calibrator = HeatingEnergyCalibrator(
+            influx_url=self.influx_url,
+            influx_token=self.influx_token,
+            influx_org=self.influx_org,
+            influx_bucket=self.influx_bucket,
+            latitude=self.latitude,
+            longitude=self.longitude
+        )
+
+        start_date = (datetime.now(timezone.utc) - timedelta(days=self.days)).strftime('%Y-%m-%d')
+        analyses, used_k = calibrator.analyze(
+            house_id=self.house_id,
+            start_date=start_date,
+            k_percentile=15,
+            quiet=False
+        )
+
+        if analyses:
+            written = calibrator.write_to_influx(self.house_id, analyses, used_k)
+            print(f"  Energy separation: {written} days written, k={used_k:.4f}")
+        else:
+            print(f"  WARNING: No energy separation results (need energy_meter data)")
+            used_k = 0.0
+
+        calibrator.close()
+
+        # Step 2: K recalibration
+        print(f"\n  Running k-recalibration for {self.house_id}...")
+        result = recalibrate_house(
+            house_id=self.house_id,
+            influx_url=self.influx_url,
+            influx_token=self.influx_token,
+            influx_org=self.influx_org,
+            influx_bucket=self.influx_bucket,
+            profiles_dir="profiles",
+            days=self.days,
+            update_profile=True
+        )
+
+        if result:
+            print(f"  K-recalibration: k={result.k_value:.4f}, confidence={result.confidence:.0%}")
+        else:
+            print(f"  WARNING: K-recalibration produced no result")
+
+        return used_k, result
+
+    def _print_comparison(self, used_k, recal_result):
+        """Print side-by-side comparison with source house."""
+        if not self.source_house_id:
+            return
+
+        print(f"\n{'='*60}")
+        print("Bootstrap Calibration Results")
+        print(f"{'='*60}")
+
+        try:
+            from customer_profile import CustomerProfile
+            source_profile = CustomerProfile.load(self.source_house_id, profiles_dir='profiles')
+            test_profile = CustomerProfile.load(self.house_id, profiles_dir='profiles')
+
+            src_es = source_profile.energy_separation
+            tst_es = test_profile.energy_separation
+
+            print(f"\n  {'':30s} {'Source (15-min)':>18s}  {'Bootstrap (5-min)':>18s}")
+            print(f"  {'-'*70}")
+            print(f"  {'House':30s} {self.source_house_id:>18s}  {self.house_id:>18s}")
+            print(f"  {'k_value (heat_loss_k)':30s} {src_es.heat_loss_k:>18.5f}  {tst_es.heat_loss_k:>18.5f}")
+            print(f"  {'DHW percentage':30s} {src_es.dhw_percentage:>17.1f}%  {tst_es.dhw_percentage:>17.1f}%")
+            print(f"  {'Calibration days':30s} {src_es.calibration_days:>18d}  {tst_es.calibration_days:>18d}")
+            print(f"  {'Calibration date':30s} {str(src_es.calibration_date):>18s}  {str(tst_es.calibration_date):>18s}")
+
+            if src_es.heat_loss_k > 0 and tst_es.heat_loss_k > 0:
+                k_diff_pct = abs(tst_es.heat_loss_k - src_es.heat_loss_k) / src_es.heat_loss_k * 100
+                print(f"\n  K-value difference: {k_diff_pct:.1f}%")
+                if k_diff_pct < 20:
+                    print(f"  Result: GOOD (within 20% tolerance)")
+                else:
+                    print(f"  Result: INVESTIGATE (>20% difference)")
+
+        except Exception as e:
+            print(f"  Could not load profiles for comparison: {e}")
+
+    def run(self, dry_run=False, no_calibrate=False):
+        """Execute the full bootstrap pipeline."""
+        print("=" * 60)
+        print(f"Bootstrap: {self.house_id}")
+        print(f"Source: {self.source_house_id or 'none'}")
+        print(f"Days: {self.days}, Resolution: {self.resolution} min")
+        print("=" * 60)
+
+        # Initialize Arrigo
+        if not self._init_arrigo():
+            return False
+
+        # Calculate time range
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(days=self.days)
+
+        # Phase 1: Fetch Arrigo data
+        data_by_time, signal_stats = self._phase1_fetch_arrigo(start_time, end_time)
+        if not data_by_time:
+            print("ERROR: No data from Arrigo. Aborting.")
+            return False
+
+        # Phase 2: Fetch weather history
+        weather_data = self._phase2_fetch_weather(start_time, end_time)
+
+        # Phase 3: Copy energy_meter data
+        energy_data = self._phase3_copy_energy(start_time, end_time)
+
+        # Phase 4: Sanity checks
+        passed = self._phase4_sanity_check(data_by_time, signal_stats, weather_data, energy_data)
+        if not passed and not dry_run:
+            print("\nSanity checks found critical issues.")
+            response = input("Continue anyway? [y/N]: ").strip().lower()
+            if response != 'y':
+                print("Aborted.")
+                return False
+        elif not passed:
+            print("\n(Sanity issues found - continuing dry run to show write plan)")
+
+        # Save signal discovery metadata (always, even on dry-run)
+        self._save_signal_metadata(data_by_time, signal_stats)
+
+        # Phase 5: Write to InfluxDB
+        self._phase5_write_influx(data_by_time, weather_data, energy_data, dry_run=dry_run)
+
+        if dry_run:
+            print("\nDry run complete. No data written.")
+            return True
+
+        # Phase 6: Run calibration
+        if no_calibrate:
+            print("\nSkipping calibration (--no-calibrate)")
+            return True
+
+        used_k, recal_result = self._phase6_calibrate()
+
+        # Print comparison
+        self._print_comparison(used_k, recal_result)
+
+        print("\nBootstrap complete!")
+        return True
+
+    def close(self):
+        if self.influx_client:
+            self.influx_client.close()
+
+
 def fill_gaps_on_startup(
     influx_url: str,
     influx_token: str,
@@ -712,7 +1593,7 @@ def fill_gaps_on_startup(
                 )
 
                 weather_written, _, weather_errors = weather_filler.fill_weather_gaps(
-                    start_time, end_time, expected_interval, dry_run=False
+                    start_time, end_time, dry_run=False
                 )
 
                 weather_filler.close()
@@ -747,9 +1628,42 @@ def fill_gaps_on_startup(
         return False
 
 
+def run_bootstrap(args):
+    """Run the bootstrap pipeline from CLI args."""
+    print("=" * 60)
+    print("Arrigo Bootstrap")
+    print("=" * 60)
+
+    bootstrapper = ArrigoBootstrapper(
+        influx_url=args.influx_url,
+        influx_token=args.influx_token,
+        influx_org=args.influx_org,
+        influx_bucket=args.influx_bucket,
+        house_id=args.house_id,
+        source_house_id=args.source_house_id,
+        username=args.username,
+        password=args.password,
+        latitude=args.lat,
+        longitude=args.lon,
+        days=args.days,
+        resolution=args.resolution,
+        verbose=args.verbose
+    )
+
+    try:
+        success = bootstrapper.run(
+            dry_run=args.dry_run,
+            no_calibrate=args.no_calibrate
+        )
+        if not success:
+            sys.exit(1)
+    finally:
+        bootstrapper.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Fill gaps in InfluxDB heating and weather data',
+        description='Fill gaps in InfluxDB heating and weather data, or bootstrap new buildings',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -767,12 +1681,39 @@ Examples:
 
     # Detect gaps only (no filling)
     python3 gap_filler.py --username FC... --password "..." --detect-only --last-hours 24 --lat 56.67 --lon 12.86
+
+    # Bootstrap new building with 5-min Arrigo data
+    python3 gap_filler.py --bootstrap --username FC... --password "..." \\
+        --house-id HEM_FJV_Villa_149_TEST --source-house-id HEM_FJV_Villa_149 \\
+        --lat 56.67 --lon 12.86 --days 90 --resolution 5
+
+    # Bootstrap dry run (fetch + sanity check, no writes)
+    python3 gap_filler.py --bootstrap --username FC... --password "..." \\
+        --house-id HEM_FJV_Villa_149_TEST --source-house-id HEM_FJV_Villa_149 \\
+        --lat 56.67 --lon 12.86 --days 90 --dry-run
+
+    # Bootstrap without calibration (data only)
+    python3 gap_filler.py --bootstrap --username FC... --password "..." \\
+        --house-id HEM_FJV_Villa_149_TEST --source-house-id HEM_FJV_Villa_149 \\
+        --lat 56.67 --lon 12.86 --days 90 --no-calibrate
         """
     )
 
     # Authentication
     parser.add_argument('--username', required=True, help='HomeSide username')
     parser.add_argument('--password', required=True, help='HomeSide password')
+
+    # Bootstrap mode
+    parser.add_argument('--bootstrap', action='store_true',
+                        help='Bootstrap a new building with 5-min Arrigo historical data')
+    parser.add_argument('--source-house-id', type=str,
+                        help='Source house ID to copy energy_meter data from (bootstrap mode)')
+    parser.add_argument('--resolution', type=int, default=5,
+                        help='Data resolution in minutes for bootstrap (default: 5)')
+    parser.add_argument('--days', type=int, default=90,
+                        help='Days of history for bootstrap (default: 90)')
+    parser.add_argument('--no-calibrate', action='store_true',
+                        help='Skip calibration after bootstrap (data import only)')
 
     # Time range options
     parser.add_argument('--from-midnight', action='store_true',
@@ -803,6 +1744,15 @@ Examples:
                         help='Expected data interval in minutes (default: 15)')
 
     args = parser.parse_args()
+
+    # Bootstrap mode - separate code path
+    if args.bootstrap:
+        if not args.house_id:
+            parser.error("--bootstrap requires --house-id")
+        if not args.lat or not args.lon:
+            parser.error("--bootstrap requires --lat and --lon")
+        run_bootstrap(args)
+        return
 
     # Determine time range
     now = datetime.now(SWEDISH_TZ)

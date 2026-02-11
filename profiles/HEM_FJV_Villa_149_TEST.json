@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "customer_id": "HEM_FJV_Villa_149_TEST",
+  "friendly_name": "Daggis8_TEST",
+  "meter_ids": [],
+  "building": {
+    "description": "Bootstrap test copy of Daggis8 - used to validate 5-min Arrigo data pipeline",
+    "thermal_response": "medium"
+  },
+  "comfort": {
+    "target_indoor_temp": 22.0,
+    "acceptable_deviation": 1.0
+  },
+  "heating_system": {
+    "response_time_minutes": 30,
+    "max_supply_temp": 55
+  },
+  "learned": {
+    "thermal_coefficient": null,
+    "thermal_coefficient_confidence": 0.0,
+    "hourly_bias": {},
+    "samples_since_last_update": 0,
+    "total_samples": 0,
+    "next_update_at_samples": 24,
+    "updated_at": null,
+    "weather_coefficients": {
+      "solar_coefficient_ml2": null,
+      "wind_coefficient_ml2": null,
+      "solar_confidence_ml2": 0.0,
+      "total_solar_events": 0,
+      "events_since_last_update": 0,
+      "next_update_at_events": 6,
+      "updated_at": null
+    },
+    "thermal_timing": {
+      "heat_up_lag_minutes_ml2": null,
+      "cool_down_lag_minutes_ml2": null,
+      "confidence_ml2": 0.0,
+      "total_transitions": 0,
+      "updated_at": null
+    }
+  },
+  "energy_separation": {
+    "enabled": true,
+    "method": "k_calibration",
+    "heat_loss_k": 0.06256,
+    "k_percentile": 15,
+    "calibration_date": "2026-02-11",
+    "calibration_days": 40,
+    "dhw_percentage": 0.0,
+    "dhw_temp_threshold": 45.0,
+    "dhw_temp_rise_threshold": 2.0,
+    "dhw_baseline_temp": 25.0,
+    "avg_dhw_power_kw": 25.0,
+    "cold_water_temp": 8.0,
+    "hot_water_target_temp": 55.0
+  }
+}

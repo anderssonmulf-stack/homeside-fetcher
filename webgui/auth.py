@@ -429,7 +429,7 @@ class UserManager:
 
         if os.path.exists(profiles_dir):
             for filename in os.listdir(profiles_dir):
-                if filename.endswith('.json'):
+                if filename.endswith('.json') and '_signals.json' not in filename:
                     houses.append(filename[:-5])  # Remove .json
 
         return houses

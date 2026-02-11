@@ -109,7 +109,7 @@ class MeterRequestManager:
             return profiles
 
         for filename in os.listdir(self.profiles_dir):
-            if not filename.endswith('.json'):
+            if not filename.endswith('.json') or '_signals.json' in filename:
                 continue
 
             filepath = os.path.join(self.profiles_dir, filename)

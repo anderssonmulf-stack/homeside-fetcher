@@ -57,7 +57,43 @@ class DailyEnergyAnalysis:
 
 # Minimum data coverage to include day in calibration
 MIN_DATA_COVERAGE = 0.8  # 80% = ~77 data points out of 96 expected
-EXPECTED_POINTS_PER_DAY = 96  # 24 hours × 4 samples/hour (15-min intervals)
+EXPECTED_POINTS_PER_DAY = 96  # Default: 24 hours × 4 samples/hour (15-min intervals)
+
+
+def detect_data_resolution(daily_heating: dict) -> tuple:
+    """
+    Auto-detect data resolution from actual point density.
+
+    Examines the median number of points per day to determine if data is
+    5-min (288 pts/day), 15-min (96 pts/day), or hourly (24 pts/day).
+
+    Returns:
+        (expected_points_per_day, minutes_per_sample)
+    """
+    if not daily_heating:
+        return EXPECTED_POINTS_PER_DAY, 15
+
+    # Get point counts for complete-ish days (skip first/last which may be partial)
+    dates = sorted(daily_heating.keys())
+    if len(dates) > 2:
+        dates = dates[1:-1]  # Skip first and last day (often partial)
+
+    counts = [len(daily_heating[d]) for d in dates]
+    if not counts:
+        return EXPECTED_POINTS_PER_DAY, 15
+
+    median_count = sorted(counts)[len(counts) // 2]
+
+    # Classify based on median daily points
+    if median_count > 200:
+        # 5-min data: ~288 points/day
+        return 288, 5
+    elif median_count > 50:
+        # 15-min data: ~96 points/day
+        return 96, 15
+    else:
+        # Hourly data: ~24 points/day
+        return 24, 60
 
 # K calibration percentiles
 # Lower percentile = find days with minimal DHW (heating-only baseline)
@@ -308,12 +344,17 @@ class HeatingEnergyCalibrator:
                 daily_heating[date] = []
             daily_heating[date].append(d)
 
+        # Auto-detect data resolution
+        expected_ppd, sample_minutes = detect_data_resolution(daily_heating)
+        if expected_ppd != EXPECTED_POINTS_PER_DAY and not quiet:
+            print(f"Detected data resolution: {sample_minutes}-min ({expected_ppd} points/day)")
+
         if debug and not quiet:
             print("\nDEBUG: Data points per day:")
             for date in sorted(daily_heating.keys()):
                 count = len(daily_heating[date])
-                coverage = count / EXPECTED_POINTS_PER_DAY * 100
-                flag = " ← OVER!" if count > EXPECTED_POINTS_PER_DAY else ""
+                coverage = count / expected_ppd * 100
+                flag = " ← OVER!" if count > expected_ppd else ""
                 print(f"  {date}: {count} points ({coverage:.0f}%){flag}")
 
         # Calculate daily analyses
@@ -365,7 +406,7 @@ class HeatingEnergyCalibrator:
                 # Count DHW events (transitions from cold to hot)
                 # and track minutes with elevated hot water temp
                 if hw_temp and hw_temp > dhw_threshold:
-                    dhw_minutes += 15  # Each sample = 15 minutes
+                    dhw_minutes += sample_minutes  # Each sample = N minutes
                     if not prev_dhw_active:
                         dhw_events += 1  # New DHW usage event started
                         prev_dhw_active = True
@@ -381,10 +422,10 @@ class HeatingEnergyCalibrator:
             avg_diff = avg_indoor - avg_effective
 
             # Calculate data coverage (what fraction of expected points we have)
-            data_coverage = len(day_data) / EXPECTED_POINTS_PER_DAY
+            data_coverage = len(day_data) / expected_ppd
 
             # Degree-hours (ΔT × hours of data)
-            hours_of_data = len(day_data) * 0.25  # 15-min intervals
+            hours_of_data = len(day_data) * (sample_minutes / 60)
             degree_hours = avg_diff * hours_of_data
 
             # Calculate implied k for this day

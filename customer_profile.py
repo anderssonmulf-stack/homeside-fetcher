@@ -429,7 +429,7 @@ def build_meter_mapping(profiles_dir: str = "profiles") -> Dict[str, str]:
         return mapping
 
     for filename in os.listdir(profiles_dir):
-        if not filename.endswith('.json'):
+        if not filename.endswith('.json') or '_signals.json' in filename:
             continue
 
         try:

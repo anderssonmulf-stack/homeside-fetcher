@@ -1,0 +1,250 @@
+{
+  "schema_version": 1,
+  "house_id": "HEM_FJV_Villa_149_TEST",
+  "bootstrap_date": "2026-02-11T05:27:31.250343+00:00",
+  "source": "arrigo_bootstrap",
+  "resolution_minutes": 5,
+  "days_fetched": 90,
+  "expected_slots": 25920,
+  "total_signals_discovered": 14,
+  "signals": {
+    "HEM_FJV_Villa_149.VMM1_Energy": {
+      "signal_id": "ODAzMDU=",
+      "field_name": "dh_energy_total",
+      "unit": "MWh",
+      "is_core": false,
+      "fetch": false,
+      "status": "no_data",
+      "discovered_value": 0.0,
+      "stats": {
+        "points": 0,
+        "coverage_pct": 0.0,
+        "mean": null,
+        "stddev": null,
+        "min": null,
+        "max": null
+      }
+    },
+    "HEM_FJV_Villa_149.VMM1_TempRet": {
+      "signal_id": "ODAyOTc=",
+      "field_name": "dh_return_temp",
+      "unit": "\u00b0C",
+      "is_core": false,
+      "fetch": false,
+      "status": "always_zero",
+      "discovered_value": 0.0,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      }
+    },
+    "HEM_FJV_Villa_149.VMM1_TempForw": {
+      "signal_id": "ODAyOTY=",
+      "field_name": "dh_supply_temp",
+      "unit": "\u00b0C",
+      "is_core": false,
+      "fetch": false,
+      "status": "always_zero",
+      "discovered_value": 0.0,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      }
+    },
+    "HEM_FJV_Villa_149.VMM1_Power": {
+      "signal_id": "ODAyOTU=",
+      "field_name": "dh_power",
+      "unit": "kW",
+      "is_core": false,
+      "fetch": false,
+      "status": "always_zero",
+      "discovered_value": 0.0,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      }
+    },
+    "HEM_FJV_Villa_149.VMM1_Flow": {
+      "signal_id": "ODAyOTQ=",
+      "field_name": "dh_flow",
+      "unit": "l/h",
+      "is_core": false,
+      "fetch": false,
+      "status": "always_zero",
+      "discovered_value": 0.0,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      }
+    },
+    "HEM_FJV_Villa_149.AI_GP_EXP1_1_Output": {
+      "signal_id": "ODAyODE=",
+      "field_name": "system_pressure",
+      "unit": "Bar",
+      "is_core": false,
+      "fetch": true,
+      "status": "ok",
+      "discovered_value": 0.8805214166641235,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 0.89,
+        "stddev": 0.0154,
+        "min": 0.86,
+        "max": 0.97
+      }
+    },
+    "HEM_FJV_Villa_149.AI_VS1_GT_RETUR_1_Output": {
+      "signal_id": "ODAyNzg=",
+      "field_name": "return_temp",
+      "unit": "\u00b0C",
+      "is_core": true,
+      "fetch": true,
+      "status": "ok",
+      "discovered_value": 27.467924118041992,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 27.56,
+        "stddev": 2.7303,
+        "min": 20.91,
+        "max": 37.77
+      }
+    },
+    "HEM_FJV_Villa_149.PID_VS1_GT_TILL_1_SetP": {
+      "signal_id": "ODAyNzc=",
+      "field_name": "supply_setpoint",
+      "unit": "\u00b0C",
+      "is_core": false,
+      "fetch": true,
+      "status": "ok",
+      "discovered_value": 29.95923614501953,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 29.23,
+        "stddev": 3.3048,
+        "min": 22.0,
+        "max": 36.85
+      }
+    },
+    "HEM_FJV_Villa_149.AI_VS1_GT_TILL_1_Output": {
+      "signal_id": "ODAyNzY=",
+      "field_name": "supply_temp",
+      "unit": "\u00b0C",
+      "is_core": true,
+      "fetch": true,
+      "status": "ok",
+      "discovered_value": 29.02527618408203,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 29.24,
+        "stddev": 3.5482,
+        "min": 21.12,
+        "max": 52.11
+      }
+    },
+    "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_SetPoint": {
+      "signal_id": "ODAyNzU=",
+      "field_name": "target_temp_setpoint",
+      "unit": "\u00b0C",
+      "is_core": false,
+      "fetch": true,
+      "status": "constant_setpoint",
+      "discovered_value": 22.5,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 22.5,
+        "stddev": 0.0004,
+        "min": 22.45,
+        "max": 22.5
+      }
+    },
+    "HEM_FJV_Villa_149.MEAN_GT_RUM_1_Output": {
+      "signal_id": "ODAyNzQ=",
+      "field_name": "room_temperature",
+      "unit": "\u00b0C",
+      "is_core": true,
+      "fetch": true,
+      "status": "ok",
+      "discovered_value": 22.400009155273438,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 22.45,
+        "stddev": 0.4096,
+        "min": 20.6,
+        "max": 23.7
+      }
+    },
+    "HEM_FJV_Villa_149.AI_VV1_TAPP_GT41_Output": {
+      "signal_id": "ODAyNzA=",
+      "field_name": "hot_water_temp",
+      "unit": "\u00b0C",
+      "is_core": false,
+      "fetch": true,
+      "status": "ok",
+      "discovered_value": 27.601057052612305,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 28.7,
+        "stddev": 5.4915,
+        "min": 22.73,
+        "max": 54.82
+      }
+    },
+    "HEM_FJV_Villa_149.GT_UTE_MEDEL_24": {
+      "signal_id": "ODAyNjg=",
+      "field_name": "outdoor_temp_24h_avg",
+      "unit": "\u00b0C",
+      "is_core": false,
+      "fetch": true,
+      "status": "ok",
+      "discovered_value": -0.5880944132804871,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 2.27,
+        "stddev": 3.8955,
+        "min": -7.21,
+        "max": 10.7
+      }
+    },
+    "HEM_FJV_Villa_149.GT_UTE": {
+      "signal_id": "ODAyNjc=",
+      "field_name": "outdoor_temperature",
+      "unit": "\u00b0C",
+      "is_core": true,
+      "fetch": true,
+      "status": "ok",
+      "discovered_value": -0.1668570190668106,
+      "stats": {
+        "points": 25953,
+        "coverage_pct": 100.1,
+        "mean": 2.15,
+        "stddev": 4.4019,
+        "min": -11.92,
+        "max": 13.21
+      }
+    }
+  }
+}

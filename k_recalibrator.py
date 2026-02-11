@@ -348,7 +348,7 @@ def recalibrate_house(
     # Find profile
     profile = None
     for filename in os.listdir(profiles_dir):
-        if filename.endswith('.json') and house_id in filename:
+        if filename.endswith('.json') and '_signals.json' not in filename and house_id in filename:
             try:
                 profile = CustomerProfile.load(
                     filename.replace('.json', ''),
@@ -422,7 +422,7 @@ if __name__ == '__main__':
     elif args.all:
         # All enabled houses
         for filename in os.listdir(profiles_dir):
-            if not filename.endswith('.json'):
+            if not filename.endswith('.json') or '_signals.json' in filename:
                 continue
             try:
                 house_id = filename.replace('.json', '')

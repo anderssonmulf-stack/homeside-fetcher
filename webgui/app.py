@@ -56,7 +56,7 @@ def get_houses_with_names():
 
     if os.path.exists(profiles_dir):
         for filename in os.listdir(profiles_dir):
-            if filename.endswith('.json'):
+            if filename.endswith('.json') and '_signals.json' not in filename:
                 house_id = filename[:-5]
                 try:
                     profile = CustomerProfile.load(house_id, profiles_dir)
@@ -2206,7 +2206,7 @@ def api_grafana_houses():
 
     if os.path.exists(profiles_dir):
         for filename in os.listdir(profiles_dir):
-            if filename.endswith('.json'):
+            if filename.endswith('.json') and '_signals.json' not in filename:
                 customer_id = filename[:-5]
                 try:
                     profile = CustomerProfile.load(customer_id, profiles_dir)

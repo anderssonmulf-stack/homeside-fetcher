@@ -141,6 +141,8 @@ def scan_configs() -> dict[str, dict]:
     profiles = Path(PROFILES_DIR)
     if profiles.is_dir():
         for p in sorted(profiles.glob("HEM_FJV_Villa_*.json")):
+            if "_signals.json" in p.name:
+                continue
             data = load_json(str(p))
             if not data:
                 continue

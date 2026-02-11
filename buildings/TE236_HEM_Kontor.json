@@ -1609,7 +1609,7 @@
       "A",
       "B"
     ],
-    "poll_interval_minutes": 15
+    "poll_interval_minutes": 1
   },
   "poll_interval_minutes": 15
 }
