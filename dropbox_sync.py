@@ -34,8 +34,8 @@ from dropbox_client import DropboxClient, create_client_from_env
 
 logger = logging.getLogger(__name__)
 
-# Default: request data starting 60 days ago for new meters (2 months)
-DEFAULT_LOOKBACK_DAYS = 60
+# Default: request data starting 90 days ago for new meters (3 months)
+DEFAULT_LOOKBACK_DAYS = 90
 
 # Request file path in Dropbox (CSV format for easy parsing by work server)
 REQUEST_FILE_PATH = '/data/SvenskEB_DH.csv'
