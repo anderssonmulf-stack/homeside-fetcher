@@ -228,11 +228,15 @@ class CustomerProfile:
             thermal_timing=ThermalResponseTiming(**thermal_timing_data) if thermal_timing_data else ThermalResponseTiming()
         )
 
+        customer_id = data.get("customer_id", "")
+        # Meter IDs only from env vars (HOUSE_<id>_METER_IDS) — never from profile JSON
+        meter_ids = get_meter_ids_from_env(customer_id)
+
         return cls(
             schema_version=data.get("schema_version", 1),
-            customer_id=data.get("customer_id", ""),
+            customer_id=customer_id,
             friendly_name=data.get("friendly_name", ""),
-            meter_ids=data.get("meter_ids", []),
+            meter_ids=meter_ids,
             building=BuildingConfig(**data.get("building", {})),
             comfort=ComfortConfig(**data.get("comfort", {})),
             heating_system=HeatingSystemConfig(**data.get("heating_system", {})),
@@ -409,6 +413,20 @@ def find_profile_for_client_id(client_id: str, profiles_dir: str = "profiles") -
     return None
 
 
+def get_meter_ids_from_env(customer_id: str) -> list:
+    """
+    Read meter_ids from environment variable HOUSE_<customer_id>_METER_IDS.
+
+    Returns:
+        List of meter ID strings, or empty list if not set.
+    """
+    env_key = f"HOUSE_{customer_id}_METER_IDS"
+    value = os.getenv(env_key, "")
+    if value:
+        return [m.strip() for m in value.split(",") if m.strip()]
+    return []
+
+
 def build_meter_mapping(profiles_dir: str = "profiles") -> Dict[str, str]:
     """
     Build a mapping of meter_id -> customer_id from all profiles.
@@ -438,7 +456,8 @@ def build_meter_mapping(profiles_dir: str = "profiles") -> Dict[str, str]:
                 data = json.load(f)
 
             customer_id = data.get('customer_id', '')
-            meter_ids = data.get('meter_ids', [])
+            # Meter IDs only from env vars (HOUSE_<id>_METER_IDS) — never from profile JSON
+            meter_ids = get_meter_ids_from_env(customer_id)
 
             for meter_id in meter_ids:
                 # Normalize meter_id (strip whitespace, convert to string)

@@ -2,9 +2,6 @@
   "schema_version": 1,
   "customer_id": "HEM_FJV_Villa_34",
   "friendly_name": "Glance",
-  "meter_ids": [
-    "735999255020057237"
-  ],
   "building": {
     "description": "",
     "thermal_response": "medium"
@@ -70,7 +67,7 @@
   "energy_separation": {
     "enabled": true,
     "method": "homeside_ondemand_dhw",
-    "heat_loss_k": 0.12042,
+    "heat_loss_k": 0.12204,
     "k_percentile": 15,
     "calibration_date": "2026-02-11",
     "calibration_days": 13,

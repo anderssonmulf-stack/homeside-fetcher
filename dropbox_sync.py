@@ -30,6 +30,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
+from customer_profile import get_meter_ids_from_env
 from dropbox_client import DropboxClient, create_client_from_env
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,9 @@ class MeterRequestManager:
                 with open(filepath, 'r') as f:
                     data = json.load(f)
 
-                meter_ids = data.get('meter_ids', [])
+                customer_id = data.get('customer_id', '')
+                # Meter IDs only from env vars (HOUSE_<id>_METER_IDS) — never from profile JSON
+                meter_ids = get_meter_ids_from_env(customer_id)
                 if meter_ids:
                     profiles.append({
                         'customer_id': data.get('customer_id', ''),

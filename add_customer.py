@@ -46,7 +46,6 @@ def create_profile(customer_id: str, friendly_name: str,
         "schema_version": 1,
         "customer_id": customer_id,
         "friendly_name": friendly_name,
-        "meter_ids": meter_ids or [],
         "building": {
             "description": "",
             "thermal_response": "medium"
@@ -98,8 +97,9 @@ def create_profile(customer_id: str, friendly_name: str,
 
 
 def add_credentials_to_env(customer_id: str, username: str, password: str,
-                           friendly_name: str, env_file: str = ".env") -> bool:
-    """Append per-house credentials to .env file."""
+                           friendly_name: str, meter_ids: list = None,
+                           env_file: str = ".env") -> bool:
+    """Append per-house credentials and meter IDs to .env file."""
     # Check if credentials already exist
     env_key = f"HOUSE_{customer_id}_USERNAME"
     if os.path.exists(env_file):
@@ -109,12 +109,14 @@ def add_credentials_to_env(customer_id: str, username: str, password: str,
             print(f"  Credentials for {customer_id} already exist in {env_file}")
             return False
 
-    # Append credentials
+    # Append credentials + meter IDs
     lines = [
         f"\n# {friendly_name} ({customer_id})\n",
         f"HOUSE_{customer_id}_USERNAME={username}\n",
         f"HOUSE_{customer_id}_PASSWORD={password}\n",
     ]
+    if meter_ids:
+        lines.append(f"HOUSE_{customer_id}_METER_IDS={','.join(meter_ids)}\n")
 
     with open(env_file, 'a') as f:
         f.writelines(lines)
@@ -228,8 +230,10 @@ def main():
     # Step 2: Add credentials to .env
     step += 1
     print(f"\n[{step}/{total_steps}] Adding credentials to .env...")
-    if add_credentials_to_env(customer_id, username, password, friendly_name):
+    if add_credentials_to_env(customer_id, username, password, friendly_name, meter_ids=meter_ids):
         print(f"  Added HOUSE_{customer_id}_USERNAME/PASSWORD to .env")
+        if meter_ids:
+            print(f"  Added HOUSE_{customer_id}_METER_IDS to .env")
     else:
         print("  Skipped (credentials may already exist)")
 
