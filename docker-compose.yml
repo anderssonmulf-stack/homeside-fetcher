@@ -12,6 +12,7 @@ services:
     volumes:
       - ./profiles:/app/profiles
       - ./buildings:/app/buildings
+      - ./settings.json:/app/settings.json
     networks:
       - dryckesmail_beer-network
     depends_on:
