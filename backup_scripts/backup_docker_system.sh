@@ -153,10 +153,14 @@ backup_influxdb_data() {
 
     echo -e "   ${GREEN}Running InfluxDB backup command...${NC}"
 
+    # Read token from .env
+    local influx_token
+    influx_token=$(grep -m1 '^INFLUXDB_TOKEN=' "${SCRIPT_DIR}/../.env" | cut -d= -f2-)
+
     # Run influx backup inside the container
     docker exec homeside-influxdb influx backup /tmp/influx_backup \
         --org homeside \
-        --token homeside_token_2026_secret 2>/dev/null || {
+        --token "${influx_token}" 2>/dev/null || {
         echo -e "   ${YELLOW}⚠️  Native InfluxDB backup failed (will use volume backup instead)${NC}"
         return 0
     }
@@ -351,8 +355,8 @@ Server: $(hostname)
 
 ## Default Credentials (after restore)
 
-- **InfluxDB**: admin / homeside_admin_2026
-- **Grafana**: admin / homeside_grafana_2026
+- **InfluxDB**: Check .env for INFLUXDB_ADMIN_PASSWORD
+- **Grafana**: Check .env for GRAFANA_ADMIN_PASSWORD
 
 ## Important Notes
 

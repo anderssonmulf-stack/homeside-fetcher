@@ -388,7 +388,7 @@ Add a new service for the customer in `docker-compose.yml`:
       - LOG_LEVEL=INFO
       - DEBUG_MODE=false
       - INFLUXDB_URL=http://influxdb:8086
-      - INFLUXDB_TOKEN=homeside_token_2026_secret
+      - INFLUXDB_TOKEN=your-influxdb-token
       - INFLUXDB_ORG=homeside
       - INFLUXDB_BUCKET=heating
       - INFLUXDB_ENABLED=true

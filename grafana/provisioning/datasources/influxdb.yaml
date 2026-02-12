@@ -11,7 +11,7 @@ datasources:
       organization: homeside
       defaultBucket: heating
     secureJsonData:
-      token: homeside_token_2026_secret
+      token: $INFLUXDB_TOKEN
 
   - name: Svenskeb API
     type: yesoreyeram-infinity-datasource

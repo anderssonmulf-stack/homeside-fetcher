@@ -21,6 +21,10 @@ ENV/
 *.swo
 *~
 
+# Claude Code local settings (contains command permissions with secrets)
+.claude/settings.local.json
+*/.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db

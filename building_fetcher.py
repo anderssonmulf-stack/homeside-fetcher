@@ -243,7 +243,7 @@ def main():
 
     # InfluxDB overrides
     parser.add_argument('--influx-url', default=os.getenv('INFLUXDB_URL', 'http://localhost:8086'))
-    parser.add_argument('--influx-token', default=os.getenv('INFLUXDB_TOKEN', 'homeside_token_2026_secret'))
+    parser.add_argument('--influx-token', default=os.getenv('INFLUXDB_TOKEN', ''))
     parser.add_argument('--influx-org', default=os.getenv('INFLUXDB_ORG', 'homeside'))
     parser.add_argument('--influx-bucket', default=os.getenv('INFLUXDB_BUCKET', 'heating'))
 
