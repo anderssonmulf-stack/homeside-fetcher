@@ -11,8 +11,7 @@ set -e  # Exit on error
 BACKUP_BASE_DIR="$HOME/homeside_docker_backup"
 NAS_IP="192.168.86.5"
 NAS_SHARE="Backup"
-NAS_USER="AutoBackup"
-NAS_PASSWORD="vU2In!?=k45"
+NAS_CREDENTIALS="/home/ulf/.nas_credentials"
 MOUNT_POINT="/mnt/nas_backup"
 PROJECT_DIR="/opt/dev/homeside-fetcher"
 PROJECT_NAME="homeside-fetcher"
@@ -376,23 +375,20 @@ mount_nas() {
 
     echo -e "${GREEN}📂 Mounting NAS share //${NAS_IP}/${NAS_SHARE}...${NC}"
 
-    sudo mkdir -p "$MOUNT_POINT"
-
     # Check if already mounted
     if mountpoint -q "$MOUNT_POINT"; then
         echo "   Already mounted"
         return 0
     fi
 
-    # Mount using cifs
-    sudo mount -t cifs "//${NAS_IP}/${NAS_SHARE}" "$MOUNT_POINT" \
-        -o "username=${NAS_USER},password=${NAS_PASSWORD},vers=3.0" 2>&1
+    # Mount using fstab entry (user mount, no sudo needed)
+    mount "$MOUNT_POINT" 2>&1
 
     if [ $? -eq 0 ]; then
         echo -e "   ${GREEN}✅ Mounted successfully${NC}"
         return 0
     else
-        echo -e "   ${RED}❌ Mount failed${NC}"
+        echo -e "   ${RED}❌ Mount failed - check fstab entry for ${MOUNT_POINT}${NC}"
         return 1
     fi
 }
@@ -403,7 +399,7 @@ unmount_nas() {
     fi
 
     echo -e "${GREEN}📂 Unmounting NAS share...${NC}"
-    sudo umount "$MOUNT_POINT" 2>/dev/null || true
+    umount "$MOUNT_POINT" 2>/dev/null || true
     echo -e "   ${GREEN}✅ Unmounted${NC}"
 }
 
@@ -440,13 +436,13 @@ copy_to_nas() {
     print_header "📤 Copying to NAS"
 
     local dest_dir="${MOUNT_POINT}/${PROJECT_NAME}_docker_backups"
-    sudo mkdir -p "$dest_dir"
+    mkdir -p "$dest_dir"
 
     local dest_path="${dest_dir}/${archive_name}"
 
     local start_time=$(date +%s.%N)
 
-    sudo cp "$archive_path" "$dest_path"
+    cp "$archive_path" "$dest_path"
 
     local end_time=$(date +%s.%N)
     local duration=$(echo "$end_time - $start_time" | bc)
@@ -541,10 +537,14 @@ main() {
             else
                 echo -e "${YELLOW}⚠️  NAS verification failed!${NC}"
                 echo -e "${YELLOW}   Local archive kept at: ${archive_path}${NC}"
+                seq_log "Warning" "Docker backup: NAS verification failed, local archive kept" \
+                    "{\"BackupType\": \"docker\", \"Archive\": \"${archive_name}\", \"SizeMB\": \"${archive_size_mb}\"}"
             fi
         else
             echo -e "${RED}❌ Failed to mount NAS${NC}"
             echo -e "${YELLOW}   Local archive kept at: ${archive_path}${NC}"
+            seq_log "Error" "Docker backup FAILED: could not mount NAS" \
+                "{\"BackupType\": \"docker\", \"Archive\": \"${archive_name}\", \"SizeMB\": \"${archive_size_mb}\"}"
         fi
     else
         echo -e "${YELLOW}⚠️  NAS backup disabled, archive at: ${archive_path}${NC}"
@@ -561,6 +561,9 @@ main() {
         echo -e "   Archive: ${archive_name}"
         echo -e "   Size: ${archive_size_mb} MB"
         echo -e "   NAS: //${NAS_IP}/${NAS_SHARE}/${PROJECT_NAME}_docker_backups/${archive_name}"
+
+        seq_log "Information" "Docker backup completed: ${archive_name} (${archive_size_mb} MB) in ${total_duration}s" \
+            "{\"BackupType\": \"docker\", \"Archive\": \"${archive_name}\", \"SizeMB\": \"${archive_size_mb}\", \"DurationSeconds\": \"${total_duration}\"}"
     else
         echo -e "${YELLOW}⚠️  Docker backup created but NAS transfer failed${NC}"
         echo -e "   Archive: ${archive_path}"

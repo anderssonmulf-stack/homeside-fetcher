@@ -9,8 +9,7 @@ set -e  # Exit on error
 # Configuration
 NAS_IP="192.168.86.5"
 NAS_SHARE="Backup"
-NAS_USER="AutoBackup"
-NAS_PASSWORD="vU2In!?=k45"
+NAS_CREDENTIALS="/home/ulf/.nas_credentials"
 BACKUP_BASE_DIR="$HOME/homeside_backup"
 MOUNT_POINT="/mnt/nas_backup"
 RETENTION_DAYS=30
@@ -37,14 +36,8 @@ get_file_size_mb() {
     echo "scale=2; $size_bytes / 1024 / 1024" | bc
 }
 
-ensure_mount_point() {
-    sudo mkdir -p "$MOUNT_POINT"
-}
-
 mount_nas() {
     echo -e "${GREEN}📂 Mounting NAS share //${NAS_IP}/${NAS_SHARE}...${NC}"
-
-    ensure_mount_point
 
     # Check if already mounted
     if mountpoint -q "$MOUNT_POINT"; then
@@ -52,22 +45,21 @@ mount_nas() {
         return 0
     fi
 
-    # Mount using cifs
-    sudo mount -t cifs "//${NAS_IP}/${NAS_SHARE}" "$MOUNT_POINT" \
-        -o "username=${NAS_USER},password=${NAS_PASSWORD},vers=3.0" 2>&1
+    # Mount using fstab entry (user mount, no sudo needed)
+    mount "$MOUNT_POINT" 2>&1
 
     if [ $? -eq 0 ]; then
         echo -e "   ${GREEN}✅ Mounted successfully${NC}"
         return 0
     else
-        echo -e "   ${RED}❌ Mount failed${NC}"
+        echo -e "   ${RED}❌ Mount failed - check fstab entry for ${MOUNT_POINT}${NC}"
         return 1
     fi
 }
 
 unmount_nas() {
     echo -e "${GREEN}📂 Unmounting NAS share...${NC}"
-    sudo umount "$MOUNT_POINT" 2>/dev/null || true
+    umount "$MOUNT_POINT" 2>/dev/null || true
     echo -e "   ${GREEN}✅ Unmounted${NC}"
 }
 
@@ -109,13 +101,13 @@ copy_to_nas() {
     echo -e "${GREEN}📤 Copying to NAS...${NC}"
 
     local dest_dir="${MOUNT_POINT}/${PROJECT_NAME}"
-    sudo mkdir -p "$dest_dir"
+    mkdir -p "$dest_dir"
 
     local dest_path="${dest_dir}/${archive_name}"
 
     local start_time=$(date +%s.%N)
 
-    sudo cp "$archive_path" "$dest_path"
+    cp "$archive_path" "$dest_path"
 
     local end_time=$(date +%s.%N)
     local duration=$(echo "$end_time - $start_time" | bc)
@@ -142,7 +134,7 @@ cleanup_old_backups() {
     # Find and remove old backups
     while IFS= read -r file; do
         local size_mb=$(get_file_size_mb "$file")
-        sudo rm -f "$file"
+        rm -f "$file"
         removed_count=$((removed_count + 1))
         echo -e "   ${YELLOW}🗑️  Removed: $(basename $file) (${size_mb} MB)${NC}"
     done < <(find "$backup_dir" -name "${PROJECT_NAME}_backup_*.tar.gz" -type f -mtime +${RETENTION_DAYS})
@@ -203,12 +195,14 @@ main() {
     # Mount NAS
     if ! mount_nas; then
         echo -e "${RED}❌ Backup FAILED: Failed to mount NAS${NC}"
+        seq_log "Error" "Codebase backup FAILED: could not mount NAS" '{"BackupType": "codebase"}'
         exit 1
     fi
 
     # Copy to NAS
     if ! copy_to_nas "$archive_path" "$archive_name"; then
         echo -e "${RED}❌ Backup FAILED: Failed to copy to NAS${NC}"
+        seq_log "Error" "Codebase backup FAILED: copy to NAS failed" '{"BackupType": "codebase"}'
         exit 1
     fi
 
@@ -235,6 +229,9 @@ main() {
     echo -e "   Size: ${archive_size_mb} MB"
     echo -e "   Location: //${NAS_IP}/${NAS_SHARE}/${PROJECT_NAME}/"
     echo "============================================================"
+
+    seq_log "Information" "Codebase backup completed: ${archive_name} (${archive_size_mb} MB) in ${total_duration}s" \
+        "{\"BackupType\": \"codebase\", \"Archive\": \"${archive_name}\", \"SizeMB\": \"${archive_size_mb}\", \"DurationSeconds\": \"${total_duration}\"}"
 }
 
 # Run main function
