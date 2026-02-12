@@ -85,7 +85,7 @@ def build_house_env(config_id: str, friendly_name: str) -> dict:
     env["HOMESIDE_CLIENTID"] = ""
     env["FRIENDLY_NAME"] = friendly_name
     env["DISPLAY_NAME_SOURCE"] = "friendly_name"
-    env["POLL_INTERVAL_MINUTES"] = os.getenv("POLL_INTERVAL_MINUTES", "15")
+    env["POLL_INTERVAL_MINUTES"] = os.getenv("POLL_INTERVAL_MINUTES", "5")
     env["INFLUXDB_ENABLED"] = os.getenv("INFLUXDB_ENABLED", "true")
     return env
 

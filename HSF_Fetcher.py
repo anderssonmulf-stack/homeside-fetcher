@@ -930,8 +930,8 @@ def monitor_heating_system(config):
     else:
         print("⚠ Heat curve controller disabled (requires InfluxDB)")
 
-    interval_minutes = config['interval_minutes']
-    print(f"Starting monitoring loop (interval: {interval_minutes} minutes)")
+    interval_minutes = settings.get('data_collection', {}).get('heating_data_interval_minutes', 5)
+    print(f"Starting monitoring loop (interval: {interval_minutes} minutes, live-reloaded from settings.json)")
     print("Press Ctrl+C to stop\n")
 
     # Track forecast timing (fetch every forecast_interval_minutes)
@@ -1664,6 +1664,13 @@ def monitor_heating_system(config):
                     print(f"⚠ Recalibration error: {e}")
                     last_recalibration_time = now  # Don't retry immediately
 
+            # Re-read interval from settings.json (live reload — no restart needed)
+            settings = load_settings()
+            new_interval = settings.get('data_collection', {}).get('heating_data_interval_minutes', 5)
+            if new_interval != interval_minutes:
+                print(f"⚙ Poll interval changed: {interval_minutes} → {new_interval} min")
+                interval_minutes = new_interval
+
             # Wait until next scheduled interval (fixed schedule, not relative)
             now = datetime.now(timezone.utc)
             # Calculate seconds until next interval boundary
@@ -1701,7 +1708,7 @@ if __name__ == "__main__":
         'clientid': os.getenv('HOMESIDE_CLIENTID'),
         'friendly_name': os.getenv('FRIENDLY_NAME'),
         'display_name_source': os.getenv('DISPLAY_NAME_SOURCE', 'friendly_name'),
-        'interval_minutes': int(os.getenv('POLL_INTERVAL_MINUTES', '15')),
+        'interval_minutes': int(os.getenv('POLL_INTERVAL_MINUTES', '5')),
         'seq_url': os.getenv('SEQ_URL'),
         'seq_api_key': os.getenv('SEQ_API_KEY'),
         'log_level': os.getenv('LOG_LEVEL', 'INFO'),

@@ -2,6 +2,9 @@
   "schema_version": 1,
   "customer_id": "HEM_FJV_Villa_149",
   "friendly_name": "Daggis8",
+  "meter_ids": [
+    "735999255020057923"
+  ],
   "building": {
     "description": "Daggstigen 8, 152 kvm p\u00e5 3 plan. Bygg\u00e5r 2022",
     "thermal_response": "medium"
@@ -69,8 +72,8 @@
     "method": "homeside_ondemand_dhw",
     "heat_loss_k": 0.06073,
     "k_percentile": 15,
-    "calibration_date": "2026-02-11",
-    "calibration_days": 22,
+    "calibration_date": "2026-02-12",
+    "calibration_days": 23,
     "dhw_percentage": 16.1,
     "dhw_temp_threshold": 45.0,
     "dhw_temp_rise_threshold": 2.0,

@@ -2,6 +2,9 @@
   "schema_version": 1,
   "customer_id": "HEM_FJV_Villa_148",
   "friendly_name": "RydingResidence",
+  "meter_ids": [
+    "735999255020057930"
+  ],
   "building": {
     "description": "",
     "thermal_response": "medium"
@@ -67,10 +70,10 @@
   "energy_separation": {
     "enabled": true,
     "method": "k_calibration",
-    "heat_loss_k": 0.06704,
+    "heat_loss_k": 0.06988,
     "k_percentile": 15,
-    "calibration_date": "2026-02-11",
-    "calibration_days": 7,
+    "calibration_date": "2026-02-12",
+    "calibration_days": 8,
     "dhw_percentage": 37.9,
     "dhw_temp_threshold": 45.0,
     "dhw_temp_rise_threshold": 2.0,

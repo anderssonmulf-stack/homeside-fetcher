@@ -1594,6 +1594,83 @@ class InfluxReader:
                 totals['heating'] += d['heating']
                 totals['dhw'] += d['dhw']
 
+            # Build date_to_idx map for matching forecasts
+            date_to_idx = {}
+            for i, r in enumerate(results):
+                date_to_idx[r['timestamp_display']] = i
+
+            # Query energy_forecast for ALL houses (no house_id filter)
+            if results:
+                forecast_query = f'''
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -{days}d)
+                    |> filter(fn: (r) => r["_measurement"] == "energy_forecast")
+                    |> filter(fn: (r) => r["_field"] == "heating_energy_kwh")
+                '''
+
+                forecast_tables = query_api.query(forecast_query, org=self.org)
+
+                # Aggregate hourly forecasts by Swedish day, summing across all houses
+                predicted_by_day = {}  # {date: {'sum': float, 'count': int}}
+                for table in forecast_tables:
+                    for record in table.records:
+                        timestamp = record.get_time()
+                        energy = record.get_value()
+                        if timestamp and energy is not None:
+                            swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                            date_str = swedish_time.strftime('%Y-%m-%d')
+                            if date_str not in predicted_by_day:
+                                predicted_by_day[date_str] = {'sum': 0, 'count': 0}
+                            predicted_by_day[date_str]['sum'] += energy
+                            predicted_by_day[date_str]['count'] += 1
+
+                # Query outdoor temps averaged across all houses by day
+                outdoor_query = f'''
+                    import "timezone"
+                    option location = timezone.location(name: "Europe/Stockholm")
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -{days}d)
+                    |> filter(fn: (r) => r["_measurement"] == "heating_system")
+                    |> filter(fn: (r) => r["_field"] == "outdoor_temperature")
+                    |> aggregateWindow(every: 1d, fn: mean)
+                '''
+
+                outdoor_tables = query_api.query(outdoor_query, org=self.org)
+                # Multiple house_ids produce multiple records per day — average them
+                outdoor_by_day = {}  # {date: {'sum': float, 'count': int}}
+                for table in outdoor_tables:
+                    for record in table.records:
+                        timestamp = record.get_time()
+                        outdoor = record.get_value()
+                        if timestamp and outdoor is not None:
+                            swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                            date_str = swedish_time.strftime('%Y-%m-%d')
+                            if date_str not in outdoor_by_day:
+                                outdoor_by_day[date_str] = {'sum': 0, 'count': 0}
+                            outdoor_by_day[date_str]['sum'] += outdoor
+                            outdoor_by_day[date_str]['count'] += 1
+
+                # Match predictions with actual data
+                MIN_HOURLY_FORECASTS = 20
+                heating_with_predictions = 0
+                days_with_predictions = 0
+
+                for date_str, idx in date_to_idx.items():
+                    forecast_data = predicted_by_day.get(date_str)
+                    outdoor_data = outdoor_by_day.get(date_str)
+
+                    if forecast_data and forecast_data['count'] >= MIN_HOURLY_FORECASTS:
+                        predicted = forecast_data['sum']
+                        results[idx]['predicted_kwh'] = round(predicted, 1)
+                        totals['predicted'] += predicted
+                        if not results[idx].get('no_breakdown'):
+                            heating_with_predictions += results[idx]['heating_kwh']
+                            days_with_predictions += 1
+
+                    if outdoor_data:
+                        avg_outdoor = outdoor_data['sum'] / outdoor_data['count']
+                        results[idx]['avg_outdoor'] = round(avg_outdoor, 1)
+
             totals = {k: round(v, 1) for k, v in totals.items()}
             if totals['actual'] > 0:
                 totals['heating_pct'] = round(100 * totals['heating'] / totals['actual'], 1)
@@ -1601,6 +1678,14 @@ class InfluxReader:
             else:
                 totals['heating_pct'] = 0
                 totals['dhw_pct'] = 0
+
+            # Calculate prediction accuracy
+            if heating_with_predictions > 0 and totals['predicted'] > 0:
+                totals['prediction_accuracy'] = round(100 * totals['predicted'] / heating_with_predictions, 1)
+                totals['days_with_predictions'] = days_with_predictions
+            else:
+                totals['prediction_accuracy'] = None
+                totals['days_with_predictions'] = 0
 
             return {
                 'data': results,

@@ -10,7 +10,7 @@
     "temp_margin": 0.5
   },
   "data_collection": {
-    "heating_data_interval_minutes": 15,
+    "heating_data_interval_minutes": 5,
     "weather_forecast_interval_minutes": 60,
     "ml_forecast_interval_minutes": 60,
     "failure_error_threshold_minutes": 120

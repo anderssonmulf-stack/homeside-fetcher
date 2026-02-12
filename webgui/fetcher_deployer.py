@@ -200,7 +200,7 @@ FRIENDLY_NAME={friendly_name}
 DISPLAY_NAME_SOURCE=friendly_name
 
 # Polling
-POLL_INTERVAL_MINUTES=15
+POLL_INTERVAL_MINUTES=5
 
 # Seq Logging
 SEQ_URL={shared_settings.get('SEQ_URL', 'http://seq:5341')}
@@ -450,14 +450,35 @@ LONGITUDE={longitude}
                 'success': env_deleted
             })
 
-            # Step 4: Delete InfluxDB data
+            # Step 4: Remove .env credential lines (HOUSE_{id}_*)
+            env_creds_removed = self.remove_env_credentials(customer_id)
+            result['steps'].append({
+                'step': 'remove_env_credentials',
+                'success': env_creds_removed
+            })
+
+            # Step 5: Delete InfluxDB data
             influx_deleted = self.delete_influxdb_data(customer_id)
             result['steps'].append({
                 'step': 'delete_influxdb',
                 'success': influx_deleted
             })
 
-            # Step 5: Remove htpasswd entry (if username provided)
+            # Step 6: Re-sync Dropbox meter CSV
+            try:
+                import sys
+                sys.path.insert(0, self.project_root)
+                from dropbox_sync import sync_meters
+                dropbox_synced = sync_meters()
+            except Exception as e:
+                logger.warning(f"Dropbox sync failed (non-fatal): {e}")
+                dropbox_synced = False
+            result['steps'].append({
+                'step': 'dropbox_sync',
+                'success': dropbox_synced
+            })
+
+            # Step 7: Remove htpasswd entry (if username provided)
             if gui_username:
                 htpasswd_removed = delete_htpasswd_entry(gui_username)
                 result['steps'].append({
@@ -481,19 +502,54 @@ LONGITUDE={longitude}
         return result
 
     def delete_customer_profile(self, customer_id: str) -> bool:
-        """Delete profiles/{customer_id}.json"""
-        profile_path = os.path.join(self.profiles_dir, f'{customer_id}.json')
+        """Delete profiles/{customer_id}.json and {customer_id}_signals.json."""
+        success = True
 
-        if not os.path.exists(profile_path):
-            logger.info(f"Profile {profile_path} already deleted")
+        for suffix in [f'{customer_id}.json', f'{customer_id}_signals.json']:
+            path = os.path.join(self.profiles_dir, suffix)
+            if not os.path.exists(path):
+                logger.info(f"Profile {path} already deleted")
+                continue
+            try:
+                os.remove(path)
+                logger.info(f"Deleted: {path}")
+            except Exception as e:
+                logger.error(f"Failed to delete {path}: {e}")
+                success = False
+
+        return success
+
+    def remove_env_credentials(self, customer_id: str) -> bool:
+        """Remove HOUSE_{customer_id}_* lines (and preceding comment) from .env."""
+        env_path = os.path.join(self.project_root, '.env')
+        if not os.path.exists(env_path):
             return True
 
         try:
-            os.remove(profile_path)
-            logger.info(f"Deleted profile: {profile_path}")
+            with open(env_path, 'r') as f:
+                lines = f.readlines()
+
+            prefix = f'HOUSE_{customer_id}_'
+            remove_indices = set()
+            for i, line in enumerate(lines):
+                if line.strip().startswith(prefix):
+                    remove_indices.add(i)
+                    if i > 0 and lines[i - 1].strip().startswith('#'):
+                        remove_indices.add(i - 1)
+
+            if not remove_indices:
+                logger.info(f"No .env entries found for {customer_id}")
+                return True
+
+            with open(env_path, 'w') as f:
+                for i, line in enumerate(lines):
+                    if i not in remove_indices:
+                        f.write(line)
+
+            logger.info(f"Removed {len(remove_indices)} .env lines for {customer_id}")
             return True
         except Exception as e:
-            logger.error(f"Failed to delete profile {profile_path}: {e}")
+            logger.error(f"Failed to remove .env entries for {customer_id}: {e}")
             return False
 
     def delete_env_file(self, customer_id: str) -> bool:

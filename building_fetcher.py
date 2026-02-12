@@ -268,7 +268,7 @@ def main():
     friendly_name = config.get('friendly_name') or building_id
     connection = config.get('connection', {})
     host = connection.get('host')
-    interval_minutes = config.get('poll_interval_minutes', 15)
+    interval_minutes = config.get('poll_interval_minutes', 5)
 
     if not host:
         logger.error("No host in building config")
@@ -448,6 +448,14 @@ def main():
                     seq.log_error("Unexpected error in fetch loop",
                                   error=e,
                                   properties={'EventType': 'FetchLoopError'})
+
+            # Re-read interval from building config (live reload — no restart needed)
+            refreshed_config = load_building_config(args.building)
+            if refreshed_config:
+                new_interval = refreshed_config.get('poll_interval_minutes', 5)
+                if new_interval != interval_minutes:
+                    logger.info(f"Poll interval changed: {interval_minutes} → {new_interval} min")
+                    interval_minutes = new_interval
 
             # Sleep until next aligned interval
             sleep_seconds = calculate_sleep(interval_minutes)
