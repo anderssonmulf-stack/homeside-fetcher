@@ -13,10 +13,10 @@ from typing import Dict, List, Optional
 class AuditLogger:
     """Logs audit events to Seq structured logging server"""
 
-    def __init__(self):
+    def __init__(self, app_name: str = 'SvenskebGUI'):
         self.seq_url = os.environ.get('SEQ_URL', 'http://seq:5341')
         self.seq_api_key = os.environ.get('SEQ_API_KEY', '')
-        self.app_name = 'SvenskebGUI'
+        self.app_name = app_name
 
     def log(self, event_type: str, user_id: str, properties: Dict = None):
         """

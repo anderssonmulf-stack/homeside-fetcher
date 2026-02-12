@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}SvenskEB{% endblock %} - Heating System</title>
+    <title>{% block title %}{{ theme.site_short_name }}{% endblock %} - {{ theme.site_title_suffix }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% if theme.css_overrides %}
+    <style>:root { {% for prop, val in theme.css_overrides.items() %}{{ prop }}: {{ val }}; {% endfor %}}</style>
+    {% endif %}
     {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -12,7 +15,7 @@
     <nav class="navbar">
         <div class="nav-brand">
             <a href="{{ url_for('dashboard') }}">
-                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Svensk EnergiBesparing" class="nav-logo">
+                <img src="{{ url_for('static', filename=theme.logo_filename) }}" alt="{{ theme.site_name }}" class="nav-logo">
             </a>
         </div>
         <div class="nav-links">
@@ -49,7 +52,7 @@
     </main>
 
     <footer class="footer">
-        <p>&copy; 2026 Svensk EnergiBesparing</p>
+        <p>&copy; 2026 {{ theme.copyright_holder }}</p>
     </footer>
 
     {% block extra_scripts %}{% endblock %}

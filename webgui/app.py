@@ -21,6 +21,7 @@ load_dotenv()
 from auth import UserManager, require_login, require_role
 from audit import AuditLogger
 from email_service import EmailService
+from theme import get_theme
 from fetcher_deployer import FetcherDeployer, create_htpasswd_entry, delete_htpasswd_entry, extract_customer_id_from_client_path
 from grafana_helper import update_dashboard_house_variable
 
@@ -29,14 +30,21 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
 
 # Initialize services
+site_theme = get_theme()
 user_manager = UserManager()
-audit_logger = AuditLogger()
-email_service = EmailService()
+audit_logger = AuditLogger(app_name=site_theme['audit_app_name'])
+email_service = EmailService(theme=site_theme)
 
 
 # =============================================================================
 # Context Processor - inject variables into all templates
 # =============================================================================
+
+@app.context_processor
+def inject_theme():
+    """Inject theme variables into all templates"""
+    return {'theme': site_theme}
+
 
 @app.context_processor
 def inject_pending_count():

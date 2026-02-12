@@ -10,10 +10,12 @@ Usage:
 import sys
 import getpass
 from auth import UserManager
+from theme import get_theme
 
 def main():
+    theme = get_theme()
     print("=" * 50)
-    print("Svenskeb - Create Admin User")
+    print(f"{theme['site_short_name']} - Create Admin User")
     print("=" * 50)
     print()
 
@@ -66,7 +68,7 @@ def main():
         print()
         print("=" * 50)
         print(f"Admin user '{username}' created successfully!")
-        print("You can now log in at https://svenskeb.se")
+        print(f"You can now log in at {theme['login_url_display']}")
         print("=" * 50)
     else:
         print("Error: Failed to create user")

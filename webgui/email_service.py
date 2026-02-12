@@ -13,14 +13,19 @@ from typing import Dict, List, Optional
 class EmailService:
     """Sends emails via SMTP"""
 
-    def __init__(self):
+    def __init__(self, theme: dict = None):
         self.smtp_server = os.environ.get('SMTP_SERVER', 'send.one.com')
         self.smtp_port = int(os.environ.get('SMTP_PORT', '587'))
         self.smtp_user = os.environ.get('SMTP_USER', '')
         self.smtp_password = os.environ.get('SMTP_PASSWORD', '')
         self.from_email = os.environ.get('FROM_EMAIL', self.smtp_user)
-        self.from_name = os.environ.get('FROM_NAME', 'Svenskeb Heating System')
         self.base_url = os.environ.get('BASE_URL', 'https://svenskeb.se')
+
+        # Theme-aware branding
+        theme = theme or {}
+        self.email_prefix = theme.get('email_prefix', 'Svenskeb')
+        self.email_system_name = theme.get('email_system_name', 'Svenskeb Heating System')
+        self.from_name = os.environ.get('FROM_NAME', self.email_system_name)
 
         # Admin email(s) for notifications
         self.admin_emails = os.environ.get('ADMIN_EMAILS', '').split(',')
@@ -61,7 +66,7 @@ class EmailService:
 
     def notify_admins_new_registration(self, username: str, name: str, email: str, note: str):
         """Notify admins about a new user registration"""
-        subject = f"[Svenskeb] New user registration: {name}"
+        subject = f"[{self.email_prefix}] New user registration: {name}"
 
         html_body = f"""
         <html>
@@ -98,7 +103,7 @@ class EmailService:
             </p>
 
             <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
-                This is an automated message from Svenskeb Heating System.
+                This is an automated message from {self.email_system_name}.
             </p>
         </body>
         </html>
@@ -121,7 +126,7 @@ Review at: {self.base_url}/admin/users
 
     def send_welcome_email(self, user: Dict):
         """Send welcome email to newly approved user"""
-        subject = "Welcome to Svenskeb Heating System!"
+        subject = f"Welcome to {self.email_system_name}!"
 
         html_body = f"""
         <html>
@@ -149,7 +154,7 @@ Review at: {self.base_url}/admin/users
             <p>If you have any questions, please contact us.</p>
 
             <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
-                This is an automated message from Svenskeb Heating System.
+                This is an automated message from {self.email_system_name}.
             </p>
         </body>
         </html>
@@ -168,7 +173,7 @@ If you have any questions, please contact us.
 
     def send_invite_email(self, user: Dict, reset_token: str):
         """Send invite email to a user created by admin, with a password setup link"""
-        subject = "You've been invited to Svenskeb Heating System"
+        subject = f"You've been invited to {self.email_system_name}"
         setup_url = f"{self.base_url}/reset-password/{reset_token}"
 
         html_body = f"""
@@ -176,7 +181,7 @@ If you have any questions, please contact us.
         <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #27ae60;">Welcome, {user['name']}!</h2>
 
-            <p>An account has been created for you on Svenskeb Heating System.</p>
+            <p>An account has been created for you on {self.email_system_name}.</p>
 
             <p>Your username is: <strong>{user['username']}</strong></p>
 
@@ -206,7 +211,7 @@ If you have any questions, please contact us.
             <p>If you have any questions, please contact us.</p>
 
             <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
-                This is an automated message from Svenskeb Heating System.<br>
+                This is an automated message from {self.email_system_name}.<br>
                 If you're having trouble clicking the button, copy and paste this URL into your browser:<br>
                 <span style="word-break: break-all;">{setup_url}</span>
             </p>
@@ -217,7 +222,7 @@ If you have any questions, please contact us.
         text_body = f"""
 Welcome, {user['name']}!
 
-An account has been created for you on Svenskeb Heating System.
+An account has been created for you on {self.email_system_name}.
 
 Your username is: {user['username']}
 
@@ -233,7 +238,7 @@ If you have any questions, please contact us.
 
     def send_rejection_email(self, user: Dict, reason: str):
         """Send rejection email to user"""
-        subject = "Svenskeb Account Application"
+        subject = f"{self.email_prefix} Account Application"
 
         html_body = f"""
         <html>
@@ -242,7 +247,7 @@ If you have any questions, please contact us.
 
             <p>Hi {user['name']},</p>
 
-            <p>Unfortunately, your account application for Svenskeb Heating System
+            <p>Unfortunately, your account application for {self.email_system_name}
                could not be approved at this time.</p>
 
             {f'<p><strong>Reason:</strong> {reason}</p>' if reason else ''}
@@ -250,7 +255,7 @@ If you have any questions, please contact us.
             <p>If you believe this is an error or have questions, please contact us.</p>
 
             <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
-                This is an automated message from Svenskeb Heating System.
+                This is an automated message from {self.email_system_name}.
             </p>
         </body>
         </html>
@@ -269,7 +274,7 @@ If you have any questions, please contact us.
         Returns:
             True if email was sent successfully
         """
-        subject = "Password Reset Request - Svenskeb"
+        subject = f"Password Reset Request - {self.email_prefix}"
         reset_url = f"{self.base_url}/reset-password/{reset_token}"
 
         html_body = f"""
@@ -279,7 +284,7 @@ If you have any questions, please contact us.
 
             <p>Hi {name},</p>
 
-            <p>We received a request to reset your password for your Svenskeb account.</p>
+            <p>We received a request to reset your password for your {self.email_prefix} account.</p>
 
             <p>Click the button below to set a new password:</p>
 
@@ -300,7 +305,7 @@ If you have any questions, please contact us.
                Your password will remain unchanged.</p>
 
             <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
-                This is an automated message from Svenskeb Heating System.<br>
+                This is an automated message from {self.email_system_name}.<br>
                 If you're having trouble clicking the button, copy and paste this URL into your browser:<br>
                 <span style="word-break: break-all;">{reset_url}</span>
             </p>
@@ -313,7 +318,7 @@ Password Reset Request
 
 Hi {name},
 
-We received a request to reset your password for your Svenskeb account.
+We received a request to reset your password for your {self.email_prefix} account.
 
 Click this link to set a new password:
 {reset_url}
@@ -342,7 +347,7 @@ Your password will remain unchanged.
             approve_token: Token for the action
             details: Additional details to show in email
         """
-        subject = f"[Svenskeb] Action Required: {action_type.replace('_', ' ').title()}"
+        subject = f"[{self.email_prefix}] Action Required: {action_type.replace('_', ' ').title()}"
 
         approve_url = f"{self.base_url}/action/{approve_token}/approve"
         decline_url = f"{self.base_url}/action/{approve_token}/decline"
@@ -388,7 +393,7 @@ Your password will remain unchanged.
             </p>
 
             <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
-                This is an automated message from Svenskeb Heating System.
+                This is an automated message from {self.email_system_name}.
             </p>
         </body>
         </html>
@@ -420,7 +425,7 @@ This link will expire in 24 hours.
         if changed_by == user.get('username'):
             return  # Don't notify about own changes
 
-        subject = f"[Svenskeb] Setting changed for your heating system"
+        subject = f"[{self.email_prefix}] Setting changed for your heating system"
 
         html_body = f"""
         <html>
@@ -459,7 +464,7 @@ This link will expire in 24 hours.
             </p>
 
             <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
-                This is an automated message from Svenskeb Heating System.
+                This is an automated message from {self.email_system_name}.
             </p>
         </body>
         </html>

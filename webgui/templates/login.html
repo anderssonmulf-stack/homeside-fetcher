@@ -4,8 +4,8 @@
 {% block content %}
 <div class="auth-container">
     <div class="auth-box">
-        <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Svensk EnergiBesparing" class="auth-logo">
-        <p class="subtitle">Heating System Management</p>
+        <img src="{{ url_for('static', filename=theme.logo_filename) }}" alt="{{ theme.site_name }}" class="auth-logo">
+        <p class="subtitle">{{ theme.subtitle }}</p>
 
         <form method="POST" class="auth-form">
             <div class="form-group">
