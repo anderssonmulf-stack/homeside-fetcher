@@ -149,7 +149,8 @@ class EnergyImporter:
             self.influx_client = InfluxDBClient(
                 url=influx_url,
                 token=influx_token,
-                org=influx_org
+                org=influx_org,
+                timeout=5_000
             )
             self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
             self._log(f"Connected to InfluxDB: {influx_url}")

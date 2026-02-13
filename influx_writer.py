@@ -5,6 +5,8 @@ Stores heating system metrics in InfluxDB for time-series analysis
 and visualization in Grafana
 """
 
+import time
+
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.client.delete_api import DeleteApi
@@ -32,7 +34,8 @@ class InfluxDBWriter:
         house_id: str,
         logger,
         enabled: bool = True,
-        seq_logger=None
+        seq_logger=None,
+        settings: dict = None
     ):
         """
         Initialize InfluxDB client
@@ -46,12 +49,26 @@ class InfluxDBWriter:
             logger: Logger instance
             enabled: Whether InfluxDB writing is enabled
             seq_logger: Optional SeqLogger for error reporting
+            settings: Optional dict with influxdb settings from settings.json
         """
         self.enabled = enabled
         self.house_id = house_id
         self.logger = logger
         self.seq_logger = seq_logger
         self._consecutive_failures = 0
+        self._circuit_open_time = None   # When circuit breaker opened
+
+        # Circuit breaker settings (from settings.json "influxdb" section)
+        influx_settings = settings or {}
+        self._write_timeout_ms = influx_settings.get('write_timeout_ms', 5000)
+        self._circuit_breaker_threshold = influx_settings.get('circuit_breaker_threshold', 3)
+        self._circuit_cooldown = influx_settings.get('circuit_breaker_cooldown_seconds', 60)
+
+        # Store connection params for reconnect
+        self._url = url
+        self._token = token
+        self._org = org
+        self._bucket = bucket
 
         if not self.enabled:
             self.logger.info("InfluxDB writing disabled")
@@ -60,7 +77,7 @@ class InfluxDBWriter:
             return
 
         try:
-            self.client = InfluxDBClient(url=url, token=token, org=org)
+            self.client = InfluxDBClient(url=url, token=token, org=org, timeout=self._write_timeout_ms)
             self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
             self.bucket = bucket
             self.org = org
@@ -83,6 +100,25 @@ class InfluxDBWriter:
     def _log_influx_error(self, message: str, error: Exception, operation: str):
         """Log InfluxDB error to Seq if configured."""
         self._consecutive_failures += 1
+
+        # Open circuit breaker when threshold is first hit
+        if self._consecutive_failures == self._circuit_breaker_threshold and self._circuit_open_time is None:
+            self._circuit_open_time = time.monotonic()
+            self.logger.warning(
+                f"Circuit breaker OPEN after {self._consecutive_failures} failures — "
+                f"skipping writes for {self._circuit_cooldown}s"
+            )
+            if self.seq_logger:
+                self.seq_logger.log(
+                    "InfluxDB circuit breaker opened after {Failures} consecutive failures",
+                    level='Warning',
+                    properties={
+                        'EventType': 'InfluxDBCircuitOpen',
+                        'ConsecutiveFailures': self._consecutive_failures,
+                        'CooldownSeconds': self._circuit_cooldown,
+                        'HouseId': self.house_id
+                    }
+                )
 
         if self.seq_logger:
             self.seq_logger.log_error(
@@ -110,6 +146,79 @@ class InfluxDBWriter:
                     }
                 )
             self._consecutive_failures = 0
+            self._circuit_open_time = None
+
+    def _should_write(self) -> bool:
+        """
+        Circuit breaker guard — call at the top of every write/delete method.
+
+        Returns True if the write should proceed, False to skip.
+        After 3 consecutive failures the circuit opens for 60s, then
+        a reconnect is attempted.  If the reconnect succeeds the circuit
+        closes; otherwise it stays open for another 60s.
+        """
+        if not self.enabled:
+            return False
+
+        # Circuit is closed — allow writes
+        if self._consecutive_failures < self._circuit_breaker_threshold:
+            return True
+
+        # Circuit is open — check if cooldown has elapsed
+        if self._circuit_open_time is None:
+            self._circuit_open_time = time.monotonic()
+
+        elapsed = time.monotonic() - self._circuit_open_time
+        if elapsed < self._circuit_cooldown:
+            return False  # Still in cooldown, skip silently
+
+        # Cooldown elapsed — attempt reconnect
+        if self._reconnect():
+            return True   # Reconnected, allow writes
+        else:
+            # Reconnect failed — extend cooldown
+            self._circuit_open_time = time.monotonic()
+            return False
+
+    def _reconnect(self) -> bool:
+        """
+        Close the old client and create a fresh one.
+        Returns True if the new client passes a health check.
+        """
+        self.logger.info("Attempting InfluxDB reconnect...")
+        try:
+            if self.client:
+                try:
+                    self.client.close()
+                except Exception:
+                    pass
+
+            self.client = InfluxDBClient(
+                url=self._url, token=self._token, org=self._org, timeout=self._write_timeout_ms
+            )
+            self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
+
+            health = self.client.health()
+            if health.status == "pass":
+                self._consecutive_failures = 0
+                self._circuit_open_time = None
+                self.logger.info("InfluxDB reconnected successfully")
+                if self.seq_logger:
+                    self.seq_logger.log(
+                        "InfluxDB reconnected after circuit breaker",
+                        level='Information',
+                        properties={
+                            'EventType': 'InfluxDBReconnected',
+                            'HouseId': self.house_id
+                        }
+                    )
+                return True
+            else:
+                self.logger.warning(f"InfluxDB reconnect health check failed: {health.status}")
+                return False
+        except Exception as e:
+            self.logger.warning(f"InfluxDB reconnect failed: {e}")
+            return False
 
     def write_heating_data(self, data: Dict) -> bool:
         """
@@ -141,7 +250,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not data:
+        if not self._should_write() or not data:
             return False
 
         try:
@@ -234,7 +343,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not forecast:
+        if not self._should_write() or not forecast:
             return False
 
         try:
@@ -290,7 +399,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not forecast_data:
+        if not self._should_write() or not forecast_data:
             return False
 
         try:
@@ -355,7 +464,7 @@ class InfluxDBWriter:
         Returns:
             True if delete succeeded, False otherwise
         """
-        if not self.enabled:
+        if not self._should_write():
             return False
 
         try:
@@ -402,7 +511,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not decision:
+        if not self._should_write() or not decision:
             return False
 
         try:
@@ -443,7 +552,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not observation:
+        if not self._should_write() or not observation:
             return False
 
         try:
@@ -483,7 +592,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled:
+        if not self._should_write():
             return False
 
         try:
@@ -512,7 +621,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not curve_values:
+        if not self._should_write() or not curve_values:
             return False
 
         try:
@@ -599,7 +708,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled:
+        if not self._should_write():
             return False
 
         try:
@@ -644,7 +753,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not data:
+        if not self._should_write() or not data:
             return False
 
         try:
@@ -702,7 +811,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not forecast_data:
+        if not self._should_write() or not forecast_data:
             return False
 
         try:
@@ -757,7 +866,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled:
+        if not self._should_write():
             return False
 
         from write_throttle import WriteThrottle
@@ -811,7 +920,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled:
+        if not self._should_write():
             return False
 
         try:
@@ -848,7 +957,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not forecast_points:
+        if not self._should_write() or not forecast_points:
             return False
 
         try:
@@ -888,7 +997,7 @@ class InfluxDBWriter:
         Returns:
             True if delete succeeded, False otherwise
         """
-        if not self.enabled:
+        if not self._should_write():
             return False
 
         try:
@@ -921,7 +1030,7 @@ class InfluxDBWriter:
         Returns:
             True if delete succeeded, False otherwise
         """
-        if not self.enabled:
+        if not self._should_write():
             return False
 
         try:
@@ -1092,7 +1201,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not forecast_data:
+        if not self._should_write() or not forecast_data:
             return False
 
         try:
@@ -1238,7 +1347,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not observation:
+        if not self._should_write() or not observation:
             return False
 
         try:
@@ -1327,7 +1436,7 @@ class InfluxDBWriter:
         Returns:
             True if delete succeeded, False otherwise
         """
-        if not self.enabled:
+        if not self._should_write():
             return False
 
         try:
@@ -1374,7 +1483,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not event_data:
+        if not self._should_write() or not event_data:
             return False
 
         try:
@@ -1425,7 +1534,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not coefficients:
+        if not self._should_write() or not coefficients:
             return False
 
         from write_throttle import WriteThrottle
@@ -1467,7 +1576,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not timing:
+        if not self._should_write() or not timing:
             return False
 
         from write_throttle import WriteThrottle
@@ -1511,7 +1620,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not warning:
+        if not self._should_write() or not warning:
             return False
 
         try:
@@ -1553,7 +1662,7 @@ class InfluxDBWriter:
         Returns:
             True if write succeeded, False otherwise
         """
-        if not self.enabled or not lag:
+        if not self._should_write() or not lag:
             return False
 
         try:

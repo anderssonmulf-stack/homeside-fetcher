@@ -87,7 +87,8 @@ class MeterRequestManager:
                 self._influx_client = InfluxDBClient(
                     url=self.influx_url,
                     token=self.influx_token,
-                    org=self.influx_org
+                    org=self.influx_org,
+                    timeout=5_000
                 )
             except ImportError:
                 logger.warning("influxdb_client not installed - cannot query last import dates")

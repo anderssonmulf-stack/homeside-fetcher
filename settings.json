@@ -20,6 +20,11 @@
     "k_calibration_days": 30,
     "enabled": true
   },
+  "influxdb": {
+    "write_timeout_ms": 5000,
+    "circuit_breaker_threshold": 3,
+    "circuit_breaker_cooldown_seconds": 60
+  },
   "daily_tasks": {
     "energy_pipeline": {
       "time": "08:00",

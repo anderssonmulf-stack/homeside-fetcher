@@ -124,7 +124,8 @@ class HeatingEnergyCalibrator:
         self.client = InfluxDBClient(
             url=influx_url,
             token=influx_token,
-            org=influx_org
+            org=influx_org,
+            timeout=5_000
         )
         self.query_api = self.client.query_api()
         self.write_api = self.client.write_api(write_options=SYNCHRONOUS)

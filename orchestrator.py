@@ -40,12 +40,16 @@ RESTART_BACKOFF_MAX = 300   # cap at 5 minutes
 # ---------------------------------------------------------------------------
 #  Data classes
 # ---------------------------------------------------------------------------
+POLL_OFFSET_STEP = 10          # seconds between each child's poll offset
+
+
 @dataclass
 class Child:
     config_path: str            # e.g. "profiles/HEM_FJV_Villa_149.json"
     config_id: str              # e.g. "HEM_FJV_Villa_149"
     friendly_name: str
     kind: str                   # "house" or "building"
+    poll_offset: int = 0        # seconds to stagger poll start
     process: subprocess.Popen | None = None
     consecutive_crashes: int = 0
     last_start: float = 0.0
@@ -77,7 +81,7 @@ def _env_key(prefix: str, config_id: str, suffix: str) -> str:
 # ---------------------------------------------------------------------------
 #  Subprocess management
 # ---------------------------------------------------------------------------
-def build_house_env(config_id: str, friendly_name: str) -> dict:
+def build_house_env(config_id: str, friendly_name: str, poll_offset: int = 0) -> dict:
     """Return an env dict for a private-home fetcher subprocess."""
     env = os.environ.copy()
     env["HOMESIDE_USERNAME"] = os.getenv(_env_key("HOUSE", config_id, "USERNAME"), "")
@@ -87,30 +91,32 @@ def build_house_env(config_id: str, friendly_name: str) -> dict:
     env["DISPLAY_NAME_SOURCE"] = "friendly_name"
     env["POLL_INTERVAL_MINUTES"] = os.getenv("POLL_INTERVAL_MINUTES", "5")
     env["INFLUXDB_ENABLED"] = os.getenv("INFLUXDB_ENABLED", "true")
+    env["POLL_OFFSET_SECONDS"] = str(poll_offset)
     return env
 
 
-def build_building_env(config_id: str) -> dict:
+def build_building_env(config_id: str, poll_offset: int = 0) -> dict:
     """Return an env dict for a commercial-building fetcher subprocess."""
     env = os.environ.copy()
     env["ARRIGO_USERNAME"] = os.getenv(_env_key("BUILDING", config_id, "USERNAME"), "")
     env["ARRIGO_PASSWORD"] = os.getenv(_env_key("BUILDING", config_id, "PASSWORD"), "")
+    env["POLL_OFFSET_SECONDS"] = str(poll_offset)
     return env
 
 
 def spawn_child(child: Child) -> None:
     """Start (or restart) the subprocess for *child*."""
     if child.kind == "house":
-        env = build_house_env(child.config_id, child.friendly_name)
+        env = build_house_env(child.config_id, child.friendly_name, child.poll_offset)
         cmd = [sys.executable, "-u", "HSF_Fetcher.py"]
     else:
-        env = build_building_env(child.config_id)
+        env = build_building_env(child.config_id, child.poll_offset)
         cmd = [sys.executable, "-u", "building_fetcher.py",
                "--building", child.config_id]
 
     child.process = subprocess.Popen(cmd, env=env)
     child.last_start = time.monotonic()
-    log(f"Spawned {child.kind} '{child.friendly_name}' (pid {child.process.pid})")
+    log(f"Spawned {child.kind} '{child.friendly_name}' (pid {child.process.pid}, offset {child.poll_offset}s)")
 
 
 def stop_child(child: Child, timeout: float = 10.0) -> None:
@@ -189,17 +195,21 @@ def reconcile(children: dict[str, Child], configs: dict[str, dict]) -> None:
     current_ids = set(children.keys())
     desired_ids = set(configs.keys())
 
-    # --- New configs → spawn ---
-    for cid in desired_ids - current_ids:
+    # --- New configs → spawn (with staggered poll offsets) ---
+    # Assign offsets based on total child count to spread writes in time
+    next_offset = len(children) * POLL_OFFSET_STEP
+    for cid in sorted(desired_ids - current_ids):
         cfg = configs[cid]
         child = Child(
             config_path=cfg["path"],
             config_id=cid,
             friendly_name=cfg["friendly_name"],
             kind=cfg["kind"],
+            poll_offset=next_offset,
         )
         spawn_child(child)
         children[cid] = child
+        next_offset += POLL_OFFSET_STEP
 
     # --- Removed configs → stop ---
     for cid in current_ids - desired_ids:

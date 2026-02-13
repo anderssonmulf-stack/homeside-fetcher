@@ -720,6 +720,13 @@ def monitor_heating_system(config):
     )
     logger = logging.getLogger()
 
+    # Stagger startup so processes don't all hit InfluxDB at the same time
+    # Must be before any InfluxDB work (gap filler, staleness check, etc.)
+    poll_offset = config.get('poll_offset_seconds', 0)
+    if poll_offset > 0:
+        print(f"Startup delay: {poll_offset}s (staggered poll offset)")
+        time.sleep(poll_offset)
+
     # Setup Seq structured logging (separate from Python logging)
     seq_logger = SeqLogger(
         client_id=config.get('clientid'),
@@ -810,7 +817,8 @@ def monitor_heating_system(config):
             house_id=api.clientid.split('/')[-1],  # Use short form: HEM_FJV_Villa_XXX
             logger=logger,
             enabled=True,
-            seq_logger=seq_logger
+            seq_logger=seq_logger,
+            settings=settings.get('influxdb', {})
         )
         print(f"✓ InfluxDB enabled: {config.get('influxdb_url')}")
 
@@ -946,7 +954,7 @@ def monitor_heating_system(config):
         print("⚠ Heat curve controller disabled (requires InfluxDB)")
 
     interval_minutes = settings.get('data_collection', {}).get('heating_data_interval_minutes', 5)
-    print(f"Starting monitoring loop (interval: {interval_minutes} minutes, live-reloaded from settings.json)")
+    print(f"Starting monitoring loop (interval: {interval_minutes} minutes, offset: {poll_offset}s, live-reloaded from settings.json)")
     print("Press Ctrl+C to stop\n")
 
     # Track forecast timing (fetch every forecast_interval_minutes)
@@ -1688,12 +1696,13 @@ def monitor_heating_system(config):
 
             # Wait until next scheduled interval (fixed schedule, not relative)
             now = datetime.now(timezone.utc)
-            # Calculate seconds until next interval boundary
+            # Calculate seconds until next interval boundary + per-house offset
+            # The offset staggers writes so houses don't all hit InfluxDB at once
             minutes_past = now.minute % interval_minutes
             seconds_past = minutes_past * 60 + now.second + now.microsecond / 1_000_000
-            sleep_seconds = (interval_minutes * 60) - seconds_past
+            sleep_seconds = (interval_minutes * 60) - seconds_past + poll_offset
 
-            # If we're very close to the boundary, wait for the next one
+            # If we're very close to the boundary (or past it due to offset), wait for the next one
             if sleep_seconds < 10:
                 sleep_seconds += interval_minutes * 60
 
@@ -1736,6 +1745,7 @@ if __name__ == "__main__":
         'latitude': float(os.getenv('LATITUDE')) if os.getenv('LATITUDE') else None,
         'longitude': float(os.getenv('LONGITUDE')) if os.getenv('LONGITUDE') else None,
         'heat_curve_enabled': os.getenv('HEAT_CURVE_ENABLED', 'false').lower() == 'true',
+        'poll_offset_seconds': int(os.getenv('POLL_OFFSET_SECONDS', '0')),
     }
 
     # Validate required config

@@ -45,14 +45,27 @@ except ImportError:
 
 
 class BuildingInfluxWriter:
-    """Writes commercial building data to InfluxDB."""
+    """Writes commercial building data to InfluxDB (with circuit breaker)."""
 
     def __init__(self, url: str, token: str, org: str, bucket: str,
-                 building_id: str, logger=None):
+                 building_id: str, logger=None, settings: dict = None):
         self.building_id = building_id
         self.logger = logger or logging.getLogger(__name__)
         self.bucket = bucket
         self.org = org
+
+        # Circuit breaker settings (from settings.json "influxdb" section)
+        influx_settings = settings or {}
+        self._write_timeout_ms = influx_settings.get('write_timeout_ms', 5000)
+        self._circuit_breaker_threshold = influx_settings.get('circuit_breaker_threshold', 3)
+        self._circuit_cooldown = influx_settings.get('circuit_breaker_cooldown_seconds', 60)
+        self._consecutive_failures = 0
+        self._circuit_open_time = None
+
+        # Store connection params for reconnect
+        self._url = url
+        self._token = token
+        self._org = org
 
         if not INFLUX_AVAILABLE:
             self.logger.warning("influxdb_client not available, writes disabled")
@@ -61,13 +74,61 @@ class BuildingInfluxWriter:
             return
 
         try:
-            self.client = InfluxDBClient(url=url, token=token, org=org)
+            self.client = InfluxDBClient(url=url, token=token, org=org,
+                                         timeout=self._write_timeout_ms)
             self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
             self.logger.info(f"InfluxDB connected: {url}")
         except Exception as e:
             self.logger.error(f"InfluxDB connection failed: {e}")
             self.client = None
             self.write_api = None
+
+    def _should_write(self) -> bool:
+        """Circuit breaker guard — returns False to skip writes when InfluxDB is down."""
+        if not self.write_api:
+            return False
+
+        if self._consecutive_failures < self._circuit_breaker_threshold:
+            return True
+
+        if self._circuit_open_time is None:
+            self._circuit_open_time = time.monotonic()
+
+        elapsed = time.monotonic() - self._circuit_open_time
+        if elapsed < self._circuit_cooldown:
+            return False
+
+        # Cooldown elapsed — attempt reconnect
+        if self._reconnect():
+            return True
+        self._circuit_open_time = time.monotonic()
+        return False
+
+    def _reconnect(self) -> bool:
+        """Close old client, create fresh one, health check."""
+        self.logger.info("Attempting InfluxDB reconnect...")
+        try:
+            if self.client:
+                try:
+                    self.client.close()
+                except Exception:
+                    pass
+            self.client = InfluxDBClient(
+                url=self._url, token=self._token, org=self._org,
+                timeout=self._write_timeout_ms
+            )
+            self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
+            health = self.client.health()
+            if health.status == "pass":
+                self._consecutive_failures = 0
+                self._circuit_open_time = None
+                self.logger.info("InfluxDB reconnected successfully")
+                return True
+            self.logger.warning(f"InfluxDB reconnect health check failed: {health.status}")
+            return False
+        except Exception as e:
+            self.logger.warning(f"InfluxDB reconnect failed: {e}")
+            return False
 
     def write_analog_signals(self, values: dict, timestamp: datetime = None) -> bool:
         """
@@ -80,7 +141,7 @@ class BuildingInfluxWriter:
         Returns:
             True if write successful
         """
-        if not self.write_api:
+        if not self._should_write():
             return False
 
         if not timestamp:
@@ -96,15 +157,24 @@ class BuildingInfluxWriter:
                     point.field(field_name, round(float(value), 4))
 
             self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self._consecutive_failures = 0
+            self._circuit_open_time = None
             return True
 
         except Exception as e:
+            self._consecutive_failures += 1
+            if self._consecutive_failures == self._circuit_breaker_threshold:
+                self._circuit_open_time = time.monotonic()
+                self.logger.warning(
+                    f"Circuit breaker OPEN after {self._consecutive_failures} failures — "
+                    f"skipping writes for {self._circuit_cooldown}s"
+                )
             self.logger.error(f"InfluxDB write failed: {e}")
             return False
 
     def write_alarms(self, alarms: list, timestamp: datetime = None) -> bool:
         """Write alarm snapshot to InfluxDB."""
-        if not self.write_api or not alarms:
+        if not self._should_write() or not alarms:
             return False
 
         if not timestamp:
@@ -126,9 +196,18 @@ class BuildingInfluxWriter:
                 point.field(f"count_{status.lower()}", count)
 
             self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            self._consecutive_failures = 0
+            self._circuit_open_time = None
             return True
 
         except Exception as e:
+            self._consecutive_failures += 1
+            if self._consecutive_failures == self._circuit_breaker_threshold:
+                self._circuit_open_time = time.monotonic()
+                self.logger.warning(
+                    f"Circuit breaker OPEN after {self._consecutive_failures} failures — "
+                    f"skipping writes for {self._circuit_cooldown}s"
+                )
             self.logger.error(f"InfluxDB alarm write failed: {e}")
             return False
 
@@ -210,15 +289,15 @@ def fetch_and_write(client: ArrigoAPI, analog_fetch: dict,
     return values
 
 
-def calculate_sleep(interval_minutes: int) -> float:
+def calculate_sleep(interval_minutes: int, poll_offset: int = 0) -> float:
     """
-    Calculate seconds to sleep to align with clock boundaries.
-    E.g., with 15-min interval, aligns to :00, :15, :30, :45.
+    Calculate seconds to sleep to align with clock boundaries + per-process offset.
+    E.g., with 15-min interval, aligns to :00, :15, :30, :45 plus offset seconds.
     """
     now = datetime.now()
     minutes_past = now.minute % interval_minutes
     seconds_past = minutes_past * 60 + now.second + now.microsecond / 1_000_000
-    sleep_seconds = (interval_minutes * 60) - seconds_past
+    sleep_seconds = (interval_minutes * 60) - seconds_past + poll_offset
 
     # Avoid running twice in quick succession
     if sleep_seconds < 10:
@@ -323,6 +402,17 @@ def main():
                 'EventType': 'AuthFailed', 'Host': host})
         sys.exit(1)
 
+    # Load settings for InfluxDB circuit breaker config
+    influx_settings = {}
+    for settings_path in ['settings.json', '/app/settings.json']:
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path) as f:
+                    influx_settings = json.load(f).get('influxdb', {})
+                break
+            except Exception:
+                pass
+
     # Initialize InfluxDB writer
     influx = None
     if not args.dry_run:
@@ -333,6 +423,7 @@ def main():
             bucket=args.influx_bucket,
             building_id=building_id,
             logger=logger,
+            settings=influx_settings,
         )
 
     # ── Single fetch mode ────────────────────────────────────────
@@ -357,6 +448,12 @@ def main():
                 'IntervalMinutes': interval_minutes,
             }
         )
+
+    # Stagger startup so processes don't all hit InfluxDB at the same time
+    poll_offset = int(os.getenv('POLL_OFFSET_SECONDS', '0'))
+    if poll_offset > 0:
+        logger.info(f"Startup delay: {poll_offset}s (staggered poll offset)")
+        time.sleep(poll_offset)
 
     iteration = 0
     consecutive_failures = 0
@@ -457,8 +554,8 @@ def main():
                     logger.info(f"Poll interval changed: {interval_minutes} → {new_interval} min")
                     interval_minutes = new_interval
 
-            # Sleep until next aligned interval
-            sleep_seconds = calculate_sleep(interval_minutes)
+            # Sleep until next aligned interval + per-process offset
+            sleep_seconds = calculate_sleep(interval_minutes, poll_offset)
             time.sleep(sleep_seconds)
 
     except KeyboardInterrupt:

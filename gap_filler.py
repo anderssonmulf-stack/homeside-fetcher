@@ -56,7 +56,7 @@ class GapDetector:
     """Detects gaps in InfluxDB data."""
 
     def __init__(self, url: str, token: str, org: str, bucket: str, house_id: str):
-        self.client = InfluxDBClient(url=url, token=token, org=org)
+        self.client = InfluxDBClient(url=url, token=token, org=org, timeout=5_000)
         self.query_api = self.client.query_api()
         self.bucket = bucket
         self.org = org
@@ -264,7 +264,8 @@ class GapFiller:
             self.write_client = InfluxDBClient(
                 url=self.influx_url,
                 token=self.influx_token,
-                org=self.influx_org
+                org=self.influx_org,
+                timeout=5_000
             )
 
     def detect_gaps(
@@ -485,7 +486,7 @@ class WeatherGapFiller:
         self.longitude = longitude
         self.logger = logger or DummyLogger()
 
-        self.client = InfluxDBClient(url=influx_url, token=influx_token, org=influx_org)
+        self.client = InfluxDBClient(url=influx_url, token=influx_token, org=influx_org, timeout=5_000)
         self.query_api = self.client.query_api()
         self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
 
@@ -740,7 +741,8 @@ class ArrigoBootstrapper:
             self.influx_client = InfluxDBClient(
                 url=self.influx_url,
                 token=self.influx_token,
-                org=self.influx_org
+                org=self.influx_org,
+                timeout=5_000
             )
 
     def _fetch_signal_history(self, signal_id, field_name, start_time, end_time, resolution_seconds):
