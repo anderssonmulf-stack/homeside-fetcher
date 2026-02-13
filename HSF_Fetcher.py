@@ -860,6 +860,21 @@ def monitor_heating_system(config):
     try:
         customer_profile = find_profile_for_client_id(api.clientid, profiles_dir="profiles")
         if customer_profile:
+            # Apply per-house variable overrides (e.g. use zone sensor instead of broken mean)
+            if customer_profile.variable_overrides:
+                for api_name, field_name in customer_profile.variable_overrides.items():
+                    # Remove old mapping for this field_name
+                    old_api = [k for k, v in api.field_mapping.items() if v == field_name]
+                    for k in old_api:
+                        del api.field_mapping[k]
+                        if k in api.target_vars:
+                            api.target_vars.remove(k)
+                    # Add new mapping
+                    api.field_mapping[api_name] = field_name
+                    if api_name not in api.target_vars:
+                        api.target_vars.append(api_name)
+                    print(f"  Override: {field_name} → {api_name}")
+
             forecaster = TemperatureForecaster(customer_profile)
             print(f"✓ Customer profile loaded: {customer_profile.friendly_name}")
             status = customer_profile.get_status()

@@ -160,6 +160,7 @@ class CustomerProfile:
     heating_system: HeatingSystemConfig = field(default_factory=HeatingSystemConfig)
     learned: LearnedParameters = field(default_factory=LearnedParameters)
     energy_separation: EnergySeparationConfig = field(default_factory=EnergySeparationConfig)
+    variable_overrides: Dict[str, str] = field(default_factory=dict)
 
     _profiles_dir: str = field(default="profiles", repr=False)
     _logger: logging.Logger = field(default=None, repr=False)
@@ -241,7 +242,8 @@ class CustomerProfile:
             comfort=ComfortConfig(**data.get("comfort", {})),
             heating_system=HeatingSystemConfig(**data.get("heating_system", {})),
             learned=learned,
-            energy_separation=EnergySeparationConfig(**data.get("energy_separation", {}))
+            energy_separation=EnergySeparationConfig(**data.get("energy_separation", {})),
+            variable_overrides=data.get("variable_overrides", {})
         )
 
     def save(self) -> None:
@@ -257,7 +259,8 @@ class CustomerProfile:
             "comfort": asdict(self.comfort),
             "heating_system": asdict(self.heating_system),
             "learned": asdict(self.learned),
-            "energy_separation": asdict(self.energy_separation)
+            "energy_separation": asdict(self.energy_separation),
+            "variable_overrides": self.variable_overrides
         }
 
         with open(filepath, 'w') as f:
@@ -276,7 +279,8 @@ class CustomerProfile:
             "comfort": asdict(self.comfort),
             "heating_system": asdict(self.heating_system),
             "learned": asdict(self.learned),
-            "energy_separation": asdict(self.energy_separation)
+            "energy_separation": asdict(self.energy_separation),
+            "variable_overrides": self.variable_overrides
         }
 
     def update_learned_params(

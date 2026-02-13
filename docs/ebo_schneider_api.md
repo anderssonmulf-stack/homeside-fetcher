@@ -133,13 +133,14 @@ Returns user info, permissions, workspace config.
 ```json
 {
   "command": "GetObjects",
-  "paths": ["/EC1/some/path"],
+  "paths": [{"path": "/EC1/some/path"}],
   "levels": 1,
   "includeHidden": true,
   "dbMode": true,
   "includeAggregated": false
 }
 ```
+**Important:** `paths` must be a list of dicts with `"path"` key, NOT plain strings.
 
 ### Live Data Subscriptions
 ```json
@@ -282,6 +283,199 @@ All paths prefixed with `/Kattegattgymnasiet 20942`.
 - **74 preschools** (Förskolor)
 - Additional: Fritid (leisure), Omsorg (care), Övrigt (other)
 - Menu navigation via graphics info at `/EC1/Översikt/Bilder/Meny Översikt/{category}`
+
+## Historical Data (Trend Logs)
+
+### Overview
+
+EBO stores historical data in **trend logs** (`trend.TLog` for periodic, `trend.TLogChangeOfValue` for change-triggered).
+Two commands are needed:
+
+1. **`GetInitialTrendData`** — discover chart series (log paths, unit IDs)
+2. **`ReadTimeBasedTrend`** — fetch actual historical data with pagination
+
+Implementation: `ebo_history.py` (`EboHistoryClient`)
+
+### GetInitialTrendData — Discover Chart Series
+
+```json
+{
+  "command": "GetInitialTrendData",
+  "path": "/Kattegattgymnasiet 20942 AS3/Effektstyrning/Diagram/Effektstyrning",
+  "viewType": "TrendChart"
+}
+```
+
+Returns `GetInitialTrendDataRes` array with series metadata:
+- `DisplayLog` — trend log path (used for `ReadTimeBasedTrend`)
+- `DisplaySignal` — live signal path
+- `ConfiguredLogUnitId` — storage unit ID
+- `DisplayLogUnitId` — display unit ID
+- `DisplayLogUnitName` — unit string (e.g. "°C", "kW", "%")
+
+### ReadTimeBasedTrend — Fetch Historical Data
+
+```json
+{
+  "command": "ReadTimeBasedTrend",
+  "path": "/...trend_log_path.../LogArray",
+  "id": 0,
+  "handle": 0,
+  "deliveryType": 0,
+  "startTime": "1970-01-01T00:00:00.000Z",
+  "endTime": "1970-01-01T00:00:00.000Z",
+  "startTimeUtc": "0",
+  "endTimeUtc": "0",
+  "reverse": true,
+  "numberOfRequestedRecords": 4000,
+  "filter": "",
+  "logUnitId": 2621441,
+  "logDisplayUnitId": 2621441,
+  "pointDisplayUnitId": 2621441,
+  "pointUnitId": 2621441
+}
+```
+
+**Key details:**
+- Path MUST end with `/LogArray` suffix
+- `startTimeUtc`/`endTimeUtc` are **microseconds** as strings. `"0"` = no limit
+- `numberOfRequestedRecords` max is 4000 per page
+- `reverse: true` = newest first (standard pagination direction)
+- `startTime`/`endTime` fields are ignored when UTC variants are provided (set to epoch)
+
+**Response structure:**
+```json
+{
+  "METADATA": [{"firstRecord": "1696358548318000", "lastRecord": "...", "nbrOfRecords": "4000", "moreDataAvailable": "1"}],
+  "ReadArrayRes": [{"data": [[timestamp_ms, value, ?, seq_nr, status], ...]}]
+}
+```
+
+**Value encoding:** Values are either plain numbers (int/float) or **base64-encoded IEEE 754 little-endian doubles**.
+
+```python
+import base64, struct
+def decode_ebo_value(val):
+    if isinstance(val, (int, float)):
+        return float(val)
+    padded = val + "=" * (-len(val) % 4)
+    return struct.unpack("<d", base64.b64decode(padded))[0]
+```
+
+**Pagination:** When `moreDataAvailable == "1"`, use `lastRecord - 1` as next `endTimeUtc`.
+
+**Gotchas:**
+- Some data rows contain metadata strings like `'trend.record.TLogEventRecord'` — skip rows where timestamp is not numeric
+- Filter out timestamps before year 2000 (epoch-zero records)
+
+### Unit ID Constants
+
+| Constant | Value | Unit |
+|----------|-------|------|
+| `UNIT_CELSIUS` | 2621441 | °C |
+| `UNIT_FAHRENHEIT` | 2621443 | °F |
+| `UNIT_PERCENT` | 2097153 | % |
+| `UNIT_KW` | 52494337 | kW |
+| `UNIT_NONE` | 65537 | (dimensionless) |
+
+### Python Client Usage
+
+```python
+from ebo_api import EboApi
+from ebo_history import EboHistoryClient, UNIT_CELSIUS
+
+# Login
+api = EboApi("https://ebo.halmstad.se", username, password)
+api.login()
+api.web_entry()
+
+# Create history client using the session
+client = EboHistoryClient(
+    base_url="https://ebo.halmstad.se",
+    csrf_token=api.session_token,
+    session=api.session,
+)
+
+# Discover chart series
+series = client.get_chart_config(
+    "/Kattegattgymnasiet 20942 AS3/Effektstyrning/Diagram/Effektstyrning"
+)
+
+# Fetch historical data
+records = client.read_trend_log(
+    log_path=series[0].display_log_path,
+    log_unit_id=series[0].configured_unit_id,
+    display_unit_id=series[0].configured_unit_id,
+    max_records=50000,
+)
+```
+
+## Kattegattgymnasiet 20942 — Building Structure
+
+### Automation Servers
+
+| Server | Building Part | Subsystems |
+|--------|---------------|------------|
+| AS3 | HD1 (Huvuddel 1) | VS1, VS2, VV1, KV1, VP1, Effektstyrning |
+| AS9 | HD2 (Huvuddel 2) | VS4, VV2, VV3, Effektstyrning |
+| AS2 | Översikt (Overview) | Central navigation, graphics |
+| AS4-AS8 | Various | Not fully explored |
+
+### Known Charts
+
+| Chart Path | Series |
+|------------|--------|
+| `.../AS3/Effektstyrning/Diagram/Effektstyrning` | 9 series: outdoor temp, supply setpoint, room temp avg, power control signal, VMM1_EF (HD1 heat meter), valve positions |
+| `.../AS9/Effektstyrning/Diagram/Effektstyrning` | 10 series: same pattern as AS3 but for HD2, plus VV2, VV3, VS4 valves |
+| `.../AS3/VP1/Diagram/VP1` | 2 series: primary supply temp (GT1T), primary return temp (GT1R) |
+
+### Energy Meter Trend Logs (VMM1_EF = Värmemängdsmätare Effekt)
+
+| Meter | Log Path | Type | Data Range | Resolution |
+|-------|----------|------|------------|------------|
+| HD1 | `.../AS3/Effektstyrning/Trendloggar/Kattegattgymnasiet HD1-VMM1_EF_Logg` | TLogChangeOfValue | Oct–Dec 2025 | ~6 min |
+| HD2 | `.../AS9/Effektstyrning/Trendloggar/VMM1_EF_Logg` | TLogChangeOfValue | Sep–Nov 2025 | ~6 min |
+
+**Note:** Both meters are `TLogChangeOfValue` type (log on significant change, not periodic). Data currently stale (stops late 2025).
+
+### All Available Trend Logs
+
+**AS3 Effektstyrning (12 logs):**
+
+| Log | Description | Type |
+|-----|-------------|------|
+| GTU_Logg | Outdoor temperature | TLog (periodic) |
+| GT1_BB_Logg | Supply setpoint from application | TLog |
+| GT5_Medel_Logg | Room temperature average | TLog |
+| Effekt_styrsignal_Logg | Control signal from HEM MQTT | TLog |
+| Effekt_GT1_BB_Logg | Output supply setpoint | TLog |
+| GT1_BB_Diff_Logg | Current setpoint reduction | TLog |
+| Effekt_DT_Logg | Runtime | TLog |
+| Kattegattgymnasiet HD1-VMM1_EF_Logg | Heat meter power | TLogChangeOfValue |
+| Effekt_D_Logg | Power control active indicator | TLogChangeOfValue |
+| Effektstyrning_Aktiv_Logg | Manual control 0/1 | TLogChangeOfValue |
+| Effekt_Max_Logg | Max power limit | TLogChangeOfValue |
+| GT1_Min_Logg | Min supply setpoint limit | TLogChangeOfValue |
+
+**AS3 VS1 (22 logs):** Supply/return temps, pressures, pump status, valve positions, damped outdoor temp
+
+**AS3 VS2 (13 logs):** Supply/return temps, pressures, pump status, valve positions
+
+**AS3 VV1 (10 logs):** Hot water temps (10s and 1min intervals), valve positions, VVC pump
+
+**AS3 KV1 (3 logs):** Cold water flow, accumulated volume, monthly consumption
+
+**AS3 VP1 (2 logs):** Primary supply/return temps (GT1T, GT1R) — currently empty
+
+**AS9 Effektstyrning (12 logs):** Mirror of AS3 structure for HD2 building part
+
+### Data Availability & Resolution
+
+| Signal Type | Example | Records | Time Span | Resolution |
+|------------|---------|---------|-----------|------------|
+| Temperatures (TLog) | GTU, GT1_BB, GT5_Medel | ~13,000 | 90 days | 10 min |
+| Valve positions (TLog) | VV1-SV1 (1min interval) | ~28,000 | 90 days | 2 min |
+| Heat meter (TLogChangeOfValue) | VMM1_EF | ~4,000 | 35–60 days | ~6 min |
 
 ## Source JS Files
 - `login.js` — Authentication class `P` with full SxWDigest flow
