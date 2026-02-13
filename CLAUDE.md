@@ -40,21 +40,6 @@ A Python application that fetches heating system data from HomeSide district hea
 | `Dockerfile` | Container image definition |
 | `docker-compose.yml` | Container orchestration config. Defines one fetcher service per customer (multi-house support). |
 
-### Grafana Dashboards
-
-Located in `grafana/dashboards/`:
-
-| File | Purpose |
-|------|---------|
-| `homeside-mobile.json` | Mobile-friendly dashboard with stat panels and forecast graphs |
-| `homeside-admin.json` | Admin dashboard with multi-user support (house_id variable) and detailed analytics |
-| `homeside-2.0.json` | Improved admin dashboard with split temperature graphs and clean legends |
-| `homeside-3.0.json` | Latest dashboard with **friendly names** in house selector (e.g., "Daggis8" instead of technical ID) |
-
-Provisioning configs in `grafana/provisioning/`:
-- `dashboards/default.yaml` - Auto-loads dashboards from `/var/lib/grafana/dashboards`
-- `datasources/influxdb.yaml` - Pre-configures InfluxDB connection
-
 ### Debug/Development Tools
 
 | File | Purpose |
@@ -271,7 +256,6 @@ BACKUP_DIRS=(
     "energy_models"
     "webgui"
     "profiles"
-    "grafana"
     "nginx"
     "docs"
     "backup_scripts"
@@ -713,51 +697,6 @@ from(bucket: "heating")
   |> filter(fn: (r) => r._field == "lead_time_hours")
 ```
 
-## Grafana Dashboards
-
-### Mobile Dashboard (`homeside-mobile.json`)
-
-Optimized for phone viewing with large stat panels:
-- Room, Target, Outdoor, Supply, Hot Water, Pressure stats
-- Temperature History & Forecast (24h past + 12h future)
-- Supply Temperature Forecast
-- Outdoor Temperature Sources (HomeSide vs SMHI)
-
-### Admin Dashboard (`homeside-admin.json`)
-
-Multi-user dashboard with `house_id` variable selector:
-- All stat panels from mobile
-- Room vs Outdoor Temperature & Forecast
-- Supply & Return Temperatures & Forecast
-- Supply Temp vs Heat Curve Deviation
-- Supply - Return Delta
-- Hot Water Temperature
-- System Pressure
-
-### 2.0 Dashboard (`homeside-2.0.json`)
-
-Improved version of the admin dashboard:
-- **Separate graphs** for Indoor and Outdoor temperatures (split from combined view)
-- **Clean legends** - no duplicate entries (fixed using Flux `map()` and `group()`)
-- Clear naming: "Heat Curve" instead of "Expected (baseline)"
-
-### Forecast Visualization
-
-- **Historical data**: Solid lines
-- **Forecast data**: Dashed lines (same colors as historical)
-- **Time range**: Default `now-24h` to `now+12h`
-
-### Dashboard Provisioning
-
-Dashboards are auto-loaded via Grafana provisioning:
-
-```yaml
-# docker-compose.yml
-volumes:
-  - ./grafana/provisioning:/etc/grafana/provisioning
-  - ./grafana/dashboards:/var/lib/grafana/dashboards
-```
-
 ## Web Infrastructure
 
 The system is exposed publicly via **svenskeb.se** (Svensk EnergiBesparing) with multiple security layers.
@@ -766,8 +705,7 @@ The system is exposed publicly via **svenskeb.se** (Svensk EnergiBesparing) with
 
 | URL | Purpose |
 |-----|---------|
-| `grafana.svenskeb.se` | Grafana dashboards (HTTPS, basic auth) |
-| `svenskeb.se` | Settings GUI - user registration, house settings, admin panel |
+| `svenskeb.se` | Web GUI - user registration, house settings, admin panel, data graphs |
 
 ### nginx Reverse Proxy
 
@@ -775,7 +713,7 @@ Configuration files in `nginx/`:
 
 | File | Purpose |
 |------|---------|
-| `grafana.svenskeb.se.conf` | Site config with auth, rate limiting, geo-blocking |
+| `svenskeb.se.conf` | Site config for the web GUI |
 | `rate-limiting.conf` | Rate limit zones (login: 1 req/s, general: 10 req/s) |
 | `geoip-sweden-only.conf` | GeoIP config to allow only Swedish IPs |
 | `fail2ban-nginx.conf` | Auto-ban after 3 failed logins |
@@ -811,7 +749,7 @@ Internet
 └─────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────┐
-│  Grafana (localhost:3000)              │
+│  Flask/Gunicorn (localhost:5000)       │
 └─────────────────────────────────────────┘
 ```
 
@@ -833,7 +771,7 @@ sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 
 # Get SSL certificate
-sudo certbot --nginx -d grafana.svenskeb.se
+sudo certbot --nginx -d svenskeb.se
 
 # Reload services
 sudo systemctl reload nginx

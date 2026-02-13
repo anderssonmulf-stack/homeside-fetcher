@@ -1,0 +1,1494 @@
+{
+  "house": "HEM_FJV_Villa_149",
+  "friendly_name": "Daggis8",
+  "snapshot_date": "2026-02-13",
+  "note": "Pre-DH-meter-integration snapshot. All HomeSide variables before colleague changes.",
+  "total_variables": 212,
+  "resolved_variables": 208,
+  "variables": [
+    {
+      "variable": "HEM_FJV_Villa_149.AAM_VS1_SV_1_Output1",
+      "short_name": "AAM_VS1_SV_1_Output1",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_GP_EXP1_1_Output",
+      "short_name": "AI_GP_EXP1_1_Output",
+      "value": 0.8929131,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:30:43.1402903Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_GT_UTE_Output",
+      "short_name": "AI_GT_UTE_Output",
+      "value": 1.90530133,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:30:06.2704905Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_VS1_GT_RETUR_1_Output",
+      "short_name": "AI_VS1_GT_RETUR_1_Output",
+      "value": 27.4227219,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:30:21.8469047Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_VS1_GT_TILL_1_Output",
+      "short_name": "AI_VS1_GT_TILL_1_Output",
+      "value": 27.60596,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:30:20.4951123Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_VV1_TAPP_GT41_Output",
+      "short_name": "AI_VV1_TAPP_GT41_Output",
+      "value": 26.9952259,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:30:39.9242812Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON1_GM_RUM_1_Output",
+      "short_name": "AI_ZON1_GM_RUM_1_Output",
+      "value": 23,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON1_GT_RUM_1_Output",
+      "short_name": "AI_ZON1_GT_RUM_1_Output",
+      "value": 23.6,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON2_GM_RUM_1_Output",
+      "short_name": "AI_ZON2_GM_RUM_1_Output",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON2_GT_RUM_1_Output",
+      "short_name": "AI_ZON2_GT_RUM_1_Output",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON3_GM_RUM_1_Output",
+      "short_name": "AI_ZON3_GM_RUM_1_Output",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON3_GT_RUM_1_Output",
+      "short_name": "AI_ZON3_GT_RUM_1_Output",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON4_GM_RUM_1_Output",
+      "short_name": "AI_ZON4_GM_RUM_1_Output",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON4_GT_RUM_1_Output",
+      "short_name": "AI_ZON4_GT_RUM_1_Output",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9037269Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AI_ZON5_GT_RUM_1_Output",
+      "short_name": "AI_ZON5_GT_RUM_1_Output",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AVV_GT_ALLA_RUM_1_OutputXCC",
+      "short_name": "AVV_GT_ALLA_RUM_1_OutputXCC",
+      "value": 9,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9057195Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AVV_GT_UTEMEDEL_1_OutputXCC",
+      "short_name": "AVV_GT_UTEMEDEL_1_OutputXCC",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AVV_GT_UTE_1_OutputXCC",
+      "short_name": "AVV_GT_UTE_1_OutputXCC",
+      "value": 8,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AVV_ZON1_GT_RUM_1_OutputXCC",
+      "short_name": "AVV_ZON1_GT_RUM_1_OutputXCC",
+      "value": 8,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AVV_ZON2_GT_RUM_1_OutputXCC",
+      "short_name": "AVV_ZON2_GT_RUM_1_OutputXCC",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AVV_ZON3_GT_RUM_1_OutputXCC",
+      "short_name": "AVV_ZON3_GT_RUM_1_OutputXCC",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AVV_ZON4_GT_RUM_1_OutputXCC",
+      "short_name": "AVV_ZON4_GT_RUM_1_OutputXCC",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AVV_ZON5_GT_RUM_1_OutputXCC",
+      "short_name": "AVV_ZON5_GT_RUM_1_OutputXCC",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.AlaApp.AlaStnStat",
+      "short_name": "AlaStnStat",
+      "value": 1,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.BELYSNING_1_AKTIV_Input",
+      "short_name": "BELYSNING_1_AKTIV_Input",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.BELYSNING_1_LUX",
+      "short_name": "BELYSNING_1_LUX",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.BELYSNING_1_Select",
+      "short_name": "BELYSNING_1_Select",
+      "value": 2,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.BLOCK_UTE_AVV",
+      "short_name": "BLOCK_UTE_AVV",
+      "value": 10,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.DI_INBOTTSLARM_AKTIV_Input",
+      "short_name": "DI_INBOTTSLARM_AKTIV_Input",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.DI_TRYCKGIVARE_AKTIV_Input",
+      "short_name": "DI_TRYCKGIVARE_AKTIV_Input",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.DI_VATTENVENTIL_AKTIV_Input",
+      "short_name": "DI_VATTENVENTIL_AKTIV_Input",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5031327Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.DO_BELYSNING_1",
+      "short_name": "DO_BELYSNING_1",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.DucAppVersion_Input",
+      "short_name": "DucAppVersion_Input",
+      "value": "2.35",
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7917223Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ELM1_AKTIV_Input",
+      "short_name": "ELM1_AKTIV_Input",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ELM1_Watt_Tot",
+      "short_name": "ELM1_Watt_Tot",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.FORC_BELYSNING",
+      "short_name": "FORC_BELYSNING",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.FORC_BORTALAGE",
+      "short_name": "FORC_BORTALAGE",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.GT_RUM_1_MEAN_BLOCK_Input",
+      "short_name": "GT_RUM_1_MEAN_BLOCK_Input",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.GT_RUM_2_MEAN_BLOCK_Input",
+      "short_name": "GT_RUM_2_MEAN_BLOCK_Input",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.GT_RUM_3_MEAN_BLOCK_Input",
+      "short_name": "GT_RUM_3_MEAN_BLOCK_Input",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.GT_RUM_4_MEAN_BLOCK_Input",
+      "short_name": "GT_RUM_4_MEAN_BLOCK_Input",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6997303Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.GT_RUM_5_MEAN_BLOCK_Input",
+      "short_name": "GT_RUM_5_MEAN_BLOCK_Input",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HLK_VS1_GT_TILL_1_AlaOnDelayHigh",
+      "short_name": "HLK_VS1_GT_TILL_1_AlaOnDelayHigh",
+      "value": 180,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HLK_VS1_GT_TILL_1_AlaOnDelayLow",
+      "short_name": "HLK_VS1_GT_TILL_1_AlaOnDelayLow",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HLK_VS1_GT_TILL_1_HiAlaLimit",
+      "short_name": "HLK_VS1_GT_TILL_1_HiAlaLimit",
+      "value": 15,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HLK_VS1_GT_TILL_1_LoAlaLimit",
+      "short_name": "HLK_VS1_GT_TILL_1_LoAlaLimit",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_GP_EXP1_1_AlaOnDelayHigh",
+      "short_name": "HL_GP_EXP1_1_AlaOnDelayHigh",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7017915Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_GP_EXP1_1_AlaOnDelayLow",
+      "short_name": "HL_GP_EXP1_1_AlaOnDelayLow",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_GP_EXP1_1_HiAlaLimit",
+      "short_name": "HL_GP_EXP1_1_HiAlaLimit",
+      "value": 2.5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_GP_EXP1_1_LoAlaLimit",
+      "short_name": "HL_GP_EXP1_1_LoAlaLimit",
+      "value": 0.5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON1_GM_RUM_1_HighBlocked",
+      "short_name": "HL_ZON1_GM_RUM_1_HighBlocked",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON1_GM_RUM_1_HighLimit",
+      "short_name": "HL_ZON1_GM_RUM_1_HighLimit",
+      "value": 90,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON1_GT_RUM_1_LowBlocked",
+      "short_name": "HL_ZON1_GT_RUM_1_LowBlocked",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON1_GT_RUM_1_LowLimit",
+      "short_name": "HL_ZON1_GT_RUM_1_LowLimit",
+      "value": 12,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON2_GM_RUM_1_HighBlocked",
+      "short_name": "HL_ZON2_GM_RUM_1_HighBlocked",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7017915Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON2_GM_RUM_1_HighLimit",
+      "short_name": "HL_ZON2_GM_RUM_1_HighLimit",
+      "value": 90,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON2_GT_RUM_1_LowBlocked",
+      "short_name": "HL_ZON2_GT_RUM_1_LowBlocked",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON2_GT_RUM_1_LowLimit",
+      "short_name": "HL_ZON2_GT_RUM_1_LowLimit",
+      "value": 12,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON3_GM_RUM_1_HighBlocked",
+      "short_name": "HL_ZON3_GM_RUM_1_HighBlocked",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON3_GM_RUM_1_HighLimit",
+      "short_name": "HL_ZON3_GM_RUM_1_HighLimit",
+      "value": 90,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON3_GT_RUM_1_LowBlocked",
+      "short_name": "HL_ZON3_GT_RUM_1_LowBlocked",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON3_GT_RUM_1_LowLimit",
+      "short_name": "HL_ZON3_GT_RUM_1_LowLimit",
+      "value": 12,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON4_GM_RUM_1_HighBlocked",
+      "short_name": "HL_ZON4_GM_RUM_1_HighBlocked",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON4_GM_RUM_1_HighLimit",
+      "short_name": "HL_ZON4_GM_RUM_1_HighLimit",
+      "value": 90,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON4_GT_RUM_1_LowBlocked",
+      "short_name": "HL_ZON4_GT_RUM_1_LowBlocked",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9037269Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON4_GT_RUM_1_LowLimit",
+      "short_name": "HL_ZON4_GT_RUM_1_LowLimit",
+      "value": 12,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON5_GT_RUM_1_LowBlocked",
+      "short_name": "HL_ZON5_GT_RUM_1_LowBlocked",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.HL_ZON5_GT_RUM_1_LowLimit",
+      "short_name": "HL_ZON5_GT_RUM_1_LowLimit",
+      "value": 12,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7017915Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.INBROTTSLARM_NARVARO",
+      "short_name": "INBROTTSLARM_NARVARO",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_AdaptDelay",
+      "short_name": "KU_VS1_GT_TILL_1_AdaptDelay",
+      "value": 180,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_AdaptTime",
+      "short_name": "KU_VS1_GT_TILL_1_AdaptTime",
+      "value": 6,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Adaption",
+      "short_name": "KU_VS1_GT_TILL_1_Adaption",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_BORTREST_SetPoint",
+      "short_name": "KU_VS1_GT_TILL_1_BORTREST_SetPoint",
+      "value": 16,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_1",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_1",
+      "value": -30,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_10",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_10",
+      "value": 15,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9037269Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_2",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_2",
+      "value": -25,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_3",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_3",
+      "value": -20,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_4",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_4",
+      "value": -15,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_5",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_5",
+      "value": -10,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_6",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_6",
+      "value": -5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9797241Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_7",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_7",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9797241Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_8",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_8",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_X_9",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_X_9",
+      "value": 10,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6257228Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_1",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_1",
+      "value": 40,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_10",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_10",
+      "value": 23.336153,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_2",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_2",
+      "value": 38,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7017915Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_3",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_3",
+      "value": 37,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_4",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_4",
+      "value": 35.24905,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_5",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_5",
+      "value": 34.2300034,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_6",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_6",
+      "value": 36,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_7",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_7",
+      "value": 26.611084,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_8",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_8",
+      "value": 23,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_CurveAdaptation_Y_9",
+      "short_name": "KU_VS1_GT_TILL_1_CurveAdaptation_Y_9",
+      "value": 22,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_HiLimit",
+      "short_name": "KU_VS1_GT_TILL_1_HiLimit",
+      "value": 45,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_LowLimit",
+      "short_name": "KU_VS1_GT_TILL_1_LowLimit",
+      "value": 22,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_MaxNegDev",
+      "short_name": "KU_VS1_GT_TILL_1_MaxNegDev",
+      "value": 4,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_MaxPosDev",
+      "short_name": "KU_VS1_GT_TILL_1_MaxPosDev",
+      "value": 4,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Output",
+      "short_name": "KU_VS1_GT_TILL_1_Output",
+      "value": 24.9724159,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7017915Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_SetPoint",
+      "short_name": "KU_VS1_GT_TILL_1_SetPoint",
+      "value": 22.5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6257228Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref1",
+      "short_name": "KU_VS1_GT_TILL_1_Yref1",
+      "value": 40,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9037269Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref10",
+      "short_name": "KU_VS1_GT_TILL_1_Yref10",
+      "value": 22,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref2",
+      "short_name": "KU_VS1_GT_TILL_1_Yref2",
+      "value": 38,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref3",
+      "short_name": "KU_VS1_GT_TILL_1_Yref3",
+      "value": 37,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref4",
+      "short_name": "KU_VS1_GT_TILL_1_Yref4",
+      "value": 35,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref5",
+      "short_name": "KU_VS1_GT_TILL_1_Yref5",
+      "value": 33,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref6",
+      "short_name": "KU_VS1_GT_TILL_1_Yref6",
+      "value": 32,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref7",
+      "short_name": "KU_VS1_GT_TILL_1_Yref7",
+      "value": 30,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref8",
+      "short_name": "KU_VS1_GT_TILL_1_Yref8",
+      "value": 27,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.KU_VS1_GT_TILL_1_Yref9",
+      "short_name": "KU_VS1_GT_TILL_1_Yref9",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.MEAN_GT_RUM_1_Output",
+      "short_name": "MEAN_GT_RUM_1_Output",
+      "value": 23.6,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.MEAN_GT_RUM_1_Select1",
+      "short_name": "MEAN_GT_RUM_1_Select1",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.MEAN_GT_RUM_1_Select2",
+      "short_name": "MEAN_GT_RUM_1_Select2",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.MEAN_GT_RUM_1_Select3",
+      "short_name": "MEAN_GT_RUM_1_Select3",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.MEAN_GT_RUM_1_Select4",
+      "short_name": "MEAN_GT_RUM_1_Select4",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.MEAN_GT_RUM_1_Select5",
+      "short_name": "MEAN_GT_RUM_1_Select5",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.MEDEL_GT_UTE_24h_Average",
+      "short_name": "MEDEL_GT_UTE_24h_Average",
+      "value": -0.748445332,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:30:43.1402903Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.METERS_CHANGED",
+      "short_name": "METERS_CHANGED",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.Name_Zon_Room_1",
+      "short_name": "Name_Zon_Room_1",
+      "value": "Rum 1",
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:33.0117239Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.Name_Zon_Room_2",
+      "short_name": "Name_Zon_Room_2",
+      "value": "Rum 2",
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7377261Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.Name_Zon_Room_3",
+      "short_name": "Name_Zon_Room_3",
+      "value": "Rum 3",
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7737227Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.Name_Zon_Room_4",
+      "short_name": "Name_Zon_Room_4",
+      "value": "Rum 4",
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7197205Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.Name_Zon_Room_5",
+      "short_name": "Name_Zon_Room_5",
+      "value": "Rum 5",
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.847727Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.OOF_INBROTTSLARM_VA_OffDelay",
+      "short_name": "OOF_INBROTTSLARM_VA_OffDelay",
+      "value": 180,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.PID_VS1_GT_TILL_1_SetP",
+      "short_name": "PID_VS1_GT_TILL_1_SetP",
+      "value": 24.9724159,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.POOL_AKTIV_Input",
+      "short_name": "POOL_AKTIV_Input",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5051255Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SC_VS1_P1_StartDate",
+      "short_name": "SC_VS1_P1_StartDate",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SC_VS1_P1_StartMonth",
+      "short_name": "SC_VS1_P1_StartMonth",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SC_VS1_P1_StopDate",
+      "short_name": "SC_VS1_P1_StopDate",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SC_VS1_P1_StopMonth",
+      "short_name": "SC_VS1_P1_StopMonth",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7017915Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SOMMARDRIFT_AKTIV_Input",
+      "short_name": "SOMMARDRIFT_AKTIV_Input",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SOMMARDRIFT_ON",
+      "short_name": "SOMMARDRIFT_ON",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6997303Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SOMMARDRIFT_TEMP",
+      "short_name": "SOMMARDRIFT_TEMP",
+      "value": 25,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6997303Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SUN_BELYSNING_1_MinuteRiseOffSet",
+      "short_name": "SUN_BELYSNING_1_MinuteRiseOffSet",
+      "value": 20,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9797241Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SUN_BELYSNING_1_MinuteSetOffSet",
+      "short_name": "SUN_BELYSNING_1_MinuteSetOffSet",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9797241Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SUN_BELYSNING_1_SunRiseHour",
+      "short_name": "SUN_BELYSNING_1_SunRiseHour",
+      "value": 8,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SUN_BELYSNING_1_SunRiseMin",
+      "short_name": "SUN_BELYSNING_1_SunRiseMin",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5031327Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SUN_BELYSNING_1_SunSetHour",
+      "short_name": "SUN_BELYSNING_1_SunSetHour",
+      "value": 16,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.SUN_BELYSNING_1_SunSetMin",
+      "short_name": "SUN_BELYSNING_1_SunSetMin",
+      "value": 31,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:33.029713Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TC_VS1_P1_Hysteresis",
+      "short_name": "TC_VS1_P1_Hysteresis",
+      "value": 2,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9797241Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TC_VS1_P1_StartDelay",
+      "short_name": "TC_VS1_P1_StartDelay",
+      "value": 180,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TC_VS1_P1_StartTemp",
+      "short_name": "TC_VS1_P1_StartTemp",
+      "value": 17,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TC_VS1_P1_StartTempDirect",
+      "short_name": "TC_VS1_P1_StartTempDirect",
+      "value": 8,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TC_VS1_P1_StopDelay",
+      "short_name": "TC_VS1_P1_StopDelay",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TIMER_VATTEN_Hours",
+      "short_name": "TIMER_VATTEN_Hours",
+      "value": 2,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TIMER_VATTEN_Mins",
+      "short_name": "TIMER_VATTEN_Mins",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TIMER_VATTEN_Output",
+      "short_name": "TIMER_VATTEN_Output",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9037269Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TIMER_VATTEN_Start",
+      "short_name": "TIMER_VATTEN_Start",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:33.029713Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TIMER_VATTEN_TEST_Mins",
+      "short_name": "TIMER_VATTEN_TEST_Mins",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TIMER_VATTEN_TEST_Output",
+      "short_name": "TIMER_VATTEN_TEST_Output",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TIMER_VATTEN_TEST_Start",
+      "short_name": "TIMER_VATTEN_TEST_Start",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(10).T1",
+      "short_name": "T1",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(10).T2",
+      "short_name": "T2",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7017915Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(10).T3",
+      "short_name": "T3",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(10).T4",
+      "short_name": "T4",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9057195Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(11).T1",
+      "short_name": "T1",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(11).T2",
+      "short_name": "T2",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(11).T3",
+      "short_name": "T3",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9797241Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(11).T4",
+      "short_name": "T4",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8837317Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(12).T1",
+      "short_name": "T1",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(12).T2",
+      "short_name": "T2",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(12).T3",
+      "short_name": "T3",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(12).T4",
+      "short_name": "T4",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(13).T1",
+      "short_name": "T1",
+      "value": 6,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(13).T2",
+      "short_name": "T2",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(13).T3",
+      "short_name": "T3",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(13).T4",
+      "short_name": "T4",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(14).T1",
+      "short_name": "T1",
+      "value": 6,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(14).T2",
+      "short_name": "T2",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(14).T3",
+      "short_name": "T3",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(14).T4",
+      "short_name": "T4",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8858671Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(15).T1",
+      "short_name": "T1",
+      "value": 6,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(15).T2",
+      "short_name": "T2",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(15).T3",
+      "short_name": "T3",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(15).T4",
+      "short_name": "T4",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(8).T1",
+      "short_name": "T1",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(8).T2",
+      "short_name": "T2",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(8).T3",
+      "short_name": "T3",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(8).T4",
+      "short_name": "T4",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(9).T1",
+      "short_name": "T1",
+      "value": 5,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(9).T2",
+      "short_name": "T2",
+      "value": 24,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6997303Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(9).T3",
+      "short_name": "T3",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5031327Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeDp.Records(9).T4",
+      "short_name": "T4",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeHp.Records(0).FromDate",
+      "short_name": "FromDate",
+      "value": 1.01,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeHp.Records(0).FromTime",
+      "short_name": "FromTime",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeHp.Records(0).ToDate",
+      "short_name": "ToDate",
+      "value": 1.01,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9237197Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeHp.Records(0).ToTime",
+      "short_name": "ToTime",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9037269Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeHp.Records(1).FromDate",
+      "short_name": "FromDate",
+      "value": 1.01,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8657283Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeHp.Records(1).FromTime",
+      "short_name": "FromTime",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeHp.Records(1).ToDate",
+      "short_name": "ToDate",
+      "value": 1.01,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimeHp.Records(1).ToTime",
+      "short_name": "ToTime",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6437258Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.TimegroupBORTALAGE_1",
+      "short_name": "TimegroupBORTALAGE_1",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.VA_MV1_Output",
+      "short_name": "VA_MV1_Output",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9057195Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.VA_MV1_Select",
+      "short_name": "VA_MV1_Select",
+      "value": 2,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.VMM1_AKTIV_Input",
+      "short_name": "VMM1_AKTIV_Input",
+      "value": false,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.VMM1_Flow",
+      "short_name": "VMM1_Flow",
+      "value": null,
+      "type": "Pending",
+      "timestamp": "2026-02-13T13:30:44.1626656Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.VMM1_Power",
+      "short_name": "VMM1_Power",
+      "value": null,
+      "type": "ErrorUnreachable",
+      "timestamp": "2026-02-13T13:00:46.3728635Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.VMM1_TempForw",
+      "short_name": "VMM1_TempForw",
+      "value": null,
+      "type": "Pending",
+      "timestamp": "2026-02-13T13:30:44.1626656Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.VMM1_TempRet",
+      "short_name": "VMM1_TempRet",
+      "value": null,
+      "type": "Pending",
+      "timestamp": "2026-02-13T13:30:44.1626656Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.VS1_P1_Running",
+      "short_name": "VS1_P1_Running",
+      "value": true,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON1Temp",
+      "short_name": "ZON1Temp",
+      "value": 23.6,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON1_GM_RUM_1_HOG_LARM_DelayValue",
+      "short_name": "ZON1_GM_RUM_1_HOG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON1_GT_RUM_1_LAG_LARM_DelayValue",
+      "short_name": "ZON1_GT_RUM_1_LAG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5837229Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON2Temp",
+      "short_name": "ZON2Temp",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5031327Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON2_GM_RUM_1_HOG_LARM_DelayValue",
+      "short_name": "ZON2_GM_RUM_1_HOG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.7557242Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON2_GT_RUM_1_LAG_LARM_DelayValue",
+      "short_name": "ZON2_GT_RUM_1_LAG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON3Temp",
+      "short_name": "ZON3Temp",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.4791324Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON3_GM_RUM_1_HOG_LARM_DelayValue",
+      "short_name": "ZON3_GM_RUM_1_HOG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.5617234Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON3_GT_RUM_1_LAG_LARM_DelayValue",
+      "short_name": "ZON3_GT_RUM_1_LAG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.829728Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON4Temp",
+      "short_name": "ZON4Temp",
+      "value": 0,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.9417221Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON4_GM_RUM_1_HOG_LARM_DelayValue",
+      "short_name": "ZON4_GM_RUM_1_HOG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.8097233Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON4_GT_RUM_1_LAG_LARM_DelayValue",
+      "short_name": "ZON4_GT_RUM_1_LAG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.961778Z"
+    },
+    {
+      "variable": "HEM_FJV_Villa_149.ZON5_GT_RUM_1_LAG_LARM_DelayValue",
+      "short_name": "ZON5_GT_RUM_1_LAG_LARM_DelayValue",
+      "value": 60,
+      "type": "Response",
+      "timestamp": "2026-02-13T13:29:32.6237248Z"
+    }
+  ]
+}

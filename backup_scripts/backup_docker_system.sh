@@ -1,7 +1,7 @@
 #!/bin/bash
 ###############################################################################
 # Docker System Backup Script for Homeside-Fetcher
-# Backs up Docker images, volumes (InfluxDB, Grafana), and configurations
+# Backs up Docker images, volumes (InfluxDB), and configurations
 # for full disaster recovery
 ###############################################################################
 
@@ -85,7 +85,7 @@ backup_docker_images() {
     fi
 
     # Save list of official images for reference
-    docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "influxdb|grafana" > "$backup_dir/images/official_images.txt" || true
+    docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "influxdb" > "$backup_dir/images/official_images.txt" || true
 
     local end_time=$(date +%s.%N)
     local duration=$(echo "$end_time - $start_time" | bc)
@@ -95,7 +95,7 @@ backup_docker_images() {
 
 backup_docker_volumes() {
     local backup_dir="$1"
-    print_header "💾 Backing up Docker volumes (InfluxDB + Grafana)"
+    print_header "💾 Backing up Docker volumes (InfluxDB)"
 
     mkdir -p "$backup_dir/volumes"
 
@@ -289,7 +289,6 @@ echo "   2. Navigate to /opt/dev/homeside-fetcher/"
 echo "   3. Run: docker-compose up -d"
 echo "   4. Verify containers: docker ps"
 echo "   5. Check InfluxDB: http://localhost:8086"
-echo "   6. Check Grafana: http://localhost:3000"
 
 echo ""
 echo "============================================================"
@@ -312,7 +311,7 @@ This backup contains everything needed to restore the Homeside-Fetcher system on
 ## Backup Contents
 
 - **images/** - Custom Docker images (homeside-fetcher)
-- **volumes/** - Docker volumes (InfluxDB data, Grafana config)
+- **volumes/** - Docker volumes (InfluxDB data)
 - **influxdb_backup/** - Native InfluxDB backup (for point-in-time restore)
 - **config/** - Configuration files (docker-compose.yml, .env, etc.)
 - **codebase/** - Python source files
@@ -349,14 +348,12 @@ Server: $(hostname)
 
 ## Services
 
-- **homeside-fetcher**: Main Python app fetching heating data
+- **homeside-orchestrator**: Main Python app fetching heating data
 - **influxdb**: Time-series database (port 8086)
-- **grafana**: Visualization dashboards (port 3000)
 
 ## Default Credentials (after restore)
 
 - **InfluxDB**: Check .env for INFLUXDB_ADMIN_PASSWORD
-- **Grafana**: Check .env for GRAFANA_ADMIN_PASSWORD
 
 ## Important Notes
 

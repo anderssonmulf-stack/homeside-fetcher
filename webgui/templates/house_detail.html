@@ -125,7 +125,7 @@
                            value="{{ profile.friendly_name or '' }}"
                            placeholder="e.g., Daggis8"
                            {% if not can_edit %}disabled{% endif %}>
-                    <small class="help-text">This name appears in Grafana dashboards.</small>
+                    <small class="help-text">This name appears in dashboards and graphs.</small>
                 </div>
 
                 <div class="form-group">
@@ -199,10 +199,6 @@
         <div class="card">
             <h2>Quick Links</h2>
             <div class="quick-links-list">
-                <a href="{{ url_for('house_dashboard', customer_id=house_id) }}" class="quick-link-item">
-                    <span class="icon">📊</span>
-                    <span>View Dashboard</span>
-                </a>
                 <a href="{{ url_for('house_graphs', house_id=house_id) }}" class="quick-link-item">
                     <span class="icon">📈</span>
                     <span>Data Graphs</span>

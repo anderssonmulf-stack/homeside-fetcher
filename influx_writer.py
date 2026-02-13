@@ -2,7 +2,7 @@
 """
 InfluxDB Client Module
 Stores heating system metrics in InfluxDB for time-series analysis
-and visualization in Grafana
+and visualization
 """
 
 import time

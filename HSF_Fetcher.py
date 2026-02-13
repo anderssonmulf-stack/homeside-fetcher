@@ -162,7 +162,7 @@ def generate_forecast_points(
     forecast_hours: int = 72
 ) -> list:
     """
-    Generate forecast points for visualization in Grafana.
+    Generate forecast points for visualization.
 
     Creates hourly forecast data for the configured forecast horizon:
     - outdoor_temp: From SMHI weather forecast
@@ -1364,7 +1364,7 @@ def monitor_heating_system(config):
                             if influx:
                                 influx.write_forecast_data(forecast_trend)
 
-                                # Generate and write detailed forecast points for Grafana
+                                # Generate and write detailed forecast points for visualization
                                 influx.delete_future_forecasts()  # Delete future temp forecasts (prevents "curtain" effect)
                                 influx.delete_future_weather_forecasts()
 

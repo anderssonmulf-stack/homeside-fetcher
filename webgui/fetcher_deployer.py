@@ -624,7 +624,7 @@ LONGITUDE={longitude}
 
 def create_htpasswd_entry(username: str, password: str) -> bool:
     """
-    Add user to nginx htpasswd file for Grafana access.
+    Add user to nginx htpasswd file for web access.
 
     Uses stdin (-i flag) to pass password safely, avoiding shell interpretation
     of special characters.

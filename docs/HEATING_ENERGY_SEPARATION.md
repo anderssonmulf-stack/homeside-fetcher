@@ -187,10 +187,10 @@ handled by deduplication).
 The energy separation data is displayed in Plotly graphs at:
 **https://svenskeb.se/house/HEM_FJV_Villa_149/graphs**
 
-We're using Plotly (in the Flask web GUI) instead of Grafana because:
-- Better mobile experience
+We're using Plotly in the Flask web GUI for charting because:
+- Good mobile experience
 - Consistent styling with the rest of the web GUI
-- Easier to customize per-house
+- Easy to customize per-house
 
 ### Planned Graph: Energy Separation
 

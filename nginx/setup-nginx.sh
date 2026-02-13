@@ -22,12 +22,10 @@ cp "$SCRIPT_DIR/geoip-sweden-only.conf" /etc/nginx/conf.d/geoip-sweden-only.conf
 
 # Copy site configs
 echo "4. Installing site configs..."
-cp "$SCRIPT_DIR/grafana.svenskeb.se.conf" /etc/nginx/sites-available/grafana.svenskeb.se
 cp "$SCRIPT_DIR/svenskeb.se.conf" /etc/nginx/sites-available/svenskeb.se
 
 # Enable sites
 echo "5. Enabling sites..."
-ln -sf /etc/nginx/sites-available/grafana.svenskeb.se /etc/nginx/sites-enabled/
 ln -sf /etc/nginx/sites-available/svenskeb.se /etc/nginx/sites-enabled/
 
 # Copy fail2ban config
@@ -45,7 +43,7 @@ echo "Next steps:"
 echo "1. Create password file: sudo htpasswd -c /etc/nginx/.htpasswd USERNAME"
 echo "2. Reload nginx: sudo systemctl reload nginx"
 echo "3. Restart fail2ban: sudo systemctl restart fail2ban"
-echo "4. Once DNS is ready, get SSL: sudo certbot --nginx -d grafana.svenskeb.se"
+echo "4. Once DNS is ready, get SSL: sudo certbot --nginx -d svenskeb.se"
 echo ""
 echo "Geo-blocking: Only Swedish IPs (SE) are allowed."
 echo "All other countries will get connection dropped (444)."

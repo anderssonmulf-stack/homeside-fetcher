@@ -23,7 +23,6 @@ from audit import AuditLogger
 from email_service import EmailService
 from theme import get_theme
 from fetcher_deployer import FetcherDeployer, create_htpasswd_entry, delete_htpasswd_entry, extract_customer_id_from_client_path
-from grafana_helper import update_dashboard_house_variable
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -324,11 +323,6 @@ def register():
 
         audit_logger.log('UserRegistered', username, {'email': email, 'house_name': house_friendly_name})
 
-        # Create htpasswd entry for Grafana access (same credentials as webgui)
-        htpasswd_created = create_htpasswd_entry(username, password)
-        if htpasswd_created:
-            audit_logger.log('HtpasswdCreated', username, {'for_grafana': True})
-
         # Notify admins
         email_service.notify_admins_new_registration(username, name, email, note)
 
@@ -435,64 +429,6 @@ def house_detail(house_id):
                            realtime=realtime_data,
                            forecast=forecast_data,
                            current_house_name=profile.friendly_name or house_id)
-
-
-@app.route('/house/<customer_id>/dashboard')
-@require_login
-def house_dashboard(customer_id):
-    """Display embedded Grafana dashboard for a house."""
-    if not user_manager.can_access_house(session.get('user_id'), customer_id):
-        flash('Access denied.', 'error')
-        return redirect(url_for('dashboard'))
-
-    # Get house info from profile
-    from customer_profile import CustomerProfile
-    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
-    try:
-        profile = CustomerProfile.load(customer_id, profiles_dir)
-        friendly_name = profile.friendly_name or customer_id
-    except FileNotFoundError:
-        friendly_name = customer_id
-
-    # Get all houses for this user (for house selector)
-    user = user_manager.get_user(session.get('user_id'))
-    user_houses = []
-    if user:
-        house_ids = list(user.get('houses', []))
-        verified_cid = user.get('verified_customer_id', '')
-
-        # Admin or wildcard user gets all houses
-        if user.get('role') == 'admin' or '*' in house_ids:
-            house_ids = user_manager.get_all_houses()
-        elif verified_cid and verified_cid not in house_ids:
-            # Add own house if not already included
-            house_ids.append(verified_cid)
-
-        for house_id in house_ids:
-            if house_id != '*':
-                try:
-                    p = CustomerProfile.load(house_id, profiles_dir)
-                    user_houses.append({
-                        'id': house_id,
-                        'name': p.friendly_name or house_id
-                    })
-                except FileNotFoundError:
-                    user_houses.append({
-                        'id': house_id,
-                        'name': house_id
-                    })
-
-    # Sort by name for consistent display
-    user_houses.sort(key=lambda x: x['name'].lower())
-
-    return render_template('house_dashboard.html',
-        customer_id=customer_id,
-        friendly_name=friendly_name,
-        user_houses=user_houses,
-        grafana_base='/grafana',
-        dashboard_uid='homeside-v3',
-        current_house_name=friendly_name
-    )
 
 
 @app.route('/house/<house_id>/graphs')
@@ -1710,10 +1646,6 @@ def admin_add_user():
             approved_at=datetime.utcnow().isoformat() + 'Z',
         )
 
-        # Create htpasswd entry for Grafana access (only if admin set a password)
-        if password:
-            create_htpasswd_entry(username, password)
-
         # Audit log
         audit_logger.log('UserCreatedByAdmin', session.get('user_id'), {
             'created_user': username,
@@ -1837,9 +1769,6 @@ def admin_approve_user(username):
                     'container_name': deploy_result.get('container_name'),
                     'for_user': username
                 })
-                # Update Grafana dashboard to include new house
-                update_dashboard_house_variable()
-
                 # Sync meter IDs to Dropbox if provided
                 if meter_ids:
                     try:
@@ -2201,37 +2130,6 @@ def handle_action(token, action):
 # API Routes (for AJAX)
 # =============================================================================
 
-@app.route('/api/grafana/houses')
-def api_grafana_houses():
-    """
-    Public API endpoint for Grafana to get house list with friendly names.
-    Returns format compatible with Grafana Infinity plugin.
-    No authentication required - only returns public mapping data.
-    """
-    from customer_profile import CustomerProfile
-    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
-    houses = []
-
-    if os.path.exists(profiles_dir):
-        for filename in os.listdir(profiles_dir):
-            if filename.endswith('.json') and '_signals.json' not in filename:
-                customer_id = filename[:-5]
-                try:
-                    profile = CustomerProfile.load(customer_id, profiles_dir)
-                    houses.append({
-                        'text': profile.friendly_name or customer_id,
-                        'value': customer_id
-                    })
-                except Exception:
-                    houses.append({
-                        'text': customer_id,
-                        'value': customer_id
-                    })
-
-    # Sort by friendly name
-    houses.sort(key=lambda x: x['text'].lower())
-
-    return jsonify(houses)
 
 
 @app.route('/api/activity')

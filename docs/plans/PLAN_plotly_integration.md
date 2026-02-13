@@ -6,7 +6,7 @@ Create a "data availability histogram" showing which data types exist for which 
 ## Current State
 - **Frontend**: Pure CSS, no JavaScript libraries, no charting
 - **Backend**: Flask + Jinja2, InfluxDB queries via `influx_reader.py`
-- **Grafana**: Used for all charting (iframe embedded)
+- **Charting**: Plotly.js for all graphs
 
 ## InfluxDB Measurements Available
 

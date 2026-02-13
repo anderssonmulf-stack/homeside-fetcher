@@ -158,8 +158,6 @@ homeside-fetcher/
 │   ├── email_service.py     # Email notifications
 │   ├── influx_reader.py     # InfluxDB queries
 │   └── templates/           # HTML templates
-├── grafana/                 # Grafana dashboards
-│   └── dashboards/          # JSON dashboard files
 ├── nginx/                   # nginx configuration
 └── README.md                # This file
 ```
@@ -174,7 +172,6 @@ homeside-fetcher/
 - [x] InfluxDB persistence
 - [x] Seq structured logging
 - [x] Multi-site support
-- [x] Web dashboard (Grafana)
 - [x] Public access with security (nginx, HTTPS, geo-blocking)
 - [x] Settings GUI with user management (svenskeb.se)
 - [x] Automatic token refresh (HomeSide API and Dropbox OAuth)
@@ -187,16 +184,6 @@ homeside-fetcher/
 - [ ] Mobile notifications
 
 ## Web Access
-
-### Grafana Dashboards
-
-Accessible at **grafana.svenskeb.se** with the following security:
-
-- **HTTPS** with Let's Encrypt certificate
-- **Basic authentication** (username/password)
-- **Geo-blocking** - Only Swedish IPs allowed
-- **Rate limiting** - 1 req/sec on login, 10 req/sec general
-- **Fail2ban** - Auto-ban after 3 failed login attempts
 
 ### Settings GUI
 
