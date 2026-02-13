@@ -3,7 +3,7 @@ services:
   # Add new houses by creating a profile + adding credentials to .env
   homeside-orchestrator:
     build: .
-    container_name: homeside-orchestrator
+    container_name: ${CONTAINER_PREFIX:-homeside}-orchestrator
     restart: unless-stopped
     cpus: "2.4"
     mem_limit: 3g
@@ -14,7 +14,7 @@ services:
       - ./buildings:/app/buildings
       - ./settings.json:/app/settings.json
     networks:
-      - dryckesmail_beer-network
+      - app-network
     depends_on:
       - influxdb
     healthcheck:
@@ -31,7 +31,7 @@ services:
 
   influxdb:
     image: influxdb:2.7-alpine
-    container_name: homeside-influxdb
+    container_name: ${CONTAINER_PREFIX:-homeside}-influxdb
     restart: unless-stopped
     cpus: "2.4"
     mem_limit: 3g
@@ -47,14 +47,14 @@ services:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
       - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_ADMIN_PASSWORD}
-      - DOCKER_INFLUXDB_INIT_ORG=homeside
-      - DOCKER_INFLUXDB_INIT_BUCKET=heating
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG:-homeside}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET:-heating}
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
     volumes:
       - influxdb-data:/var/lib/influxdb2
       - influxdb-config:/etc/influxdb2
     networks:
-      - dryckesmail_beer-network
+      - app-network
     logging:
       driver: "json-file"
       options:
@@ -66,5 +66,6 @@ volumes:
   influxdb-config:
 
 networks:
-  dryckesmail_beer-network:
+  app-network:
+    name: ${DOCKER_NETWORK:-dryckesmail_beer-network}
     external: true

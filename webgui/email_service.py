@@ -19,7 +19,7 @@ class EmailService:
         self.smtp_user = os.environ.get('SMTP_USER', '')
         self.smtp_password = os.environ.get('SMTP_PASSWORD', '')
         self.from_email = os.environ.get('FROM_EMAIL', self.smtp_user)
-        self.base_url = os.environ.get('BASE_URL', 'https://svenskeb.se')
+        self.base_url = os.environ.get('BASE_URL', '')
 
         # Theme-aware branding
         theme = theme or {}

@@ -381,7 +381,7 @@ Add a new service for the customer in `docker-compose.yml`:
     volumes:
       - ./profiles:/app/profiles
     networks:
-      - dryckesmail_beer-network
+      - app-network
     depends_on:
       - influxdb
     logging:

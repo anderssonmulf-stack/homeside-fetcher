@@ -31,7 +31,7 @@ class FetcherDeployer:
         self.envs_dir = os.path.join(self.project_root, 'envs')
         self.profiles_dir = os.path.join(self.project_root, 'profiles')
         self.image_name = 'homeside-fetcher-homeside-fetcher:latest'
-        self.network_name = 'dryckesmail_beer-network'
+        self.network_name = os.environ.get('DOCKER_NETWORK', 'dryckesmail_beer-network')
 
     def deploy_fetcher(
         self,
