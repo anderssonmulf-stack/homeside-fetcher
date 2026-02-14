@@ -32,6 +32,7 @@ A Python application that fetches heating system data from HomeSide district hea
 | `.env` | Environment configuration (credentials, API tokens, InfluxDB settings) - gitignored |
 | `.env.example` | Template for .env file |
 | `profiles/*.json` | Customer-specific profiles with settings and learned parameters |
+| `offboarded.json` | Tracks soft-offboarded entities pending InfluxDB purge (gitignored, deployment-specific) |
 
 ### Docker Files
 
@@ -53,6 +54,7 @@ A Python application that fetches heating system data from HomeSide district hea
 | File | Purpose |
 |------|---------|
 | `add_customer.py` | Interactive script to add new customers (creates profile, updates docker-compose, deploys) |
+| `remove_customer.py` | Removes houses/buildings: hard (immediate InfluxDB delete) or soft (30-day grace period via `offboarded.json`) |
 | `migrate_seq_to_influx.py` | Migrates historical data from Seq logs to InfluxDB (for data recovery) |
 | `import_historical_data.py` | Fetches historical data from Arrigo GraphQL API to bootstrap thermal analyzer for new houses |
 
@@ -433,6 +435,87 @@ If you need to find the exact client ID format:
 1. Start the fetcher with `HOMESIDE_CLIENTID=` (empty)
 2. Check the logs for: `✓ Using client ID: 38/xxx/HEM_FJV_XX/HEM_FJV_Villa_XX`
 3. The last segment (`HEM_FJV_Villa_XX`) is what the profile filename should match
+
+## Removing Houses & Buildings (Offboarding)
+
+Use `remove_customer.py` to remove houses or buildings. Supports both immediate ("hard") and deferred ("soft") removal.
+
+### Hard Remove (default)
+
+Immediately deletes all InfluxDB data, config files, `.env` credentials, and re-syncs Dropbox meters.
+
+```bash
+# Remove a house
+python3 remove_customer.py HEM_FJV_Villa_99
+
+# Remove a building
+python3 remove_customer.py TE236_HEM_Kontor --type building
+
+# Dry run / skip confirmation
+python3 remove_customer.py HEM_FJV_Villa_99 --dry-run
+python3 remove_customer.py HEM_FJV_Villa_99 --force
+```
+
+### Soft Offboard (--soft)
+
+Removes config and credentials (orchestrator stops the subprocess within 60s) but **defers InfluxDB data deletion** by a grace period (default 30 days). The orchestrator automatically purges the data after the grace period expires.
+
+```bash
+# Soft offboard house (30-day grace period)
+python3 remove_customer.py HEM_FJV_Villa_99 --soft
+
+# Soft offboard building
+python3 remove_customer.py TE236_HEM_Kontor --soft --type building
+
+# Custom grace period
+python3 remove_customer.py HEM_FJV_Villa_99 --soft --days 60
+```
+
+### How Soft Offboarding Works
+
+1. `remove_customer.py --soft` removes config/credentials and adds an entry to `offboarded.json`
+2. The orchestrator checks `offboarded.json` once per day (and on startup)
+3. When an entry's `purge_after` date has passed, the orchestrator deletes all InfluxDB data matching `{influx_tag}="{id}"` and moves the entry to the `purged` audit list
+4. Failed purges stay in `pending_purge` and are retried the next day
+
+### offboarded.json Format
+
+```json
+{
+  "pending_purge": [
+    {
+      "id": "TE236_HEM_Kontor",
+      "type": "building",
+      "friendly_name": "HEM Kontor TE236",
+      "offboarded_at": "2026-02-14T06:00:00Z",
+      "purge_after": "2026-03-16T06:00:00Z",
+      "influx_tag": "building_id"
+    }
+  ],
+  "purged": [
+    {
+      "id": "OLD_Entity",
+      "friendly_name": "Old Entity",
+      "purged_at": "2026-01-15T08:00:00Z"
+    }
+  ]
+}
+```
+
+- `influx_tag`: `building_id` for buildings, `house_id` for houses — determines the InfluxDB delete predicate
+- `purged`: audit log of completed purges
+- To cancel a pending purge: remove the entry from `pending_purge`
+- To force immediate purge: `python3 remove_customer.py <id> --type <type> --force`
+
+### CLI Reference
+
+| Flag | Description |
+|------|-------------|
+| `--type house\|building` | Entity type (default: `house`). Controls config dir, env prefix, InfluxDB tag |
+| `--soft` | Defer InfluxDB deletion, write to `offboarded.json` |
+| `--days N` | Grace period for `--soft` (default: 30) |
+| `--force` | Skip confirmation prompt |
+| `--dry-run` | Show what would happen without doing it |
 
 ## Key Variables Tracked
 
