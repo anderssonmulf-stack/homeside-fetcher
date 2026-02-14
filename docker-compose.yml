@@ -13,6 +13,7 @@ services:
       - ./profiles:/app/profiles
       - ./buildings:/app/buildings
       - ./settings.json:/app/settings.json
+      - ./offboarded.json:/app/offboarded.json
     networks:
       - app-network
     depends_on:

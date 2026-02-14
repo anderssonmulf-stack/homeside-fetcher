@@ -33,6 +33,7 @@ from pathlib import Path
 SCAN_INTERVAL = 60          # seconds between directory rescans
 PROFILES_DIR = "profiles"
 BUILDINGS_DIR = "buildings"
+OFFBOARDED_FILE = "offboarded.json"
 RESTART_BACKOFF_BASE = 10   # seconds — doubles on each consecutive crash
 RESTART_BACKOFF_MAX = 300   # cap at 5 minutes
 
@@ -247,6 +248,85 @@ def check_crashed(children: dict[str, Child]) -> None:
 
 
 # ---------------------------------------------------------------------------
+#  Scheduled purge of offboarded entities
+# ---------------------------------------------------------------------------
+def check_purge_schedule() -> None:
+    """Check offboarded.json and purge InfluxDB data for entries past their grace period."""
+    if not os.path.exists(OFFBOARDED_FILE):
+        return
+
+    try:
+        with open(OFFBOARDED_FILE) as f:
+            data = json.load(f)
+    except Exception as e:
+        log(f"Failed to read {OFFBOARDED_FILE}: {e}")
+        return
+
+    pending = data.get("pending_purge", [])
+    if not pending:
+        return
+
+    now = datetime.now(timezone.utc)
+    purged_list = data.get("purged", [])
+    still_pending = []
+    changed = False
+
+    for entry in pending:
+        purge_after = datetime.fromisoformat(entry["purge_after"])
+        if now < purge_after:
+            days_left = (purge_after - now).days
+            log(f"Pending purge: {entry['id']} ({entry.get('friendly_name', '')}) "
+                f"— {days_left} day(s) remaining")
+            still_pending.append(entry)
+            continue
+
+        # Time to purge
+        tag_name = entry.get("influx_tag", "house_id")
+        entity_id = entry["id"]
+        log(f"Purging InfluxDB data: {tag_name}={entity_id} "
+            f"({entry.get('friendly_name', '')})")
+
+        try:
+            from influxdb_client import InfluxDBClient
+            url = os.getenv("INFLUXDB_URL", "http://influxdb:8086")
+            token = os.getenv("INFLUXDB_TOKEN", "")
+            org = os.getenv("INFLUXDB_ORG", "homeside")
+            bucket = os.getenv("INFLUXDB_BUCKET", "heating")
+
+            client = InfluxDBClient(url=url, token=token, org=org)
+            client.delete_api().delete(
+                start=datetime(2020, 1, 1, tzinfo=timezone.utc),
+                stop=datetime(2099, 12, 31, tzinfo=timezone.utc),
+                predicate=f'{tag_name}="{entity_id}"',
+                bucket=bucket,
+            )
+            client.close()
+
+            purged_list.append({
+                "id": entity_id,
+                "friendly_name": entry.get("friendly_name", ""),
+                "purged_at": now.isoformat(),
+            })
+            changed = True
+            log(f"Purged InfluxDB data: {tag_name}={entity_id}")
+        except Exception as e:
+            log(f"Failed to purge {entity_id}, will retry next day: {e}")
+            still_pending.append(entry)
+
+    if changed:
+        data["pending_purge"] = still_pending
+        data["purged"] = purged_list
+        try:
+            with open(OFFBOARDED_FILE, "w") as f:
+                json.dump(data, f, indent=2)
+                f.write("\n")
+            log(f"Updated {OFFBOARDED_FILE}: "
+                f"{len(still_pending)} pending, {len(purged_list)} purged")
+        except Exception as e:
+            log(f"Failed to write {OFFBOARDED_FILE}: {e}")
+
+
+# ---------------------------------------------------------------------------
 #  Main
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -274,6 +354,10 @@ def main() -> None:
             + ", ".join(f"{v['friendly_name']} ({k})" for k, v in configs.items()))
     reconcile(children, configs)
 
+    # Run purge check on startup
+    last_purge_date = datetime.now(timezone.utc).date()
+    check_purge_schedule()
+
     # Main loop
     try:
         while not shutdown:
@@ -287,6 +371,12 @@ def main() -> None:
 
             # Check for crashed processes
             check_crashed(children)
+
+            # Daily purge check for offboarded entities
+            today = datetime.now(timezone.utc).date()
+            if today != last_purge_date:
+                check_purge_schedule()
+                last_purge_date = today
 
     except KeyboardInterrupt:
         shutdown = True

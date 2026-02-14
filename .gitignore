@@ -33,5 +33,8 @@ Thumbs.db
 profiles/*.json
 buildings/*.json
 
+# Offboarding state (deployment-specific)
+offboarded.json
+
 # WebGUI
 webgui/users.json
