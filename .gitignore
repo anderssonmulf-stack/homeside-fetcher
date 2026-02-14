@@ -29,5 +29,9 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Customer data (deployment-specific, keep *.template for format reference)
+profiles/*.json
+buildings/*.json
+
 # WebGUI
 webgui/users.json

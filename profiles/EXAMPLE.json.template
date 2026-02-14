@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "customer_id": "HEM_FJV_Villa_XX",
+  "friendly_name": "HouseName",
+  "meter_ids": [
+    "735999255020057000"
+  ],
+  "building": {
+    "description": "",
+    "thermal_response": "medium"
+  },
+  "comfort": {
+    "target_indoor_temp": 22.0,
+    "acceptable_deviation": 1.0
+  },
+  "heating_system": {
+    "response_time_minutes": 30,
+    "max_supply_temp": 55
+  },
+  "learned": {
+    "thermal_coefficient": null,
+    "thermal_coefficient_confidence": 0.0,
+    "hourly_bias": {},
+    "samples_since_last_update": 0,
+    "total_samples": 0,
+    "next_update_at_samples": 24,
+    "updated_at": null
+  },
+  "energy_separation": {
+    "enabled": false,
+    "method": "homeside_ondemand_dhw",
+    "heat_loss_k": 0.1,
+    "k_percentile": 15,
+    "calibration_date": null,
+    "calibration_days": 0,
+    "dhw_percentage": 0,
+    "dhw_temp_threshold": 45.0,
+    "dhw_temp_rise_threshold": 2.0,
+    "dhw_baseline_temp": 25.0,
+    "avg_dhw_power_kw": 25.0,
+    "cold_water_temp": 8.0,
+    "hot_water_target_temp": 55.0
+  },
+  "variable_overrides": {}
+}

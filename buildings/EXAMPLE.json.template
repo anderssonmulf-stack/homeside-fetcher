@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "building_id": "SITE_BuildingName",
+  "friendly_name": "Building Name",
+  "building_type": "commercial",
+  "connection": {
+    "system": "arrigo",
+    "host": "exodriftXX.systeminstallation.se",
+    "account": "AccountName"
+  },
+  "sub_areas": [],
+  "analog_signals": {},
+  "digital_signals": {},
+  "alarm_monitoring": {
+    "enabled": false,
+    "priorities": ["A", "B"],
+    "poll_interval_minutes": 1
+  },
+  "poll_interval_minutes": 15
+}
