@@ -202,7 +202,7 @@ This is the process by which district heating energy data (consumption, volume, 
 This Server (07:55 daily)           Dropbox /data/              Work Server (07:45 daily)
 ┌─────────────────────────┐     ┌──────────────────────┐     ┌─────────────────────────┐
 │                         │     │                      │     │                         │
-│ 1. dropbox_sync.py      │────▶│ SvenskEB_DH.csv      │◀────│ 3. Reads meter IDs      │
+│ 1. dropbox_sync.py      │────▶│ BVPro_DH.csv      │◀────│ 3. Reads meter IDs      │
 │    writes meter request │     │                      │     │    from request file     │
 │                         │     │                      │     │                         │
 │ 5. energy_importer.py   │◀────│ energy_YYYYMMDD.txt  │◀────│ 4. Exports hourly       │
@@ -241,7 +241,7 @@ Each meter ID maps to its entity:
 For each meter ID:
 1. Queries InfluxDB for the last imported data point
 2. Sets `from_datetime` to one hour after the last data point
-3. Writes to Dropbox `/data/SvenskEB_DH.csv`:
+3. Writes to Dropbox `/data/BVPro_DH.csv`:
 
 ```csv
 meter_id;from_datetime;house_name
@@ -251,7 +251,7 @@ meter_id;from_datetime;house_name
 
 #### 3. Work Server Exports Data
 
-The SvenskEB work server reads `SvenskEB_DH.csv`, queries the energy company's system for each meter, and writes hourly data files back to Dropbox.
+The BVPro work server reads `BVPro_DH.csv`, queries the energy company's system for each meter, and writes hourly data files back to Dropbox.
 
 #### 4. Energy Import (`energy_importer.py`)
 
@@ -273,7 +273,7 @@ energy_meter,house_id=HEM_FJV_Villa_149,meter_id=735999255020057923
 ```
 
 5. After successful import: deletes the energy file from Dropbox
-6. Updates `SvenskEB_DH.csv` with new `from_datetime`
+6. Updates `BVPro_DH.csv` with new `from_datetime`
 
 ### Manual Energy Operations
 

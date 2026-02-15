@@ -39,7 +39,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOOKBACK_DAYS = 90
 
 # Request file path in Dropbox (CSV format for easy parsing by work server)
-REQUEST_FILE_PATH = '/data/SvenskEB_DH.csv'
+# Each installation sets its own filename via env var to avoid conflicts in shared Dropbox
+REQUEST_FILE_PATH = os.getenv('DROPBOX_REQUEST_FILE', '/data/BVPro_DH.csv')
 
 
 class MeterRequestManager:

@@ -434,6 +434,18 @@ class UserManager:
 
         return houses
 
+    def get_all_buildings(self) -> List[str]:
+        """Get list of all building IDs from building configs"""
+        buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+        buildings = []
+
+        if os.path.exists(buildings_dir):
+            for filename in os.listdir(buildings_dir):
+                if filename.endswith('.json') and not filename.endswith('.template'):
+                    buildings.append(filename[:-5])  # Remove .json
+
+        return buildings
+
     # =========================================================================
     # Pending Actions (for email confirm/decline)
     # =========================================================================
