@@ -41,13 +41,16 @@ A Python application that fetches heating system data from HomeSide district hea
 | `Dockerfile` | Container image definition |
 | `docker-compose.yml` | Container orchestration config. Defines one fetcher service per customer (multi-house support). |
 
-### Debug/Development Tools
+### Archive (unused scripts kept for reference)
 
 | File | Purpose |
 |------|---------|
-| `debug_variables.py` | Debug tool for inspecting API variables |
-| `dump_variables.py` | Dumps all variables from the API |
-| `find_all_variables.py` | Discovers available variables in the system |
+| `archive/debug_variables.py` | Debug tool for inspecting API variables |
+| `archive/dump_variables.py` | Dumps all variables from the API |
+| `archive/find_all_variables.py` | Discovers available variables in the system |
+| `archive/restore_from_docker_logs.py` | Restore heating data from Docker logs to InfluxDB |
+| `archive/compare_prediction_vs_actual.py` | Compare predicted vs actual energy |
+| `archive/backtest_energy_forecast.py` | Backtest energy forecaster against historical data |
 
 ### Admin Scripts
 

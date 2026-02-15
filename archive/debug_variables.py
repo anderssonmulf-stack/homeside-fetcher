@@ -23,9 +23,13 @@ def load_env():
     return env_vars
 
 env = load_env()
-username = env.get('HOMESIDE_USERNAME', 'FC 2000232581')
-password = env.get('HOMESIDE_PASSWORD', 'k8H3qd')
-clientid = env.get('HOMESIDE_CLIENTID', '38/Sysinst10/HEM_FJV_149/HEM_FJV_Villa_149')
+username = env.get('HOMESIDE_USERNAME') or env.get('HOUSE_HEM_FJV_Villa_149_USERNAME')
+password = env.get('HOMESIDE_PASSWORD') or env.get('HOUSE_HEM_FJV_Villa_149_PASSWORD')
+clientid = env.get('HOMESIDE_CLIENTID', '')
+
+if not username or not password:
+    print("ERROR: Set HOMESIDE_USERNAME and HOMESIDE_PASSWORD in .env")
+    exit(1)
 base_url = "https://homeside.systeminstallation.se"
 
 print("=" * 80)
