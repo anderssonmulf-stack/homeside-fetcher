@@ -304,7 +304,7 @@ class EnergyImporter:
         """
         Write records to InfluxDB.
 
-        Uses meter_mapping to translate meter_id -> customer_id (house_id).
+        Uses meter_mapping to translate meter_id -> entity info (house or building).
         Records with unknown meter_ids are rejected.
         Duplicates (records with timestamps that already exist) are skipped.
 
@@ -313,16 +313,20 @@ class EnergyImporter:
         """
         errors = []
 
-        # Look up customer_id for this meter
-        customer_id = self.meter_mapping.get(str(meter_id).strip())
+        # Look up entity info for this meter
+        entity = self.meter_mapping.get(str(meter_id).strip())
 
-        if not customer_id:
-            error_msg = f"Unknown meter_id '{meter_id}' - not mapped to any customer. Configure meter_ids in the customer profile."
+        if not entity:
+            error_msg = f"Unknown meter_id '{meter_id}' - not mapped to any house or building. Configure meter_ids in the profile or building config."
             self._log_warning(error_msg, properties={'MeterId': meter_id})
             return 0, [error_msg]
 
-        # Get existing data for this house to detect duplicates
-        existing_data = self._get_existing_data(customer_id, records)
+        entity_id = entity['id']
+        entity_type = entity['type']  # "house" or "building"
+        tag_name = "building_id" if entity_type == "building" else "house_id"
+
+        # Get existing data to detect duplicates
+        existing_data = self._get_existing_data(entity_id, records, tag_name=tag_name)
 
         # Filter: skip only if timestamp exists AND values are identical
         records_to_write = []
@@ -351,18 +355,18 @@ class EnergyImporter:
             self._log(f"Updating {updated} records for meter {meter_id}", properties={'MeterId': meter_id, 'Updated': updated})
 
         if not records_to_write:
-            self._log(f"No records to write for meter {meter_id} -> house {customer_id} (all {len(records)} identical)")
+            self._log(f"No records to write for meter {meter_id} -> {entity_type} {entity_id} (all {len(records)} identical)")
             return 0, []
 
         if self.dry_run:
-            self._log(f"[DRY RUN] Would write {len(records_to_write)} records for meter {meter_id} -> house {customer_id}",
-                     properties={'MeterId': meter_id, 'HouseId': customer_id, 'New': new_count, 'Updated': updated, 'Skipped': skipped})
+            self._log(f"[DRY RUN] Would write {len(records_to_write)} records for meter {meter_id} -> {entity_type} {entity_id}",
+                     properties={'MeterId': meter_id, tag_name: entity_id, 'EntityType': entity_type, 'New': new_count, 'Updated': updated, 'Skipped': skipped})
             return len(records_to_write), []
 
         points = []
         for record in records_to_write:
             point = Point("energy_meter") \
-                .tag("house_id", customer_id) \
+                .tag(tag_name, entity_id) \
                 .tag("meter_id", meter_id) \
                 .time(record['timestamp'], WritePrecision.S)
 
@@ -376,10 +380,11 @@ class EnergyImporter:
         if points:
             self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
             self._log(
-                f"Wrote {len(points)} records for meter {meter_id} -> house {customer_id}",
+                f"Wrote {len(points)} records for meter {meter_id} -> {entity_type} {entity_id}",
                 level='Information',  # Always log actual writes as Information
                 properties={
-                    'HouseId': customer_id,
+                    tag_name: entity_id,
+                    'EntityType': entity_type,
                     'MeterId': meter_id,
                     'RecordsWritten': len(points),
                     'NewRecords': new_count,
@@ -390,7 +395,7 @@ class EnergyImporter:
 
         return len(points), []
 
-    def _get_existing_data(self, house_id: str, records: List[Dict]) -> dict:
+    def _get_existing_data(self, entity_id: str, records: List[Dict], tag_name: str = "house_id") -> dict:
         """
         Query InfluxDB for existing data to detect duplicates.
 
@@ -414,7 +419,7 @@ class EnergyImporter:
 from(bucket: "{self.influx_bucket}")
   |> range(start: {start_time}, stop: {stop_time})
   |> filter(fn: (r) => r._measurement == "energy_meter")
-  |> filter(fn: (r) => r.house_id == "{house_id}")
+  |> filter(fn: (r) => r.{tag_name} == "{entity_id}")
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
 '''
 

@@ -30,7 +30,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
-from customer_profile import get_meter_ids_from_env
+from customer_profile import get_meter_ids_from_env, get_building_meter_ids
 from dropbox_client import DropboxClient, create_client_from_env
 
 logger = logging.getLogger(__name__)
@@ -99,38 +99,61 @@ class MeterRequestManager:
 
     def load_all_profiles(self) -> List[Dict]:
         """
-        Load all customer profiles that have meter_ids configured.
+        Load all customer profiles and building configs that have meter_ids configured.
 
         Returns:
             List of profile dicts with meter_ids
         """
         profiles = []
 
-        if not os.path.exists(self.profiles_dir):
+        # Scan house profiles
+        if os.path.exists(self.profiles_dir):
+            for filename in os.listdir(self.profiles_dir):
+                if not filename.endswith('.json') or '_signals.json' in filename:
+                    continue
+
+                filepath = os.path.join(self.profiles_dir, filename)
+                try:
+                    with open(filepath, 'r') as f:
+                        data = json.load(f)
+
+                    customer_id = data.get('customer_id', '')
+                    meter_ids = get_meter_ids_from_env(customer_id)
+                    if meter_ids:
+                        profiles.append({
+                            'customer_id': customer_id,
+                            'friendly_name': data.get('friendly_name', ''),
+                            'meter_ids': meter_ids,
+                            'energy_data_start_date': data.get('energy_data_start_date')
+                        })
+                except Exception as e:
+                    logger.error(f"Error loading profile {filename}: {e}")
+        else:
             logger.warning(f"Profiles directory not found: {self.profiles_dir}")
-            return profiles
 
-        for filename in os.listdir(self.profiles_dir):
-            if not filename.endswith('.json') or '_signals.json' in filename:
-                continue
+        # Scan building configs
+        buildings_dir = 'buildings'
+        if os.path.exists(buildings_dir):
+            for filename in os.listdir(buildings_dir):
+                if not filename.endswith('.json') or '_signals.json' in filename:
+                    continue
 
-            filepath = os.path.join(self.profiles_dir, filename)
-            try:
-                with open(filepath, 'r') as f:
-                    data = json.load(f)
+                filepath = os.path.join(buildings_dir, filename)
+                try:
+                    with open(filepath, 'r') as f:
+                        data = json.load(f)
 
-                customer_id = data.get('customer_id', '')
-                # Meter IDs only from env vars (HOUSE_<id>_METER_IDS) — never from profile JSON
-                meter_ids = get_meter_ids_from_env(customer_id)
-                if meter_ids:
-                    profiles.append({
-                        'customer_id': data.get('customer_id', ''),
-                        'friendly_name': data.get('friendly_name', ''),
-                        'meter_ids': meter_ids,
-                        'energy_data_start_date': data.get('energy_data_start_date')
-                    })
-            except Exception as e:
-                logger.error(f"Error loading profile {filename}: {e}")
+                    building_id = data.get('building_id', filename.replace('.json', ''))
+                    meter_ids = get_building_meter_ids(building_id, buildings_dir)
+                    if meter_ids:
+                        profiles.append({
+                            'customer_id': building_id,
+                            'friendly_name': data.get('friendly_name', ''),
+                            'meter_ids': meter_ids,
+                            'energy_data_start_date': data.get('energy_data_start_date')
+                        })
+                except Exception as e:
+                    logger.error(f"Error loading building config {filename}: {e}")
 
         return profiles
 

@@ -431,55 +431,115 @@ def get_meter_ids_from_env(customer_id: str) -> list:
     return []
 
 
-def build_meter_mapping(profiles_dir: str = "profiles") -> Dict[str, str]:
+def get_building_meter_ids(building_id: str, buildings_dir: str = "buildings") -> list:
     """
-    Build a mapping of meter_id -> customer_id from all profiles.
+    Read meter_ids for a building.
 
-    Used by the energy importer to look up which house a meter belongs to.
-
-    Args:
-        profiles_dir: Directory containing profile JSON files
+    Checks BUILDING_<building_id>_METER_IDS env var first, then falls back
+    to the meter_ids field in the building's JSON config.
 
     Returns:
-        Dictionary mapping meter_id to customer_id
+        List of meter ID strings, or empty list if not configured.
+    """
+    # Env var takes precedence
+    env_key = f"BUILDING_{building_id}_METER_IDS"
+    value = os.getenv(env_key, "")
+    if value:
+        return [m.strip() for m in value.split(",") if m.strip()]
+
+    # Fall back to JSON config
+    filepath = os.path.join(buildings_dir, f"{building_id}.json")
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            meter_ids = data.get('meter_ids', [])
+            return [str(m).strip() for m in meter_ids if str(m).strip()]
+        except Exception:
+            pass
+
+    return []
+
+
+def build_meter_mapping(profiles_dir: str = "profiles", buildings_dir: str = "buildings") -> Dict[str, dict]:
+    """
+    Build a mapping of meter_id -> entity info from all profiles and buildings.
+
+    Used by the energy importer to look up which house/building a meter belongs to.
+
+    Args:
+        profiles_dir: Directory containing house profile JSON files
+        buildings_dir: Directory containing building config JSON files
+
+    Returns:
+        Dictionary mapping meter_id to {"id": entity_id, "type": "house"|"building",
+                                         "friendly_name": name}
     """
     logger = logging.getLogger(__name__)
     mapping = {}
 
-    if not os.path.exists(profiles_dir):
+    def _add_meter(meter_id: str, entity_id: str, entity_type: str, friendly_name: str):
+        meter_id = str(meter_id).strip()
+        if not meter_id:
+            return
+        if meter_id in mapping:
+            logger.warning(
+                f"Duplicate meter_id {meter_id}: "
+                f"already mapped to {mapping[meter_id]['id']}, "
+                f"ignoring mapping to {entity_id}"
+            )
+        else:
+            mapping[meter_id] = {
+                "id": entity_id,
+                "type": entity_type,
+                "friendly_name": friendly_name
+            }
+
+    # Scan house profiles
+    if os.path.exists(profiles_dir):
+        for filename in os.listdir(profiles_dir):
+            if not filename.endswith('.json') or '_signals.json' in filename:
+                continue
+
+            try:
+                filepath = os.path.join(profiles_dir, filename)
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+
+                customer_id = data.get('customer_id', '')
+                friendly_name = data.get('friendly_name', customer_id)
+                meter_ids = get_meter_ids_from_env(customer_id)
+
+                for mid in meter_ids:
+                    _add_meter(mid, customer_id, "house", friendly_name)
+
+            except Exception as e:
+                logger.error(f"Error loading profile {filename}: {e}")
+    else:
         logger.warning(f"Profiles directory not found: {profiles_dir}")
-        return mapping
 
-    for filename in os.listdir(profiles_dir):
-        if not filename.endswith('.json') or '_signals.json' in filename:
-            continue
+    # Scan building configs
+    if os.path.exists(buildings_dir):
+        for filename in os.listdir(buildings_dir):
+            if not filename.endswith('.json') or '_signals.json' in filename:
+                continue
 
-        try:
-            filepath = os.path.join(profiles_dir, filename)
-            with open(filepath, 'r') as f:
-                data = json.load(f)
+            try:
+                filepath = os.path.join(buildings_dir, filename)
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
 
-            customer_id = data.get('customer_id', '')
-            # Meter IDs only from env vars (HOUSE_<id>_METER_IDS) — never from profile JSON
-            meter_ids = get_meter_ids_from_env(customer_id)
+                building_id = data.get('building_id', filename.replace('.json', ''))
+                friendly_name = data.get('friendly_name', building_id)
+                meter_ids = get_building_meter_ids(building_id, buildings_dir)
 
-            for meter_id in meter_ids:
-                # Normalize meter_id (strip whitespace, convert to string)
-                meter_id = str(meter_id).strip()
-                if meter_id:
-                    if meter_id in mapping:
-                        logger.warning(
-                            f"Duplicate meter_id {meter_id}: "
-                            f"already mapped to {mapping[meter_id]}, "
-                            f"ignoring mapping to {customer_id}"
-                        )
-                    else:
-                        mapping[meter_id] = customer_id
+                for mid in meter_ids:
+                    _add_meter(mid, building_id, "building", friendly_name)
 
-        except Exception as e:
-            logger.error(f"Error loading profile {filename}: {e}")
+            except Exception as e:
+                logger.error(f"Error loading building config {filename}: {e}")
 
-    logger.info(f"Built meter mapping: {len(mapping)} meter(s) across profiles")
+    logger.info(f"Built meter mapping: {len(mapping)} meter(s) across profiles and buildings")
     return mapping
 
 
@@ -495,4 +555,5 @@ def find_customer_by_meter_id(meter_id: str, profiles_dir: str = "profiles") -> 
         customer_id if found, None otherwise
     """
     mapping = build_meter_mapping(profiles_dir)
-    return mapping.get(str(meter_id).strip())
+    entry = mapping.get(str(meter_id).strip())
+    return entry['id'] if entry else None
