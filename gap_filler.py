@@ -1396,7 +1396,7 @@ class ArrigoBootstrapper:
         print(f"  Learning on {learning_days} days (reserving {self.backtest_days} days for backtest)")
 
         from heating_energy_calibrator import HeatingEnergyCalibrator
-        from k_recalibrator import recalibrate_house
+        from k_recalibrator import recalibrate_entity
 
         # Step 1: Energy separation
         print(f"\n  Running energy separation for {self.house_id}...")
@@ -1432,16 +1432,15 @@ class ArrigoBootstrapper:
 
         # Step 2: K recalibration
         print(f"\n  Running k-recalibration for {self.house_id}...")
-        result = recalibrate_house(
-            house_id=self.house_id,
+        result = recalibrate_entity(
+            entity_id=self.house_id,
+            entity_type=self.entity_type,
             influx_url=self.influx_url,
             influx_token=self.influx_token,
             influx_org=self.influx_org,
             influx_bucket=self.influx_bucket,
-            profiles_dir="profiles",
             days=learning_days,
-            update_profile=True,
-            entity_tag=self.influx_tag
+            update_config=True,
         )
 
         if result:
