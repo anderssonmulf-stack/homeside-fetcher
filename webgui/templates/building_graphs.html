@@ -159,12 +159,12 @@
         <div id="efficiency-summary" class="metric-summary"></div>
     </div>
 
-    <!-- Energy Consumption Chart -->
+    <!-- Energy Breakdown (Heating vs Hot Water) -->
     <div class="card">
         <div class="card-header-flex">
-            <h2>Energy Consumption<span id="energy-data-source" class="data-source-badge" style="display:none;"></span></h2>
+            <h2>Energy Breakdown (Heating vs Hot Water)</h2>
             <div class="chart-controls">
-                <select id="energy-days-select" class="role-select" onchange="updateEnergyChart()">
+                <select id="separation-days-select" class="role-select" onchange="updateEnergySeparationChart()">
                     <option value="7">Last 7 days</option>
                     <option value="30" selected>Last 30 days</option>
                     <option value="90">Last 90 days</option>
@@ -173,10 +173,80 @@
             </div>
         </div>
         <p class="card-description">
-            Daily district heating energy consumption (kWh).
+            Daily energy split into <strong style="color:#3498db">Space Heating</strong> and
+            <strong style="color:#e67e22">Hot Water (DHW)</strong> using the k-value calibration model.
         </p>
-        <div id="energy-chart" class="chart-container"></div>
-        <div id="energy-summary" class="metric-summary"></div>
+        <div id="separation-chart" class="chart-container"></div>
+        <div id="separation-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- Prediction Accuracy Trend Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Prediction Accuracy Trend</h2>
+            <div class="chart-controls">
+                <select id="accuracy-days-select" class="role-select" onchange="updateAccuracyChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Daily prediction accuracy: <strong>predicted heating &divide; actual heating &times; 100%</strong>.
+            Green zone (90&ndash;110%) indicates good model fit.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color" style="background:#27ae60;"></span> Good (90&ndash;110%)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#f39c12;"></span> Fair (80&ndash;120%)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#e74c3c;"></span> Poor</span>
+            </span>
+        </p>
+        <div id="accuracy-chart" class="chart-container"></div>
+        <div id="accuracy-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- Energy Forecast (Next 24h) -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Energy Forecast (Next 24h)</h2>
+            <div class="chart-controls">
+                <select id="energy-forecast-hours-select" class="role-select" onchange="updateEnergyForecastChart()">
+                    <option value="12">Next 12h</option>
+                    <option value="24" selected>Next 24h</option>
+                    <option value="48">Next 48h</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Predicted <strong>hourly heating energy</strong> based on SMHI weather forecast and calibrated k-value model.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color" style="background:#FF6B6B;"></span> Energy (kWh/h)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#4ECDC4; opacity:0.5;"></span> Outdoor Temp</span>
+            </span>
+        </p>
+        <div id="energy-forecast-chart" class="chart-container"></div>
+        <div id="energy-forecast-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- K-Value History Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Heat Loss Coefficient (k) History</h2>
+            <div class="chart-controls">
+                <select id="k-history-days-select" class="role-select" onchange="updateKValueChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Shows how the building's heat loss coefficient (k) converges over time.
+            When the line flattens, the calibration has stabilized.
+            <strong>k = kW per &deg;C difference</strong> between indoor and outdoor temperature.
+        </p>
+        <div id="k-value-chart" class="chart-container"></div>
+        <div id="k-value-summary" class="metric-summary"></div>
     </div>
 
     <!-- Cost Estimate Chart -->
@@ -204,26 +274,6 @@
         <div id="cost-summary" class="cost-summary-box"></div>
     </div>
 
-    <!-- Energy Breakdown (Heating vs Hot Water) -->
-    <div class="card">
-        <div class="card-header-flex">
-            <h2>Energy Breakdown (Heating vs Hot Water)</h2>
-            <div class="chart-controls">
-                <select id="separation-days-select" class="role-select" onchange="updateEnergySeparationChart()">
-                    <option value="7">Last 7 days</option>
-                    <option value="30" selected>Last 30 days</option>
-                    <option value="90">Last 90 days</option>
-                    <option value="365">Last year</option>
-                </select>
-            </div>
-        </div>
-        <p class="card-description">
-            Daily energy split into <strong style="color:#3498db">Space Heating</strong> and
-            <strong style="color:#e67e22">Hot Water (DHW)</strong> using the k-value calibration model.
-        </p>
-        <div id="separation-chart" class="chart-container"></div>
-        <div id="separation-summary" class="metric-summary"></div>
-    </div>
 </div>
 
 <style>
@@ -988,119 +1038,6 @@
             });
     }
 
-    // Energy Consumption Chart
-    const energyState = {
-        loadedDays: 0,
-        isLoading: false,
-        minLoadedTime: null,
-        maxLoadedTime: null
-    };
-
-    function updateEnergyChart(extendDays = null) {
-        const selectEl = document.getElementById('energy-days-select');
-        const days = extendDays || parseInt(selectEl.value);
-        const chartDiv = document.getElementById('energy-chart');
-        const summaryDiv = document.getElementById('energy-summary');
-
-        if (!extendDays) {
-            chartDiv.innerHTML = '<div class="loading-spinner">Loading energy data...</div>';
-            summaryDiv.innerHTML = '';
-        }
-        energyState.isLoading = true;
-
-        fetch(`/api/building/${buildingId}/energy-consumption?days=${days}&aggregation=daily`)
-            .then(r => r.ok ? r.json() : { data: {}, error: 'Failed to fetch' })
-            .then(result => {
-                energyState.isLoading = false;
-
-                // Update data source badge
-                if (!extendDays) {
-                    updateDataSourceBadge('energy-data-source', result.data_source);
-                }
-
-                const allData = result.data || {};
-                const totals = result.totals || {};
-
-                // Flatten all energy types into one series
-                let dataPoints = [];
-                for (const [type, entries] of Object.entries(allData)) {
-                    dataPoints = dataPoints.concat(entries);
-                }
-
-                if (dataPoints.length === 0 && !extendDays) {
-                    chartDiv.innerHTML = '<div class="no-data-message">No energy data available. Import energy data first.</div>';
-                    return;
-                }
-
-                // Sort by timestamp
-                dataPoints.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-
-                energyState.loadedDays = days;
-                if (dataPoints.length > 0) {
-                    energyState.minLoadedTime = new Date(dataPoints[0].timestamp);
-                    energyState.maxLoadedTime = new Date(dataPoints[dataPoints.length - 1].timestamp);
-                }
-
-                const traces = [{
-                    x: dataPoints.map(d => d.timestamp_display),
-                    y: dataPoints.map(d => d.value),
-                    type: 'bar',
-                    name: 'Energy (kWh)',
-                    marker: { color: '#3498db' },
-                    hovertemplate: '%{x}<br>%{y} kWh<extra></extra>'
-                }];
-
-                const layout = {
-                    xaxis: { title: 'Date', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
-                    yaxis: { title: 'Energy (kWh)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', rangemode: 'tozero' },
-                    height: 350,
-                    margin: { l: 60, r: 30, t: 30, b: 80 },
-                    paper_bgcolor: 'rgba(0,0,0,0)',
-                    plot_bgcolor: '#ffffff',
-                    font: { family: 'system-ui, -apple-system, sans-serif' },
-                    dragmode: 'pan'
-                };
-
-                if (!extendDays) {
-                    chartDiv.innerHTML = '';
-                }
-
-                const plotFn = extendDays ? Plotly.react : Plotly.newPlot;
-                plotFn('energy-chart', traces, layout, chartConfig)
-                    .then(() => {
-                        if (!extendDays) {
-                            document.getElementById('energy-chart').on('plotly_relayout', (e) => handleChartPanDays(e, energyState, 'energy-days-select', updateEnergyChart));
-                        }
-                    })
-                    .catch(err => {
-                        console.error('Plotly render error:', err);
-                        if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
-                    });
-
-                // Summary
-                if (!extendDays) {
-                    const totalKwh = Object.values(totals).reduce((a, b) => a + b, 0);
-                    const dailyAvg = days > 0 ? (totalKwh / days).toFixed(1) : 0;
-
-                    summaryDiv.innerHTML = `
-                        <div class="metric-item">
-                            <div class="metric-value">${totalKwh.toFixed(0)} kWh</div>
-                            <div class="metric-label">Total (${days} days)</div>
-                        </div>
-                        <div class="metric-item">
-                            <div class="metric-value">${dailyAvg} kWh</div>
-                            <div class="metric-label">Daily Average</div>
-                        </div>
-                    `;
-                }
-            })
-            .catch(error => {
-                energyState.isLoading = false;
-                console.error('Failed to load energy data:', error);
-                if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy data.</div>';
-            });
-    }
-
     // Cost Estimate Chart
     const costState = {
         loadedDays: 0,
@@ -1330,6 +1267,22 @@
                     hoverinfo: 'text'
                 });
 
+                // Add prediction line (if available from backtest)
+                const hasPredictions = data.some(d => d.predicted_kwh !== null);
+                if (hasPredictions) {
+                    traces.push({
+                        x: timestamps,
+                        y: data.map(d => d.predicted_kwh),
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: 'Predicted Heating',
+                        line: { color: '#9b59b6', width: 2, dash: 'dash' },
+                        marker: { color: '#9b59b6', size: 6 },
+                        hovertemplate: '%{x}<br>Predicted: %{y} kWh<br>Outdoor: %{customdata}°C<extra></extra>',
+                        customdata: data.map(d => d.avg_outdoor)
+                    });
+                }
+
                 const layout = {
                     xaxis: {
                         title: 'Date',
@@ -1379,6 +1332,14 @@
                 // Update summary
                 if (!extendDays) {
                     const kDisplay = kValue ? `${kValue} kW/°C` : 'N/A';
+                    let predictionHtml = '';
+                    if (totals.prediction_accuracy && totals.days_with_predictions > 0) {
+                        predictionHtml = `
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #9b59b6">${totals.prediction_accuracy}%</div>
+                            <div class="metric-label">Prediction Accuracy (${totals.days_with_predictions}d)</div>
+                        </div>`;
+                    }
                     summaryDiv.innerHTML = `
                         <div class="metric-item">
                             <div class="metric-value">${totals.actual || 0} kWh</div>
@@ -1392,6 +1353,7 @@
                             <div class="metric-value" style="color: #e67e22">${totals.dhw || 0} kWh</div>
                             <div class="metric-label">Hot Water (${totals.dhw_pct || 0}%)</div>
                         </div>
+                        ${predictionHtml}
                         <div class="metric-item">
                             <div class="metric-value" style="color: #7f8c8d; font-size: 1.2em">${kDisplay}</div>
                             <div class="metric-label">Heat Loss Coeff (k)</div>
@@ -1403,6 +1365,432 @@
                 separationState.isLoading = false;
                 console.error('Failed to load energy separation:', error);
                 if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy separation data.</div>';
+            });
+    }
+
+    // Prediction Accuracy Trend Chart
+    function updateAccuracyChart() {
+        const days = parseInt(document.getElementById('accuracy-days-select').value);
+        const chartDiv = document.getElementById('accuracy-chart');
+        const summaryDiv = document.getElementById('accuracy-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading prediction accuracy data...</div>';
+        summaryDiv.innerHTML = '';
+
+        fetch(`/api/building/${buildingId}/energy-separated?days=${days}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                const data = result.data || [];
+
+                // Filter for days with both predicted and actual heating > 0
+                const valid = data.filter(d => d.predicted_kwh !== null && d.predicted_kwh > 0 && d.heating_kwh > 0);
+
+                if (valid.length < 2) {
+                    chartDiv.innerHTML = '<div class="no-data-message">Not enough prediction data yet. Need at least 2 days with both predicted and actual heating energy.</div>';
+                    summaryDiv.innerHTML = '';
+                    return;
+                }
+
+                const dates = valid.map(d => d.timestamp_display);
+                const accuracies = valid.map(d => Math.round(d.predicted_kwh / d.heating_kwh * 1000) / 10);
+
+                // Color-code each marker
+                const colors = accuracies.map(a => {
+                    if (a >= 90 && a <= 110) return '#27ae60';
+                    if (a >= 80 && a <= 120) return '#f39c12';
+                    return '#e74c3c';
+                });
+
+                const traces = [
+                    // Green "good" zone band
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [110, 110],
+                        mode: 'lines',
+                        line: { color: 'rgba(39,174,96,0)', width: 0 },
+                        showlegend: false,
+                        hoverinfo: 'skip'
+                    },
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [90, 90],
+                        mode: 'lines',
+                        line: { color: 'rgba(39,174,96,0)', width: 0 },
+                        fill: 'tonexty',
+                        fillcolor: 'rgba(39,174,96,0.1)',
+                        showlegend: false,
+                        hoverinfo: 'skip'
+                    },
+                    // 100% reference line
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [100, 100],
+                        mode: 'lines',
+                        name: 'Perfect (100%)',
+                        line: { color: '#95a5a6', width: 1, dash: 'dash' },
+                        hoverinfo: 'skip'
+                    },
+                    // Accuracy line with colored markers
+                    {
+                        x: dates,
+                        y: accuracies,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: 'Accuracy',
+                        line: { color: '#3498db', width: 2 },
+                        marker: { color: colors, size: 9, line: { color: '#fff', width: 1 } },
+                        hovertemplate: '%{x}<br>Accuracy: %{y}%<extra></extra>'
+                    }
+                ];
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: 'Accuracy (%)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        zeroline: false
+                    },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('accuracy-chart', traces, layout, chartConfig)
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Summary stats
+                const avgAcc = Math.round(accuracies.reduce((s, v) => s + v, 0) / accuracies.length * 10) / 10;
+                const bestDay = valid[accuracies.indexOf(accuracies.reduce((best, v) => Math.abs(v - 100) < Math.abs(best - 100) ? v : best))];
+                const worstDay = valid[accuracies.indexOf(accuracies.reduce((worst, v) => Math.abs(v - 100) > Math.abs(worst - 100) ? v : worst))];
+
+                // Trend: compare first half average to second half average
+                const half = Math.floor(accuracies.length / 2);
+                const firstHalf = accuracies.slice(0, half);
+                const secondHalf = accuracies.slice(half);
+                const firstAvgDev = firstHalf.reduce((s, v) => s + Math.abs(v - 100), 0) / firstHalf.length;
+                const secondAvgDev = secondHalf.reduce((s, v) => s + Math.abs(v - 100), 0) / secondHalf.length;
+                const trendDiff = firstAvgDev - secondAvgDev;
+                let trend, trendColor;
+                if (trendDiff > 2) { trend = 'Improving'; trendColor = '#27ae60'; }
+                else if (trendDiff < -2) { trend = 'Declining'; trendColor = '#e74c3c'; }
+                else { trend = 'Stable'; trendColor = '#7f8c8d'; }
+
+                const avgColor = avgAcc >= 90 && avgAcc <= 110 ? '#27ae60' : (avgAcc >= 80 && avgAcc <= 120 ? '#f39c12' : '#e74c3c');
+
+                summaryDiv.innerHTML = `
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: ${avgColor}">${avgAcc}%</div>
+                        <div class="metric-label">Avg Accuracy (${valid.length} days)</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #27ae60">${Math.round(bestDay.predicted_kwh / bestDay.heating_kwh * 1000) / 10}%</div>
+                        <div class="metric-label">Best (${bestDay.timestamp_display})</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #e74c3c">${Math.round(worstDay.predicted_kwh / worstDay.heating_kwh * 1000) / 10}%</div>
+                        <div class="metric-label">Worst (${worstDay.timestamp_display})</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: ${trendColor}">${trend}</div>
+                        <div class="metric-label">Trend</div>
+                    </div>
+                `;
+            })
+            .catch(error => {
+                console.error('Failed to load accuracy data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load prediction accuracy data.</div>';
+            });
+    }
+
+    // Energy Forecast Chart (Next 24h using k-value + SMHI weather)
+    function updateEnergyForecastChart() {
+        const hours = parseInt(document.getElementById('energy-forecast-hours-select').value);
+        const chartDiv = document.getElementById('energy-forecast-chart');
+        const summaryDiv = document.getElementById('energy-forecast-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading energy forecast...</div>';
+        summaryDiv.innerHTML = '';
+
+        fetch(`/api/building/${buildingId}/energy-forecast?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
+            .then(result => {
+                const forecast = result.forecast || [];
+
+                if (forecast.length === 0) {
+                    const errMsg = result.error || 'No forecast available. Requires calibrated k-value and building location.';
+                    chartDiv.innerHTML = `<div class="no-data-message">${errMsg}</div>`;
+                    return;
+                }
+
+                const timestamps = forecast.map(d => d.timestamp_display);
+                const energyKwh = forecast.map(d => d.heating_energy_kwh);
+                const outdoorTemp = forecast.map(d => d.outdoor_temp);
+
+                const hoverText = forecast.map(d =>
+                    `${d.timestamp_display}<br>` +
+                    `Energy: ${d.heating_energy_kwh.toFixed(2)} kWh<br>` +
+                    `Power: ${d.heating_power_kw.toFixed(2)} kW<br>` +
+                    `Outdoor: ${d.outdoor_temp?.toFixed(1) || '-'}°C`
+                );
+
+                const energyTrace = {
+                    x: timestamps,
+                    y: energyKwh,
+                    type: 'bar',
+                    name: 'Energy (kWh)',
+                    marker: { color: '#FF6B6B' },
+                    text: hoverText,
+                    hoverinfo: 'text'
+                };
+
+                const tempTrace = {
+                    x: timestamps,
+                    y: outdoorTemp,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Outdoor Temp (°C)',
+                    yaxis: 'y2',
+                    line: { color: '#4ECDC4', width: 2 },
+                    marker: { size: 4 }
+                };
+
+                const layout = {
+                    height: 350,
+                    margin: { l: 60, r: 60, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: 'pan',
+                    hovermode: 'x unified',
+                    xaxis: {
+                        title: 'Hour',
+                        tickangle: -45,
+                        gridcolor: '#e8e8e8'
+                    },
+                    yaxis: {
+                        title: 'Energy (kWh)',
+                        titlefont: { color: '#FF6B6B' },
+                        tickfont: { color: '#FF6B6B' },
+                        gridcolor: '#e8e8e8',
+                        rangemode: 'tozero'
+                    },
+                    yaxis2: {
+                        title: 'Temp (°C)',
+                        titlefont: { color: '#4ECDC4' },
+                        tickfont: { color: '#4ECDC4' },
+                        overlaying: 'y',
+                        side: 'right'
+                    },
+                    legend: {
+                        orientation: 'h',
+                        y: -0.2
+                    },
+                    bargap: 0.1
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('energy-forecast-chart', [energyTrace, tempTrace], layout, chartConfig)
+                    .then(() => {
+                        const summary = result.summary || {};
+                        let summaryHtml = `
+                            <div class="metric-item">
+                                <div class="metric-value">${summary.total_energy_kwh?.toFixed(1) || '-'} kWh</div>
+                                <div class="metric-label">Total (${hours}h)</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${summary.avg_power_kw?.toFixed(2) || '-'} kW</div>
+                                <div class="metric-label">Avg Power</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${summary.peak_power_kw?.toFixed(2) || '-'} kW</div>
+                                <div class="metric-label">Peak Power</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${summary.peak_hour || '-'}</div>
+                                <div class="metric-label">Peak Hour</div>
+                            </div>
+                        `;
+                        if (result.generated_at) {
+                            summaryHtml += `
+                                <div class="metric-item" style="opacity: 0.7;">
+                                    <div class="metric-value" style="font-size: 0.9em;">${result.generated_at}</div>
+                                    <div class="metric-label">Generated</div>
+                                </div>
+                            `;
+                        }
+                        if (result.model) {
+                            summaryHtml += `
+                                <div class="metric-item" style="opacity: 0.7;">
+                                    <div class="metric-value" style="font-size: 0.9em;">${result.model}</div>
+                                    <div class="metric-label">Model</div>
+                                </div>
+                            `;
+                        }
+                        summaryDiv.innerHTML = summaryHtml;
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load energy forecast:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy forecast.</div>';
+            });
+    }
+
+    // K-Value History Chart
+    function updateKValueChart() {
+        const days = parseInt(document.getElementById('k-history-days-select').value);
+        const chartDiv = document.getElementById('k-value-chart');
+        const summaryDiv = document.getElementById('k-value-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading k-value history...</div>';
+        summaryDiv.innerHTML = '';
+
+        fetch(`/api/building/${buildingId}/k-value-history?days=${days}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                const data = result.data || [];
+
+                if (data.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No k-value history yet. Recalibration runs every 72 hours.</div>';
+                    return;
+                }
+
+                const timestamps = data.map(d => d.timestamp_display);
+                const kValues = data.map(d => d.k_value);
+                const kMedians = data.map(d => d.k_median);
+                const kStddevUpper = data.map(d => d.k_median + d.k_stddev);
+                const kStddevLower = data.map(d => d.k_median - d.k_stddev);
+
+                const traces = [
+                    // Stddev band (shaded area)
+                    {
+                        x: timestamps.concat(timestamps.slice().reverse()),
+                        y: kStddevUpper.concat(kStddevLower.slice().reverse()),
+                        fill: 'toself',
+                        fillcolor: 'rgba(52, 152, 219, 0.15)',
+                        line: { color: 'transparent' },
+                        name: '±1 Std Dev',
+                        showlegend: true,
+                        hoverinfo: 'skip'
+                    },
+                    // K-value (15th percentile) - main line
+                    {
+                        x: timestamps,
+                        y: kValues,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: 'k (15th pct)',
+                        line: { color: '#e74c3c', width: 3 },
+                        marker: {
+                            size: data.map((_, i) => i === data.length - 1 ? 12 : 6),
+                            color: '#e74c3c'
+                        },
+                        hovertemplate: '%{x}<br>k: %{y:.4f} kW/°C<extra></extra>'
+                    },
+                    // K-median line
+                    {
+                        x: timestamps,
+                        y: kMedians,
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'k (median)',
+                        line: { color: '#3498db', width: 2, dash: 'dash' },
+                        hovertemplate: '%{x}<br>Median: %{y:.4f} kW/°C<extra></extra>'
+                    }
+                ];
+
+                const layout = {
+                    xaxis: {
+                        title: '',
+                        tickangle: -45,
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis: {
+                        title: 'k (kW/°C)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        rangemode: 'tozero'
+                    },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('k-value-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        const latest = data[data.length - 1];
+                        const change = data.length > 1 ? (latest.k_value - data[0].k_value) : 0;
+                        const changeStr = change >= 0 ? `+${(change * 1000).toFixed(2)}` : `${(change * 1000).toFixed(2)}`;
+                        const changeColor = Math.abs(change) < 0.005 ? '#27ae60' : '#e67e22';
+
+                        summaryDiv.innerHTML = `
+                            <div class="metric-item">
+                                <div class="metric-value" style="color: #e74c3c">${latest.k_value.toFixed(4)} kW/°C</div>
+                                <div class="metric-label">Current k (15th pct)</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value" style="color: #3498db">${latest.k_median.toFixed(4)} kW/°C</div>
+                                <div class="metric-label">Median k</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value" style="color: ${changeColor}">${changeStr}</div>
+                                <div class="metric-label">Change (×10⁻³)</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${(latest.confidence * 100).toFixed(0)}%</div>
+                                <div class="metric-label">Confidence</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${latest.days_used} days</div>
+                                <div class="metric-label">Data Points</div>
+                            </div>
+                        `;
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load k-value history:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load k-value history.</div>';
             });
     }
 
@@ -1419,9 +1807,11 @@
         // Other charts - stagger loading
         setTimeout(() => updateTemperatureHistoryChart(), 100);
         setTimeout(() => updateEfficiencyChart(), 200);
-        setTimeout(() => updateEnergyChart(), 300);
-        setTimeout(() => updateCostChart(), 400);
-        setTimeout(() => updateEnergySeparationChart(), 500);
+        setTimeout(() => updateEnergySeparationChart(), 300);
+        setTimeout(() => updateAccuracyChart(), 400);
+        setTimeout(() => updateEnergyForecastChart(), 500);
+        setTimeout(() => updateKValueChart(), 600);
+        setTimeout(() => updateCostChart(), 700);
     });
 </script>
 {% endblock %}

@@ -1490,6 +1490,61 @@ def api_building_energy_separated(building_id):
     return jsonify(result)
 
 
+@app.route('/api/building/<building_id>/k-value-history')
+@require_login
+def api_building_k_value_history(building_id):
+    """API endpoint for building k-value calibration history."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_k_value_history(building_id, days=days, entity_tag="building_id")
+    return jsonify(result)
+
+
+@app.route('/api/building/<building_id>/energy-forecast')
+@require_login
+def api_building_energy_forecast(building_id):
+    """API endpoint for building energy forecast using k-value + SMHI weather."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 24, type=int)
+    hours = min(max(hours, 1), 72)
+
+    # Load building config to get k-value and location
+    buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+    config_path = os.path.join(buildings_dir, f'{building_id}.json')
+
+    try:
+        import json
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return jsonify({'forecast': [], 'summary': {}, 'error': 'Building config not found'})
+
+    k_value = config.get('energy_separation', {}).get('heat_loss_k')
+    assumed_indoor = config.get('energy_separation', {}).get('assumed_indoor_temp', 21.0)
+    lat = config.get('location', {}).get('latitude')
+    lon = config.get('location', {}).get('longitude')
+
+    if not k_value:
+        return jsonify({'forecast': [], 'summary': {}, 'error': 'No k-value calibrated yet'})
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_building_energy_forecast(
+        building_id, hours=hours,
+        k_value=k_value, assumed_indoor_temp=assumed_indoor,
+        latitude=lat, longitude=lon
+    )
+    return jsonify(result)
+
+
 @app.route('/house/<house_id>/settings', methods=['POST'])
 @require_login
 def update_house_settings(house_id):
