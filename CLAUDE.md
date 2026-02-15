@@ -1,6 +1,25 @@
-# Homeside Fetcher
+# BVPro
 
-A Python application that fetches heating system data from HomeSide district heating API, analyzes thermal dynamics, and integrates with weather forecasts to optimize heating control.
+A Python application that monitors heating systems for residential houses (via HomeSide API) and commercial buildings (via Arrigo BMS API), analyzes thermal dynamics, and integrates with weather forecasts to optimize heating control.
+
+## Architecture Overview
+
+The system supports two entity types with separate fetcher processes but shared analytics:
+
+| | Houses (Residential) | Buildings (Commercial) |
+|---|---|---|
+| **API** | HomeSide district heating | Arrigo BMS (GraphQL) |
+| **Fetcher** | `HSF_Fetcher.py` | `building_fetcher.py` |
+| **Config** | `profiles/*.json` (CustomerProfile) | `buildings/*.json` (plain JSON) |
+| **Deployment** | Docker containers via `docker-compose.yml` | Subprocesses via orchestrator |
+| **Credentials** | Per-container env vars | `.env`: `BUILDING_<id>_USERNAME/PASSWORD` |
+| **InfluxDB tag** | `house_id` | `building_id` |
+| **Measurement** | `heating_system` | `building_system` |
+| **Onboard** | `add_customer.py` | `add_building.py` |
+| **Offboard** | `remove_customer.py` | `remove_customer.py --type building` |
+| **Poll interval** | 5 min (configurable) | 5 min (configurable) |
+
+Shared across both: energy separation (`heating_energy_calibrator.py`), k-value recalibration (`k_recalibrator.py`), Dropbox energy import, InfluxDB, Seq logging, web GUI.
 
 ## Project Structure
 
@@ -8,7 +27,9 @@ A Python application that fetches heating system data from HomeSide district hea
 
 | File | Purpose |
 |------|---------|
-| `HSF_Fetcher.py` | Main application entry point. Runs the monitoring loop, coordinates all modules, handles data collection every 15 minutes. |
+| `HSF_Fetcher.py` | House fetcher. Runs the monitoring loop for residential houses, coordinates all modules, handles data collection every 15 minutes. |
+| `building_fetcher.py` | Building fetcher. Polls Arrigo BMS API on a fixed schedule and writes selected signals to InfluxDB. Reads config from `buildings/<id>.json`. |
+| `arrigo_api.py` | Arrigo BMS API client. Handles authentication, signal discovery, and current-value reads for commercial buildings. |
 | `homeside_api.py` | HomeSide API client. Handles authentication (session token, BMS token), fetches heating variables, and can write values back to the system. |
 | `thermal_analyzer.py` | Learns building thermal dynamics over time. Calculates thermal coefficient (how the building responds to outdoor temp changes). Requires 24 data points (6 hours) minimum. |
 | `heat_curve_controller.py` | Manages dynamic heat curve adjustments based on weather forecasts. Can reduce supply temperatures when outdoor temps are rising. |
@@ -32,6 +53,7 @@ A Python application that fetches heating system data from HomeSide district hea
 | `.env` | Environment configuration (credentials, API tokens, InfluxDB settings) - gitignored |
 | `.env.example` | Template for .env file |
 | `profiles/*.json` | Customer-specific profiles with settings and learned parameters |
+| `buildings/*.json` | Building-specific config with Arrigo connection, signal mapping, energy separation |
 | `offboarded.json` | Tracks soft-offboarded entities pending InfluxDB purge (gitignored, deployment-specific) |
 
 ### Docker Files
@@ -53,10 +75,12 @@ A Python application that fetches heating system data from HomeSide district hea
 
 | File | Purpose |
 |------|---------|
-| `add_customer.py` | Interactive script to add new customers (creates profile, updates docker-compose, deploys) |
+| `add_customer.py` | Interactive script to add new houses (creates profile, updates docker-compose, deploys) |
+| `add_building.py` | Interactive script to add new buildings (discovers Arrigo signals, creates config, adds credentials) |
 | `remove_customer.py` | Removes houses/buildings: hard (immediate InfluxDB delete) or soft (30-day grace period via `offboarded.json`) |
 | `migrate_seq_to_influx.py` | Migrates historical data from Seq logs to InfluxDB (for data recovery) |
 | `import_historical_data.py` | Fetches historical data from Arrigo GraphQL API to bootstrap thermal analyzer for new houses |
+| `building_import_historical_data.py` | Bootstraps `building_system` data from Arrigo history for new buildings |
 
 ### Migration Scripts
 
@@ -64,7 +88,7 @@ A Python application that fetches heating system data from HomeSide district hea
 |------|---------|
 | `migrate_seq_to_influx.py` | One-time migration: reads thermal data from Seq logs and writes to InfluxDB `thermal_history` measurement |
 
-## Historical Data Import (New Customers)
+## Historical Data Import (New Houses)
 
 When adding a new customer, you can import 3 months of historical data from the Arrigo API to immediately calculate thermal coefficients instead of waiting 6+ hours for the thermal analyzer to collect enough data.
 
@@ -269,14 +293,24 @@ All three scripts automatically pick up changes to this file.
 
 ## Data Flow
 
-1. `HSF_Fetcher.py` polls HomeSide API every 15 minutes via `homeside_api.py`
+### Houses
+
+1. `HSF_Fetcher.py` polls HomeSide API every 5 minutes via `homeside_api.py`
 2. Extracted heating data is passed to `thermal_analyzer.py` for learning
 3. Weather forecasts are fetched via `smhi_weather.py`
 4. `heat_curve_controller.py` evaluates if heating should be reduced
 5. All data is written to InfluxDB via `influx_writer.py`
 6. Logs are sent to Seq for monitoring
 
-## Adding New Customers
+### Buildings
+
+1. `building_fetcher.py` polls Arrigo BMS API every 5 minutes via `arrigo_api.py`
+2. Configured signals (analog + digital) are read and written to InfluxDB (`building_system` measurement)
+3. Daily at 08:00: energy separation runs via shared `run_energy_separation()`
+4. Every 72h: k-value recalibration runs via shared `recalibrate_entity()`
+5. Logs are sent to Seq for monitoring
+
+## Adding New Houses (Customers)
 
 ### Quick Method (Recommended)
 
@@ -435,6 +469,131 @@ If you need to find the exact client ID format:
 1. Start the fetcher with `HOMESIDE_CLIENTID=` (empty)
 2. Check the logs for: `✓ Using client ID: 38/xxx/HEM_FJV_XX/HEM_FJV_Villa_XX`
 3. The last segment (`HEM_FJV_Villa_XX`) is what the profile filename should match
+
+## Adding New Buildings
+
+### Quick Method (Recommended)
+
+Use the automated script:
+
+```bash
+python3 add_building.py
+```
+
+The script will:
+1. Prompt for Arrigo connection details (host, username, password)
+2. Connect to Arrigo and discover all available signals
+3. Create `buildings/<building_id>.json` with discovered signals
+4. Add credentials to `.env` (`BUILDING_<id>_USERNAME/PASSWORD`)
+5. Optionally sync Dropbox meters and bootstrap historical data
+6. The orchestrator auto-detects the new config within 60 seconds
+
+For non-interactive use:
+```bash
+python3 add_building.py --non-interactive \
+    --host exodrift05.systeminstallation.se \
+    --username "Ulf Andersson" --password "xxx" \
+    --name "HEM Kontor" --building-id TE236_HEM_Kontor \
+    --meter-id 735999255020055028 --bootstrap
+```
+
+### Manual Method
+
+#### Step 1: Get Building Information
+
+Collect:
+- **Arrigo host** (e.g., `exodrift05.systeminstallation.se`)
+- **Arrigo username and password**
+- **Friendly name** (e.g., `HEM Kontor TE236`)
+- **Building ID** (e.g., `TE236_HEM_Kontor` — used as InfluxDB tag and config filename)
+- **Energy meter ID** (if available, for energy separation)
+
+#### Step 2: Create Building Config
+
+Create `buildings/<building_id>.json` (see `buildings/EXAMPLE.json.template`):
+
+```json
+{
+  "schema_version": 1,
+  "building_id": "SITE_BuildingName",
+  "friendly_name": "Building Name",
+  "building_type": "commercial",
+  "meter_ids": [],
+  "energy_separation": {
+    "enabled": false,
+    "method": "k_calibration",
+    "heat_loss_k": null,
+    "k_percentile": 15,
+    "calibration_date": null,
+    "calibration_days": 60,
+    "dhw_percentage": null,
+    "assumed_indoor_temp": 21.0,
+    "field_mapping": {
+      "outdoor_temperature": "outdoor_temp_fvc",
+      "hot_water_temp": "vv1_hot_water_temp"
+    }
+  },
+  "connection": {
+    "system": "arrigo",
+    "host": "exodriftXX.systeminstallation.se",
+    "account": "AccountName"
+  },
+  "analog_signals": {},
+  "digital_signals": {},
+  "alarm_monitoring": {
+    "enabled": false,
+    "priorities": ["A", "B"],
+    "poll_interval_minutes": 1
+  },
+  "poll_interval_minutes": 5
+}
+```
+
+Run `add_building.py` in interactive mode to auto-discover signals, or manually populate `analog_signals` with signal IDs from Arrigo. Each signal needs `signal_id`, `field_name`, and `fetch: true`.
+
+#### Step 3: Add Credentials to .env
+
+```bash
+# In the root .env file:
+BUILDING_TE236_HEM_Kontor_USERNAME=username
+BUILDING_TE236_HEM_Kontor_PASSWORD=password
+BUILDING_TE236_HEM_Kontor_METER_IDS=735999255020055028
+```
+
+The building_fetcher reads credentials from `.env` using the pattern `BUILDING_<building_id>_USERNAME/PASSWORD`.
+
+#### Step 4: Orchestrator Auto-Detection
+
+No Docker or service restart needed. The orchestrator scans the `buildings/` directory every 60 seconds and starts a subprocess for any new config file.
+
+#### Step 5: Bootstrap Historical Data (Optional)
+
+```bash
+# Import 90 days of history for immediate energy separation
+python3 building_import_historical_data.py --building TE236_HEM_Kontor --days 90
+
+# Dry run
+python3 building_import_historical_data.py --building TE236_HEM_Kontor --days 90 --dry-run
+```
+
+This writes to the `building_system` measurement so energy separation can start immediately.
+
+#### Step 6: Enable Energy Separation
+
+Once meter IDs are configured and some data exists:
+1. Set `"enabled": true` in the `energy_separation` block
+2. Verify `field_mapping` points to the correct signal field names
+3. Energy separation will run daily at 08:00, k-recalibration every 72h
+
+### Key Differences from Houses
+
+| | Houses | Buildings |
+|---|---|---|
+| **Config location** | `profiles/<customer_id>.json` | `buildings/<building_id>.json` |
+| **Credential storage** | Docker env vars in `docker-compose.yml` | `.env` file: `BUILDING_<id>_USERNAME/PASSWORD` |
+| **Deployment** | `docker compose up -d` | Orchestrator auto-detects (no restart) |
+| **Signal discovery** | Fixed via `variables_config.json` | Dynamic via `add_building.py` (Arrigo API) |
+| **Historical bootstrap** | `import_historical_data.py` | `building_import_historical_data.py` |
 
 ## Removing Houses & Buildings (Offboarding)
 
@@ -734,7 +893,8 @@ Each indoor forecast includes an explanation:
 
 | Measurement | Purpose |
 |-------------|---------|
-| `heating_system` | All heating variables (room_temp, supply_temp, etc.) |
+| `heating_system` | House heating variables (room_temp, supply_temp, etc.) — tagged by `house_id` |
+| `building_system` | Building BMS variables (analog/digital signals) — tagged by `building_id` |
 | `weather_observation` | SMHI weather station readings |
 | `weather_forecast` | SMHI forecast summary |
 | `thermal_history` | Historical data for thermal analyzer persistence |
@@ -930,7 +1090,8 @@ Internet → nginx (bvpro.hem.se) → Gunicorn → Flask App
 | `register.html` | User registration with HomeSide credentials |
 | `dashboard.html` | User's house list |
 | `house_detail.html` | Real-time data, settings, profile editing |
-| `house_graphs.html` | Plotly charts for data visualization |
+| `house_graphs.html` | Plotly charts for house data visualization |
+| `building_graphs.html` | Plotly charts for building data visualization |
 | `admin_users.html` | Admin: user approval, credential testing |
 | `admin_edit_user.html` | Admin: edit user details |
 
