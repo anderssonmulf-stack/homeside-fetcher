@@ -459,6 +459,12 @@ def main():
     consecutive_failures = 0
     first_failure_time = None
 
+    # Energy separation pipeline tracking
+    from zoneinfo import ZoneInfo
+    SWEDISH_TZ = ZoneInfo('Europe/Stockholm')
+    last_pipeline_date = None  # Swedish date string of last energy separation run
+    last_recalibration_time = None  # datetime of last k recalibration
+
     try:
         while True:
             iteration += 1
@@ -546,6 +552,49 @@ def main():
                                   error=e,
                                   properties={'EventType': 'FetchLoopError'})
 
+            # ── Energy separation pipeline triggers ──────────────────
+            now_swedish = datetime.now(SWEDISH_TZ)
+            today_str = now_swedish.strftime('%Y-%m-%d')
+            current_hour = now_swedish.hour
+
+            # Daily at 08:00 Swedish time: run energy separation
+            if (current_hour >= 8 and last_pipeline_date != today_str
+                    and consecutive_failures == 0):
+                last_pipeline_date = today_str
+                logger.info("Running daily energy separation pipeline...")
+                from heating_energy_calibrator import run_energy_separation
+                run_energy_separation(
+                    entity_id=building_id, entity_type="building",
+                    influx_url=args.influx_url, influx_token=args.influx_token,
+                    influx_org=args.influx_org, influx_bucket=args.influx_bucket,
+                    config=config, logger=logger, seq=seq,
+                )
+
+            # Every 72 hours: run k-value recalibration
+            if last_recalibration_time is None:
+                last_recalibration_time = now  # Don't run on first iteration
+            elif (now - last_recalibration_time).total_seconds() >= 72 * 3600:
+                last_recalibration_time = now
+                logger.info("Running 72h k-value recalibration...")
+                from k_recalibrator import recalibrate_entity
+                result = recalibrate_entity(
+                    entity_id=building_id, entity_type="building",
+                    influx_url=args.influx_url, influx_token=args.influx_token,
+                    influx_org=args.influx_org, influx_bucket=args.influx_bucket,
+                    days=30,
+                )
+                if result:
+                    logger.info(f"K recalibration: k={result.k_value:.4f} ({result.days_used} days, {result.confidence:.0%})")
+                    if seq:
+                        seq.log(
+                            f"[{building_id}] K recalibrated: k={result.k_value:.4f}",
+                            level='Information',
+                            properties={'EventType': 'KRecalibration', 'KValue': round(result.k_value, 4),
+                                        'DaysUsed': result.days_used, 'Confidence': round(result.confidence, 2)},
+                        )
+                else:
+                    logger.info("K recalibration: insufficient data")
+
             # Re-read interval from building config (live reload — no restart needed)
             refreshed_config = load_building_config(args.building)
             if refreshed_config:
@@ -553,6 +602,7 @@ def main():
                 if new_interval != interval_minutes:
                     logger.info(f"Poll interval changed: {interval_minutes} → {new_interval} min")
                     interval_minutes = new_interval
+                config = refreshed_config  # Also refresh config for energy separation
 
             # Sleep until next aligned interval + per-process offset
             sleep_seconds = calculate_sleep(interval_minutes, poll_offset)

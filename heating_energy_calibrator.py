@@ -105,6 +105,13 @@ K_PERCENTILE_TYPICAL = 50  # 50th percentile (median) for typical day
 class HeatingEnergyCalibrator:
     """Calibrates heating model using real energy data."""
 
+    # Default house field mapping (canonical name -> actual InfluxDB field name)
+    DEFAULT_FIELD_MAPPING = {
+        'room_temperature': 'room_temperature',
+        'outdoor_temperature': 'outdoor_temperature',
+        'hot_water_temp': 'hot_water_temp',
+    }
+
     def __init__(
         self,
         influx_url: str,
@@ -115,13 +122,21 @@ class HeatingEnergyCalibrator:
         longitude: float = 15.62,
         solar_coefficient: float = None,
         wind_coefficient: float = None,
-        entity_tag: str = "house_id"
+        entity_tag: str = "house_id",
+        measurement: str = "heating_system",
+        field_mapping: dict = None,
+        assumed_indoor_temp: float = None,
+        sample_interval_minutes: int = None,
     ):
         self.influx_org = influx_org
         self.influx_bucket = influx_bucket
         self.latitude = latitude
         self.longitude = longitude
         self.entity_tag = entity_tag
+        self.measurement = measurement
+        self.field_mapping = field_mapping or self.DEFAULT_FIELD_MAPPING
+        self.assumed_indoor_temp = assumed_indoor_temp
+        self._sample_interval_minutes = sample_interval_minutes  # None = auto-detect
 
         self.client = InfluxDBClient(
             url=influx_url,
@@ -200,26 +215,33 @@ class HeatingEnergyCalibrator:
         return daily_energy
 
     def fetch_heating_data(self, house_id: str, start_date: str = "2025-12-01") -> List[Dict]:
-        """Fetch heating system data."""
-        # Use regex anchors for exact match to avoid matching multiple houses
+        """Fetch heating system data.
+
+        Uses self.measurement and self.field_mapping to query the correct
+        InfluxDB measurement and map field names back to canonical names.
+        When self.assumed_indoor_temp is set, injects a constant room_temperature.
+        """
+        # Build field filter from mapping (actual InfluxDB field names)
+        actual_fields = list(self.field_mapping.values())
+        field_filter = " or ".join(f'r["_field"] == "{f}"' for f in actual_fields)
+
+        # Build reverse mapping: actual field name -> canonical name
+        reverse_map = {v: k for k, v in self.field_mapping.items()}
+
         query = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
-            |> filter(fn: (r) => r["_measurement"] == "heating_system")
+            |> filter(fn: (r) => r["_measurement"] == "{self.measurement}")
             |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
-            |> filter(fn: (r) =>
-                r["_field"] == "room_temperature" or
-                r["_field"] == "outdoor_temperature" or
-                r["_field"] == "hot_water_temp"
-            )
+            |> filter(fn: (r) => {field_filter})
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
         '''
 
         tables = self.query_api.query(query, org=self.influx_org)
 
-        # Deduplicate by rounded timestamp (to nearest 15-min window)
-        # Handles both 1-second duplicates and restart-loop flooding
+        # Determine dedup interval: use explicit setting or default to 15 min
+        dedup_minutes = self._sample_interval_minutes or 15
         seen_times = set()
         results = []
         duplicates = 0
@@ -227,8 +249,11 @@ class HeatingEnergyCalibrator:
         for table in tables:
             for record in table.records:
                 ts = record.get_time()
-                # Round to nearest 15-min window for deduplication
-                rounded_ts = ts.replace(minute=(ts.minute // 15) * 15, second=0, microsecond=0)
+                # Round to nearest dedup window
+                rounded_ts = ts.replace(
+                    minute=(ts.minute // dedup_minutes) * dedup_minutes,
+                    second=0, microsecond=0
+                )
                 ts_key = rounded_ts.isoformat()
 
                 if ts_key in seen_times:
@@ -236,12 +261,17 @@ class HeatingEnergyCalibrator:
                     continue
 
                 seen_times.add(ts_key)
-                results.append({
-                    'timestamp': ts,
-                    'room_temperature': record.values.get('room_temperature'),
-                    'outdoor_temperature': record.values.get('outdoor_temperature'),
-                    'hot_water_temp': record.values.get('hot_water_temp'),
-                })
+
+                # Map actual field names back to canonical names
+                row = {'timestamp': ts}
+                for actual_field, canonical_name in reverse_map.items():
+                    row[canonical_name] = record.values.get(actual_field)
+
+                # Inject assumed indoor temp for buildings without room sensors
+                if self.assumed_indoor_temp is not None and row.get('room_temperature') is None:
+                    row['room_temperature'] = self.assumed_indoor_temp
+
+                results.append(row)
 
         return results, duplicates
 
@@ -395,7 +425,8 @@ class HeatingEnergyCalibrator:
 
                 # Get weather for effective temp
                 ts = d['timestamp']
-                ts_key = ts.replace(minute=(ts.minute // 15) * 15, second=0, microsecond=0).isoformat()
+                weather_round = self._sample_interval_minutes or 15
+                ts_key = ts.replace(minute=(ts.minute // weather_round) * weather_round, second=0, microsecond=0).isoformat()
                 weather = weather_data.get(ts_key, {'wind_speed': 3.0, 'humidity': 60.0})
 
                 eff_temp = self.calculate_effective_temp(
@@ -626,9 +657,135 @@ class HeatingEnergyCalibrator:
             self.client.close()
 
 
+def run_energy_separation(
+    entity_id: str,
+    entity_type: str,
+    influx_url: str,
+    influx_token: str,
+    influx_org: str,
+    influx_bucket: str,
+    config: dict = None,
+    profile=None,
+    latitude: float = None,
+    longitude: float = None,
+    logger=None,
+    seq=None,
+) -> Optional[Tuple[int, float]]:
+    """
+    Shared energy separation pipeline for both houses and buildings.
+
+    Args:
+        entity_id: House or building ID
+        entity_type: "house" or "building"
+        influx_url, influx_token, influx_org, influx_bucket: InfluxDB connection
+        config: Building JSON config dict (for buildings)
+        profile: CustomerProfile instance (for houses)
+        latitude, longitude: Location for weather model (houses only)
+        logger: Python logger (optional)
+        seq: SeqLogger instance (optional)
+
+    Returns:
+        (days_written, k_value) or None on failure
+    """
+    try:
+        if entity_type == "building":
+            if not config:
+                return None
+            es = config.get('energy_separation', {})
+            if not es.get('enabled'):
+                return None
+
+            field_mapping = es.get('field_mapping', {
+                'outdoor_temperature': 'outdoor_temp_fvc',
+                'hot_water_temp': 'vv1_hot_water_temp',
+            })
+            assumed_indoor_temp = es.get('assumed_indoor_temp', 21.0)
+            k_percentile = es.get('k_percentile', 15)
+            calibrated_k = es.get('heat_loss_k')
+            calibration_days = es.get('calibration_days', 60)
+
+            calibrator = HeatingEnergyCalibrator(
+                influx_url=influx_url,
+                influx_token=influx_token,
+                influx_org=influx_org,
+                influx_bucket=influx_bucket,
+                entity_tag="building_id",
+                measurement="building_system",
+                field_mapping=field_mapping,
+                assumed_indoor_temp=assumed_indoor_temp,
+                sample_interval_minutes=5,
+            )
+        else:
+            # House mode
+            if not profile:
+                return None
+            if not profile.energy_separation.enabled:
+                return None
+
+            k_percentile = profile.energy_separation.k_percentile or 15
+            calibration_days = profile.energy_separation.calibration_days or 30
+            calibrated_k = None  # Auto-calibrate from data
+
+            solar_coeff = None
+            wind_coeff = None
+            wc = profile.learned.weather_coefficients
+            if (wc.solar_confidence_ml2 or 0) >= 0.2:
+                solar_coeff = wc.solar_coefficient_ml2
+                wind_coeff = wc.wind_coefficient_ml2
+
+            calibrator = HeatingEnergyCalibrator(
+                influx_url=influx_url,
+                influx_token=influx_token,
+                influx_org=influx_org,
+                influx_bucket=influx_bucket,
+                latitude=latitude or 58.41,
+                longitude=longitude or 15.62,
+                solar_coefficient=solar_coeff,
+                wind_coefficient=wind_coeff,
+            )
+
+        start_date = (datetime.now(SWEDISH_TZ) - timedelta(days=calibration_days)).strftime('%Y-%m-%d')
+
+        analyses, k = calibrator.analyze(
+            house_id=entity_id,
+            start_date=start_date,
+            calibrated_k=calibrated_k,
+            k_percentile=k_percentile,
+            quiet=True,
+        )
+
+        if not analyses:
+            if logger:
+                logger.info(f"Energy separation for {entity_id}: no data to analyze")
+            calibrator.close()
+            return None
+
+        written = calibrator.write_to_influx(entity_id, analyses, k)
+        calibrator.close()
+
+        if logger:
+            logger.info(f"Energy separation for {entity_id}: wrote {written} days, k={k:.4f}")
+        if seq:
+            seq.log(
+                f"[{entity_id}] Energy separation: {written} days, k={k:.4f}",
+                level='Information',
+                properties={'EventType': 'EnergySeparation', 'DaysWritten': written, 'KValue': round(k, 4)},
+            )
+
+        return (written, k)
+
+    except Exception as e:
+        if logger:
+            logger.error(f"Energy separation failed for {entity_id}: {e}", exc_info=True)
+        if seq:
+            seq.log_error(f"Energy separation failed for {entity_id}", error=e,
+                          properties={'EventType': 'EnergySeparationError'})
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description='Calibrate heating energy model with real data')
-    parser.add_argument('--house', type=str, default='HEM_FJV_Villa_149', help='House ID')
+    parser.add_argument('--house', type=str, default='HEM_FJV_Villa_149', help='House or building ID')
     parser.add_argument('--start', type=str, default='2025-12-01', help='Start date (YYYY-MM-DD)')
     parser.add_argument('--k', type=float, help='Override k value (otherwise calibrated from data)')
     parser.add_argument('--percentile', type=int, default=15,
@@ -638,6 +795,8 @@ def main():
     parser.add_argument('--write', action='store_true', help='Write results to InfluxDB')
     parser.add_argument('--debug', action='store_true', help='Show debug info about data points')
     parser.add_argument('--compare', action='store_true', help='Compare different percentiles')
+    parser.add_argument('--building', action='store_true',
+                        help='Treat --house as building ID (use building_system measurement)')
     args = parser.parse_args()
 
     # Get configuration
@@ -650,24 +809,59 @@ def main():
         print("ERROR: INFLUXDB_TOKEN not set")
         sys.exit(1)
 
-    # Load per-building weather coefficients from profile (only if confidence >= 0.2)
+    # Determine entity type and load config
+    entity_tag = "house_id"
+    measurement = "heating_system"
+    field_mapping = None
+    assumed_indoor_temp = None
+    sample_interval_minutes = None
     solar_coeff = None
     wind_coeff = None
-    try:
-        from customer_profile import CustomerProfile
-        profile = CustomerProfile.load(args.house, profiles_dir='profiles')
-        wc = profile.learned.weather_coefficients
-        if (wc.solar_confidence_ml2 or 0) >= 0.2:
-            if wc.solar_coefficient_ml2 is not None:
-                solar_coeff = wc.solar_coefficient_ml2
-            if wc.wind_coefficient_ml2 is not None:
-                wind_coeff = wc.wind_coefficient_ml2
-            if solar_coeff or wind_coeff:
-                print(f"Using learned weather coefficients: solar={solar_coeff}, wind={wind_coeff}")
-        else:
-            print(f"Solar confidence too low ({wc.solar_confidence_ml2}), using defaults")
-    except Exception:
-        pass  # Use defaults if profile not found
+
+    if args.building:
+        # Building mode: read config from buildings/<id>.json
+        entity_tag = "building_id"
+        measurement = "building_system"
+        try:
+            import json
+            config_path = os.path.join('buildings', f'{args.house}.json')
+            with open(config_path) as f:
+                building_config = json.load(f)
+            es = building_config.get('energy_separation', {})
+            field_mapping = es.get('field_mapping', {
+                'outdoor_temperature': 'outdoor_temp_fvc',
+                'hot_water_temp': 'vv1_hot_water_temp',
+            })
+            assumed_indoor_temp = es.get('assumed_indoor_temp', 21.0)
+            sample_interval_minutes = 5
+            print(f"Building mode: measurement={measurement}, entity_tag={entity_tag}")
+            print(f"  field_mapping={field_mapping}")
+            print(f"  assumed_indoor_temp={assumed_indoor_temp}")
+        except FileNotFoundError:
+            print(f"WARNING: Building config not found at buildings/{args.house}.json, using defaults")
+            field_mapping = {
+                'outdoor_temperature': 'outdoor_temp_fvc',
+                'hot_water_temp': 'vv1_hot_water_temp',
+            }
+            assumed_indoor_temp = 21.0
+            sample_interval_minutes = 5
+    else:
+        # House mode: load per-building weather coefficients from profile
+        try:
+            from customer_profile import CustomerProfile
+            profile = CustomerProfile.load(args.house, profiles_dir='profiles')
+            wc = profile.learned.weather_coefficients
+            if (wc.solar_confidence_ml2 or 0) >= 0.2:
+                if wc.solar_coefficient_ml2 is not None:
+                    solar_coeff = wc.solar_coefficient_ml2
+                if wc.wind_coefficient_ml2 is not None:
+                    wind_coeff = wc.wind_coefficient_ml2
+                if solar_coeff or wind_coeff:
+                    print(f"Using learned weather coefficients: solar={solar_coeff}, wind={wind_coeff}")
+            else:
+                print(f"Solar confidence too low ({wc.solar_confidence_ml2}), using defaults")
+        except Exception:
+            pass  # Use defaults if profile not found
 
     calibrator = HeatingEnergyCalibrator(
         influx_url=influx_url,
@@ -677,7 +871,12 @@ def main():
         latitude=args.lat,
         longitude=args.lon,
         solar_coefficient=solar_coeff,
-        wind_coefficient=wind_coeff
+        wind_coefficient=wind_coeff,
+        entity_tag=entity_tag,
+        measurement=measurement,
+        field_mapping=field_mapping,
+        assumed_indoor_temp=assumed_indoor_temp,
+        sample_interval_minutes=sample_interval_minutes,
     )
 
     try:
