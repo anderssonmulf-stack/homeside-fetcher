@@ -13,7 +13,7 @@ from seq_logger import SeqLogger
 from customer_profile import CustomerProfile, find_profile_for_client_id
 from temperature_forecaster import TemperatureForecaster
 from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
-from gap_filler import fill_gaps_on_startup
+from gap_filler import fill_gaps_on_startup, run_daily_gap_fill
 from energy_forecaster import EnergyForecaster, format_energy_forecast
 from k_recalibrator import recalibrate_house
 from energy_importer import EnergyImporter
@@ -276,8 +276,9 @@ def run_energy_pipeline(
     """
     Run the daily energy data pipeline:
     1. Import energy data from Dropbox
-    2. Separate heating vs DHW energy
-    3. Recalibrate k-values
+    2. Fill weather gaps + backfill effective_temp
+    3. Separate heating vs DHW energy
+    4. Recalibrate k-values
 
     Args:
         config: Application config with InfluxDB settings
@@ -292,6 +293,7 @@ def run_energy_pipeline(
     """
     results = {
         'import': {'success': False, 'files': 0, 'records': 0},
+        'gap_fill': {'success': False, 'weather_written': 0, 'effective_temp_written': 0},
         'separation': {'success': False, 'houses': 0, 'records': 0},
         'calibration': {'success': False, 'houses': 0}
     }
@@ -352,8 +354,38 @@ def run_energy_pipeline(
             properties={'Error': str(e)}
         )
 
-    # Step 2: Update energy separation (heating vs DHW breakdown) — own house only
-    print("\n⚡ Step 2: Updating energy separation...")
+    # Step 2: Fill weather gaps + backfill effective_temp
+    print("\n🌤 Step 2: Filling data gaps...")
+    try:
+        gap_result = run_daily_gap_fill(
+            influx_url=config.get('influxdb_url'),
+            influx_token=config.get('influxdb_token'),
+            influx_org=config.get('influxdb_org'),
+            influx_bucket=config.get('influxdb_bucket'),
+            house_id=customer_profile.customer_id if customer_profile else None,
+            latitude=config.get('latitude'),
+            longitude=config.get('longitude'),
+            profile=customer_profile,
+            logger=logger,
+            hours_back=48
+        )
+        results['gap_fill'] = {
+            'success': True,
+            'weather_written': gap_result.get('weather_written', 0),
+            'effective_temp_written': gap_result.get('effective_temp_written', 0)
+        }
+        total_gap = gap_result.get('weather_written', 0) + gap_result.get('effective_temp_written', 0)
+        if total_gap > 0:
+            print(f"✓ Gap fill: {gap_result['weather_written']} weather + {gap_result['effective_temp_written']} effective_temp")
+        else:
+            print("ℹ No data gaps to fill")
+    except Exception as e:
+        logger.error(f"Gap fill failed: {e}")
+        print(f"❌ Gap fill failed: {e}")
+        results['gap_fill'] = {'success': False, 'weather_written': 0, 'effective_temp_written': 0}
+
+    # Step 3: Update energy separation (heating vs DHW breakdown) — own house only
+    print("\n⚡ Step 3: Updating energy separation...")
     separation_houses = 0
     separation_records = 0
     try:
@@ -401,8 +433,8 @@ def run_energy_pipeline(
         )
         results['separation'] = {'success': False, 'houses': 0, 'records': 0}
 
-    # Step 3: Recalibrate k-values (runs after energy import) — own house only
-    print("\n📊 Step 3: Recalibrating k-values...")
+    # Step 4: Recalibrate k-values (runs after energy import) — own house only
+    print("\n📊 Step 4: Recalibrating k-values...")
     if results['import']['success']:
         calibrated_count = 0
         try:
@@ -454,20 +486,24 @@ def run_energy_pipeline(
         print("⏭ Skipping calibration (no new separation data)")
 
     # Summary
+    gap = results['gap_fill']
     print("\n" + "-"*50)
     print("📋 Pipeline Summary:")
     print(f"  Import:      {results['import']['records']} records")
+    print(f"  Gap fill:    {gap['weather_written']} weather + {gap['effective_temp_written']} effective_temp")
     print(f"  Separation:  {results['separation']['records']} records")
     print(f"  Calibration: {results['calibration'].get('houses', 0)} house(s)")
     print("="*50 + "\n")
 
     # Log overall pipeline result
     seq_logger.log(
-        "Energy pipeline completed: import={ImportRecords}, separation={SepRecords}, calibration={CalHouses}",
+        "Energy pipeline completed: import={ImportRecords}, gap_fill={GapWeather}+{GapEffTemp}, separation={SepRecords}, calibration={CalHouses}",
         level='Information',
         properties={
             'ImportRecords': results['import']['records'],
             'ImportFiles': results['import']['files'],
+            'GapWeather': gap['weather_written'],
+            'GapEffTemp': gap['effective_temp_written'],
             'SepRecords': results['separation']['records'],
             'SepHouses': results['separation']['houses'],
             'CalHouses': results['calibration'].get('houses', 0),

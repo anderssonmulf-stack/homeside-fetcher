@@ -722,6 +722,248 @@ class WeatherGapFiller:
         self.client.close()
 
 
+def backfill_effective_temp(
+    influx_url: str,
+    influx_token: str,
+    influx_org: str,
+    influx_bucket: str,
+    house_id: str,
+    latitude: float,
+    longitude: float,
+    start_time: datetime,
+    end_time: datetime,
+    profile=None,
+    dry_run: bool = False
+) -> int:
+    """
+    Backfill effective_temp for heating_system records that are missing it.
+
+    Queries heating_system records (pivoted) in the time range, finds records
+    where effective_temp is None/missing, looks up weather_observation data,
+    and calculates effective_temp via SimpleWeatherModel.
+
+    InfluxDB upsert: writing a Point with the same measurement + tags + timestamp
+    merges the new fields into the existing record.
+
+    Args:
+        influx_url/token/org/bucket: InfluxDB connection
+        house_id: House identifier tag
+        latitude/longitude: Location for solar calculations
+        start_time/end_time: Time range to backfill
+        profile: CustomerProfile for ML2 weather coefficients (optional)
+        dry_run: If True, count but don't write
+
+    Returns:
+        Number of points written
+    """
+    from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
+
+    client = InfluxDBClient(url=influx_url, token=influx_token, org=influx_org, timeout=10_000)
+    query_api = client.query_api()
+    write_api = client.write_api(write_options=SYNCHRONOUS)
+
+    try:
+        # Step 1: Query heating_system records (pivoted) to find missing effective_temp
+        query = f'''
+            from(bucket: "{influx_bucket}")
+            |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
+            |> filter(fn: (r) => r["_measurement"] == "heating_system")
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+            |> sort(columns: ["_time"])
+        '''
+
+        tables = query_api.query(query, org=influx_org)
+
+        # Collect records missing effective_temp
+        missing_records = []
+        for table in tables:
+            for record in table.records:
+                eff = record.values.get('effective_temp')
+                outdoor = record.values.get('outdoor_temperature')
+                if eff is None and outdoor is not None:
+                    ts = record.get_time()
+                    if ts and ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    missing_records.append({
+                        'time': ts,
+                        'outdoor_temperature': outdoor
+                    })
+
+        if not missing_records:
+            return 0
+
+        # Step 2: Query weather_observation for the same range, build time-indexed lookup
+        weather_query = f'''
+            from(bucket: "{influx_bucket}")
+            |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
+            |> filter(fn: (r) => r["_measurement"] == "weather_observation")
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+            |> sort(columns: ["_time"])
+        '''
+
+        weather_tables = query_api.query(weather_query, org=influx_org)
+
+        # Build lookup dict keyed by 15-min rounded ISO string
+        weather_by_time = {}
+        for table in weather_tables:
+            for record in table.records:
+                ts = record.get_time()
+                if ts:
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    rounded = ts.replace(minute=(ts.minute // 15) * 15, second=0, microsecond=0)
+                    weather_by_time[rounded.isoformat()] = {
+                        'wind_speed': record.values.get('wind_speed') or 3.0,
+                        'humidity': record.values.get('humidity') or 60.0,
+                    }
+
+        # Step 3: Build weather model with ML2 coefficients if available
+        model_kwargs = {}
+        if profile and hasattr(profile, 'learned') and profile.learned.weather_coefficients:
+            wc = profile.learned.weather_coefficients
+            if wc.solar_coefficient_ml2 is not None:
+                model_kwargs['solar_coefficient'] = wc.solar_coefficient_ml2
+            if wc.wind_coefficient_ml2 is not None:
+                model_kwargs['wind_coefficient'] = wc.wind_coefficient_ml2
+        weather_model = SimpleWeatherModel(**model_kwargs)
+
+        # Step 4: Calculate and write effective_temp for each missing record
+        written = 0
+        for rec in missing_records:
+            ts = rec['time']
+            outdoor_temp = rec['outdoor_temperature']
+
+            # Look up weather at nearest 15-min boundary
+            rounded = ts.replace(minute=(ts.minute // 15) * 15, second=0, microsecond=0)
+            weather = weather_by_time.get(rounded.isoformat(), {})
+
+            conditions = WeatherConditions(
+                timestamp=ts,
+                temperature=outdoor_temp,
+                wind_speed=weather.get('wind_speed', 3.0),
+                humidity=weather.get('humidity', 60.0),
+                cloud_cover=4.0,
+                latitude=latitude,
+                longitude=longitude
+            )
+
+            eff_result = weather_model.effective_temperature(conditions)
+
+            if dry_run:
+                written += 1
+                continue
+
+            point = Point("heating_system") \
+                .tag("house_id", house_id) \
+                .field("effective_temp", round(eff_result.effective_temp, 2)) \
+                .field("effective_temp_wind_effect", round(eff_result.wind_effect, 2)) \
+                .field("effective_temp_solar_effect", round(eff_result.solar_effect, 2)) \
+                .time(ts, WritePrecision.S)
+
+            write_api.write(bucket=influx_bucket, org=influx_org, record=point)
+            written += 1
+
+        return written
+
+    finally:
+        client.close()
+
+
+def run_daily_gap_fill(
+    influx_url: str,
+    influx_token: str,
+    influx_org: str,
+    influx_bucket: str,
+    house_id: str,
+    latitude: float,
+    longitude: float,
+    profile=None,
+    logger=None,
+    hours_back: int = 48
+) -> dict:
+    """
+    Run weather gap fill + effective_temp backfill for the daily pipeline.
+
+    1. Fill weather gaps for all houses (single SMHI fetch)
+    2. Backfill effective_temp for the calling house
+
+    Args:
+        influx_url/token/org/bucket: InfluxDB connection
+        house_id: House identifier
+        latitude/longitude: Location for weather + solar
+        profile: CustomerProfile for ML2 coefficients (optional)
+        logger: Logger instance (optional)
+        hours_back: How many hours to look back (default 48)
+
+    Returns:
+        Dict with {weather_written, effective_temp_written}
+    """
+    log = logger or DummyLogger()
+    result = {'weather_written': 0, 'effective_temp_written': 0}
+
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(hours=hours_back)
+
+    # Step 1: Fill weather gaps for all houses
+    try:
+        all_ids = _get_all_entity_ids()
+        weather_filler = WeatherGapFiller(
+            influx_url=influx_url,
+            influx_token=influx_token,
+            influx_org=influx_org,
+            influx_bucket=influx_bucket,
+            house_id=house_id,
+            latitude=latitude,
+            longitude=longitude,
+            logger=log
+        )
+
+        w_written, _, w_errors = weather_filler.fill_weather_gaps(
+            start_time, end_time,
+            expected_interval_minutes=5,
+            all_house_ids=all_ids if all_ids else None
+        )
+        weather_filler.close()
+
+        result['weather_written'] = w_written
+        if w_written > 0:
+            print(f"  Weather gaps: {w_written} points filled")
+        elif w_errors == 0:
+            print(f"  Weather gaps: none found")
+
+    except Exception as e:
+        log.warning(f"Weather gap fill failed: {e}")
+        print(f"  ⚠ Weather gap fill failed: {e}")
+
+    # Step 2: Backfill effective_temp for this house
+    try:
+        eff_written = backfill_effective_temp(
+            influx_url=influx_url,
+            influx_token=influx_token,
+            influx_org=influx_org,
+            influx_bucket=influx_bucket,
+            house_id=house_id,
+            latitude=latitude,
+            longitude=longitude,
+            start_time=start_time,
+            end_time=end_time,
+            profile=profile
+        )
+        result['effective_temp_written'] = eff_written
+        if eff_written > 0:
+            print(f"  Effective temp: backfilled {eff_written} records")
+        else:
+            print(f"  Effective temp: no gaps")
+
+    except Exception as e:
+        log.warning(f"Effective temp backfill failed: {e}")
+        print(f"  ⚠ Effective temp backfill failed: {e}")
+
+    return result
+
+
 class ArrigoBootstrapper:
     """
     Bootstraps a new building with 5-min historical Arrigo data.
@@ -1902,8 +2144,37 @@ def fill_gaps_on_startup(
         else:
             logger.debug("Weather gap filling skipped - no lat/lon provided")
 
+        # === EFFECTIVE TEMP BACKFILL ===
+        effective_written = 0
+        if latitude and longitude:
+            try:
+                # Load profile for ML2 weather coefficients
+                try:
+                    from customer_profile import CustomerProfile
+                    profile = CustomerProfile.load(house_id)
+                except Exception:
+                    profile = None
+
+                effective_written = backfill_effective_temp(
+                    influx_url=influx_url,
+                    influx_token=influx_token,
+                    influx_org=influx_org,
+                    influx_bucket=influx_bucket,
+                    house_id=house_id,
+                    latitude=latitude,
+                    longitude=longitude,
+                    start_time=start_time,
+                    end_time=end_time,
+                    profile=profile
+                )
+                if effective_written > 0:
+                    print(f"✓ Backfilled effective_temp for {effective_written} records")
+            except Exception as e:
+                logger.warning(f"Effective temp backfill failed: {e}")
+                print(f"⚠ Effective temp backfill failed: {e}")
+
         # === SUMMARY ===
-        total_written = heating_written + weather_written
+        total_written = heating_written + weather_written + effective_written
         total_errors = heating_errors + weather_errors
 
         if total_errors > 0:
