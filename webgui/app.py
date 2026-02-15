@@ -1227,6 +1227,269 @@ def api_cost_estimate(house_id):
     })
 
 
+# =============================================================================
+# Building Routes
+# =============================================================================
+
+@app.route('/building/<building_id>/graphs')
+@require_login
+def building_graphs(building_id):
+    """Display data graphs for a building."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        flash('Access denied.', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Get building info from config
+    import json as _json
+    buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+    filepath = os.path.join(buildings_dir, f"{building_id}.json")
+
+    try:
+        with open(filepath, 'r') as f:
+            bdata = _json.load(f)
+        friendly_name = bdata.get('friendly_name') or building_id
+    except (FileNotFoundError, _json.JSONDecodeError):
+        friendly_name = building_id
+
+    # Get data availability and real-time data
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    availability = influx.get_building_data_availability(building_id, days=30)
+    realtime_data = influx.get_latest_building_data(building_id)
+
+    # Build Plotly chart data for availability heatmap
+    import plotly.graph_objects as go
+    import json
+
+    fig = go.Figure()
+
+    if availability['categories']:
+        all_dates = set()
+        for cat in availability['categories']:
+            for d in cat['data']:
+                all_dates.add(d['date'])
+        all_dates = sorted(all_dates)
+
+        category_names = [c['name'] for c in availability['categories']]
+
+        z_values = []
+        for cat in availability['categories']:
+            date_to_count = {d['date']: d['count'] for d in cat['data']}
+            row = [date_to_count.get(date, 0) for date in all_dates]
+            z_values.append(row)
+
+        fig.add_trace(go.Heatmap(
+            z=z_values,
+            x=all_dates,
+            y=category_names,
+            colorscale=[
+                [0, '#f8f9fa'],
+                [0.01, '#e3f2fd'],
+                [0.25, '#90caf9'],
+                [0.5, '#42a5f5'],
+                [1, '#1565c0']
+            ],
+            showscale=True,
+            colorbar=dict(title=dict(text='Data points', side='right')),
+            hovertemplate='%{x}<br>%{y}: %{z} points<extra></extra>'
+        ))
+
+    fig.update_layout(
+        title=None,
+        xaxis=dict(title='Date', showgrid=True, gridcolor='rgba(0,0,0,0.1)', tickangle=-45),
+        yaxis=dict(title=None, autorange='reversed'),
+        height=max(300, len(availability.get('categories', [])) * 40 + 150),
+        margin=dict(l=130, r=80, t=20, b=80),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='#ffffff',
+        font=dict(family='system-ui, -apple-system, sans-serif'),
+        dragmode='pan'
+    )
+
+    graph_config = {
+        'displayModeBar': True,
+        'modeBarButtonsToRemove': ['lasso2d', 'select2d', 'autoScale2d'],
+        'displaylogo': False,
+        'scrollZoom': True
+    }
+
+    graph_json = json.dumps(fig.to_dict())
+    config_json = json.dumps(graph_config)
+
+    return render_template('building_graphs.html',
+        building_id=building_id,
+        friendly_name=friendly_name,
+        graph_json=graph_json,
+        config_json=config_json,
+        availability=availability,
+        realtime=realtime_data,
+        current_building_name=friendly_name
+    )
+
+
+@app.route('/api/building/<building_id>/data-availability')
+@require_login
+def api_building_data_availability(building_id):
+    """API endpoint for building data availability chart."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    availability = influx.get_building_data_availability(building_id, days=days)
+
+    return jsonify(availability)
+
+
+@app.route('/api/building/<building_id>/supply-return')
+@require_login
+def api_building_supply_return(building_id):
+    """API endpoint for building supply/return temperatures."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_building_supply_return(building_id, hours=hours)
+
+    return jsonify(result)
+
+
+@app.route('/api/building/<building_id>/temperature-history')
+@require_login
+def api_building_temperature_history(building_id):
+    """API endpoint for building primary vs secondary temperature comparison."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    data = influx.get_building_temperature_history(building_id, hours=hours)
+
+    if not data:
+        return jsonify({'error': 'No temperature data available', 'data': []})
+
+    return jsonify({'data': data, 'hours': hours})
+
+
+@app.route('/api/building/<building_id>/energy-consumption')
+@require_login
+def api_building_energy_consumption(building_id):
+    """API endpoint for building energy consumption chart."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)
+
+    aggregation = request.args.get('aggregation', 'daily')
+    if aggregation not in ['hourly', 'daily', 'monthly']:
+        aggregation = 'daily'
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_building_energy_consumption(building_id, days=days, aggregation=aggregation)
+
+    return jsonify(result)
+
+
+@app.route('/api/building/<building_id>/efficiency-metrics')
+@require_login
+def api_building_efficiency_metrics(building_id):
+    """API endpoint for building efficiency metrics (delta T, flow)."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    data = influx.get_building_efficiency_metrics(building_id, hours=hours)
+
+    return jsonify({'data': data, 'hours': hours})
+
+
+@app.route('/api/building/<building_id>/cost-estimate')
+@require_login
+def api_building_cost_estimate(building_id):
+    """API endpoint for building cost estimation based on energy consumption."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)
+    price_per_kwh = request.args.get('price', 1.20, type=float)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    energy_result = influx.get_building_energy_consumption(building_id, days=days, aggregation='daily')
+
+    data_source = energy_result.get('data_source')
+
+    cost_data = []
+    total_cost = 0
+    total_kwh = 0
+
+    for energy_type, entries in energy_result.get('data', {}).items():
+        for entry in entries:
+            kwh = entry['value']
+            cost = kwh * price_per_kwh
+            cost_data.append({
+                'timestamp': entry['timestamp'],
+                'timestamp_display': entry['timestamp_display'],
+                'kwh': kwh,
+                'cost': round(cost, 2),
+                'energy_type': energy_type
+            })
+            total_kwh += kwh
+            total_cost += cost
+
+    daily_avg_kwh = total_kwh / days if days > 0 else 0
+    daily_avg_cost = total_cost / days if days > 0 else 0
+    monthly_projection = daily_avg_cost * 30
+
+    return jsonify({
+        'data': cost_data,
+        'summary': {
+            'total_kwh': round(total_kwh, 1),
+            'total_cost': round(total_cost, 2),
+            'daily_avg_kwh': round(daily_avg_kwh, 1),
+            'daily_avg_cost': round(daily_avg_cost, 2),
+            'monthly_projection': round(monthly_projection, 2),
+            'price_per_kwh': price_per_kwh,
+            'currency': 'SEK'
+        },
+        'days': days,
+        'data_source': data_source
+    })
+
+
+@app.route('/api/building/<building_id>/energy-separated')
+@require_login
+def api_building_energy_separated(building_id):
+    """API endpoint for building energy separation (heating vs DHW)."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_building_energy_separation(building_id, days=days)
+    return jsonify(result)
+
+
 @app.route('/house/<house_id>/settings', methods=['POST'])
 @require_login
 def update_house_settings(house_id):

@@ -393,6 +393,30 @@ class UserManager:
 
         return False
 
+    def can_access_building(self, username: str, building_id: str) -> bool:
+        """Check if user can view a building.
+
+        Access is granted if:
+        - User is admin
+        - User has wildcard access (*)
+        - Building is in user's assigned buildings list
+        """
+        user = self.get_user(username)
+        if not user:
+            return False
+
+        if user['role'] == 'admin':
+            return True
+
+        if '*' in user.get('houses', []):
+            return True
+
+        # Check assigned buildings
+        if building_id in user.get('buildings', []):
+            return True
+
+        return False
+
     def can_edit_house(self, username: str, house_id: str) -> bool:
         """Check if user can edit a house.
 
