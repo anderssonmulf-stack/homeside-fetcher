@@ -114,12 +114,14 @@ class HeatingEnergyCalibrator:
         latitude: float = 58.41,
         longitude: float = 15.62,
         solar_coefficient: float = None,
-        wind_coefficient: float = None
+        wind_coefficient: float = None,
+        entity_tag: str = "house_id"
     ):
         self.influx_org = influx_org
         self.influx_bucket = influx_bucket
         self.latitude = latitude
         self.longitude = longitude
+        self.entity_tag = entity_tag
 
         self.client = InfluxDBClient(
             url=influx_url,
@@ -153,7 +155,7 @@ class HeatingEnergyCalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "energy_meter")
-            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "consumption")
             |> sort(columns: ["_time"])
         '''
@@ -179,7 +181,7 @@ class HeatingEnergyCalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "value")
             |> sort(columns: ["_time"])
         '''
@@ -204,7 +206,7 @@ class HeatingEnergyCalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "heating_system")
-            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
             |> filter(fn: (r) =>
                 r["_field"] == "room_temperature" or
                 r["_field"] == "outdoor_temperature" or
@@ -250,7 +252,7 @@ class HeatingEnergyCalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "weather_observation")
-            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
         '''
@@ -582,7 +584,7 @@ class HeatingEnergyCalibrator:
             has_breakdown = a.data_coverage >= MIN_DATA_COVERAGE
 
             point = Point("energy_separated") \
-                .tag("house_id", house_id) \
+                .tag(self.entity_tag, house_id) \
                 .tag("method", "k_calibration") \
                 .time(ts, WritePrecision.S) \
                 .field("actual_energy_kwh", float(a.actual_energy_kwh)) \

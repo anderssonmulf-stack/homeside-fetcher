@@ -657,7 +657,11 @@ class ArrigoBootstrapper:
       Phase 3: Copy energy_meter data from source house
       Phase 4: Sanity checks (stale signals, coverage, range)
       Phase 5: Write to InfluxDB (heating_system, thermal_history, weather, energy)
-      Phase 6: Run calibration pipeline (energy separation + k recalibration)
+      Phase 6: Run calibration pipeline on learning period (days - backtest_days)
+      Phase 7: Backtest predictions on the last backtest_days
+
+    Supports both houses (house_id tag) and buildings (building_id tag),
+    auto-detected from the buildings/ directory.
     """
 
     RANGE_CHECKS = {
@@ -684,7 +688,8 @@ class ArrigoBootstrapper:
         days: int = 90,
         resolution: int = 5,
         arrigo_host: str = None,
-        verbose: bool = False
+        verbose: bool = False,
+        backtest_days: int = 10
     ):
         self.influx_url = influx_url
         self.influx_token = influx_token
@@ -700,6 +705,11 @@ class ArrigoBootstrapper:
         self.resolution = resolution
         self.arrigo_host = arrigo_host
         self.verbose = verbose
+        self.backtest_days = backtest_days
+
+        # Auto-detect entity type: if config exists in buildings/, it's a building
+        self.entity_type = "building" if os.path.exists(os.path.join("buildings", f"{house_id}.json")) else "house"
+        self.influx_tag = "building_id" if self.entity_type == "building" else "house_id"
 
         self.arrigo_client = None
         self.influx_client = None
@@ -916,7 +926,7 @@ class ArrigoBootstrapper:
         return observations
 
     def _phase3_copy_energy(self, start_time, end_time):
-        """Phase 3: Copy energy_meter data from source house."""
+        """Phase 3: Copy energy_meter data from source house/building."""
         print(f"\n{'='*60}")
         print(f"Phase 3: Copy energy_meter data from {self.source_house_id}")
         print(f"{'='*60}")
@@ -928,11 +938,15 @@ class ArrigoBootstrapper:
         self._init_influx()
         query_api = self.influx_client.query_api()
 
+        # Determine the tag to filter on for the source entity
+        source_is_building = os.path.exists(os.path.join("buildings", f"{self.source_house_id}.json"))
+        source_tag = "building_id" if source_is_building else "house_id"
+
         query = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
             |> filter(fn: (r) => r["_measurement"] == "energy_meter")
-            |> filter(fn: (r) => r["house_id"] == "{self.source_house_id}")
+            |> filter(fn: (r) => r["{source_tag}"] == "{self.source_house_id}")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
         '''
@@ -1225,10 +1239,12 @@ class ArrigoBootstrapper:
 
         Weather data is written for ALL buildings (shared station) with
         deduplication: only timestamps not already present are written.
+        Uses self.influx_tag (house_id or building_id) based on entity type.
         """
         print(f"\n{'='*60}")
         print(f"Phase 5: Write to InfluxDB{' (DRY RUN)' if dry_run else ''}")
         print(f"{'='*60}")
+        print(f"  Entity: {self.house_id} (tag: {self.influx_tag})")
 
         total_heating = sum(1 for ts in data_by_time
                             if 'room_temperature' in data_by_time[ts]
@@ -1257,14 +1273,14 @@ class ArrigoBootstrapper:
 
         self._init_influx()
 
-        # Delete existing heating/thermal/energy data for bootstrap house only
+        # Delete existing heating/thermal/energy data for bootstrap entity only
         # (NOT weather - we handle that with dedup below)
         delete_api = self.influx_client.delete_api()
         now = datetime.now(timezone.utc)
         start_delete = now - timedelta(days=self.days + 1)
 
         for measurement in ['heating_system', 'thermal_history', 'energy_meter']:
-            predicate = f'_measurement="{measurement}" AND house_id="{self.house_id}"'
+            predicate = f'_measurement="{measurement}" AND {self.influx_tag}="{self.house_id}"'
             try:
                 delete_api.delete(start_delete, now, predicate,
                                   bucket=self.influx_bucket, org=self.influx_org)
@@ -1275,7 +1291,7 @@ class ArrigoBootstrapper:
         write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
         batch_size = 500
 
-        # === Write heating_system + thermal_history (bootstrap house only) ===
+        # === Write heating_system + thermal_history (bootstrap entity only) ===
         print(f"  Writing heating_system + thermal_history...", end=' ', flush=True)
         points = []
         for ts in sorted(data_by_time.keys()):
@@ -1283,12 +1299,12 @@ class ArrigoBootstrapper:
             if 'room_temperature' not in fields or 'outdoor_temperature' not in fields:
                 continue
 
-            hp = Point("heating_system").tag("house_id", self.house_id).time(ts, WritePrecision.S)
+            hp = Point("heating_system").tag(self.influx_tag, self.house_id).time(ts, WritePrecision.S)
             for field, value in fields.items():
                 hp.field(field, round(float(value), 2))
             points.append(hp)
 
-            tp = Point("thermal_history").tag("house_id", self.house_id).time(ts, WritePrecision.S)
+            tp = Point("thermal_history").tag(self.influx_tag, self.house_id).time(ts, WritePrecision.S)
             tp.field("room_temperature", round(float(fields['room_temperature']), 2))
             tp.field("outdoor_temperature", round(float(fields['outdoor_temperature']), 2))
             if 'supply_temp' in fields:
@@ -1345,13 +1361,13 @@ class ArrigoBootstrapper:
                     write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
                 print(f"    {hid}: {len(new_obs)} new (skipped {len(existing_ts)} existing)")
 
-        # === Write energy_meter (bootstrap house only) ===
+        # === Write energy_meter (bootstrap entity only) ===
         if energy_data:
             print(f"  Writing energy_meter...", end=' ', flush=True)
             points = []
             for record in energy_data:
                 p = Point("energy_meter") \
-                    .tag("house_id", self.house_id) \
+                    .tag(self.influx_tag, self.house_id) \
                     .tag("meter_id", record.get('meter_id', '')) \
                     .time(record['timestamp'])
                 for field, value in record['fields'].items():
@@ -1368,10 +1384,16 @@ class ArrigoBootstrapper:
         print(f"  Done!")
 
     def _phase6_calibrate(self):
-        """Phase 6: Run energy separation + k recalibration."""
+        """Phase 6: Run energy separation + k recalibration.
+
+        Uses learning_days (days - backtest_days) so the last backtest_days
+        are reserved for prediction validation in Phase 7.
+        """
+        learning_days = self.days - self.backtest_days
         print(f"\n{'='*60}")
         print("Phase 6: Run calibration pipeline")
         print(f"{'='*60}")
+        print(f"  Learning on {learning_days} days (reserving {self.backtest_days} days for backtest)")
 
         from heating_energy_calibrator import HeatingEnergyCalibrator
         from k_recalibrator import recalibrate_house
@@ -1384,10 +1406,12 @@ class ArrigoBootstrapper:
             influx_org=self.influx_org,
             influx_bucket=self.influx_bucket,
             latitude=self.latitude,
-            longitude=self.longitude
+            longitude=self.longitude,
+            entity_tag=self.influx_tag
         )
 
         start_date = (datetime.now(timezone.utc) - timedelta(days=self.days)).strftime('%Y-%m-%d')
+        end_date = (datetime.now(timezone.utc) - timedelta(days=self.backtest_days)).strftime('%Y-%m-%d')
         analyses, used_k = calibrator.analyze(
             house_id=self.house_id,
             start_date=start_date,
@@ -1396,8 +1420,10 @@ class ArrigoBootstrapper:
         )
 
         if analyses:
-            written = calibrator.write_to_influx(self.house_id, analyses, used_k)
-            print(f"  Energy separation: {written} days written, k={used_k:.4f}")
+            # Only use analyses from the learning period (exclude backtest days)
+            learning_analyses = [a for a in analyses if a.date < end_date]
+            written = calibrator.write_to_influx(self.house_id, learning_analyses, used_k)
+            print(f"  Energy separation: {written} days written (of {len(analyses)} total), k={used_k:.4f}")
         else:
             print(f"  WARNING: No energy separation results (need energy_meter data)")
             used_k = 0.0
@@ -1413,8 +1439,9 @@ class ArrigoBootstrapper:
             influx_org=self.influx_org,
             influx_bucket=self.influx_bucket,
             profiles_dir="profiles",
-            days=self.days,
-            update_profile=True
+            days=learning_days,
+            update_profile=True,
+            entity_tag=self.influx_tag
         )
 
         if result:
@@ -1423,6 +1450,187 @@ class ArrigoBootstrapper:
             print(f"  WARNING: K-recalibration produced no result")
 
         return used_k, result
+
+    def _phase7_backtest_predictions(self):
+        """Phase 7: Run prediction backtest on the last N days.
+
+        Uses the thermal coefficient learned in Phase 6 to generate indoor
+        temperature predictions for each day of the backtest period.
+        Compares predictions against actual data already in InfluxDB.
+        Writes results to 'prediction_backtest' measurement.
+        """
+        print(f"\n{'='*60}")
+        print(f"Phase 7: Prediction backtest ({self.backtest_days} days)")
+        print(f"{'='*60}")
+
+        self._init_influx()
+        query_api = self.influx_client.query_api()
+
+        end_time = datetime.now(timezone.utc)
+        backtest_start = end_time - timedelta(days=self.backtest_days)
+
+        # Load the profile (with thermal coefficient from Phase 6)
+        from customer_profile import CustomerProfile
+        try:
+            profile = CustomerProfile.load(self.house_id, profiles_dir='profiles')
+        except FileNotFoundError:
+            print(f"  WARNING: No profile found for {self.house_id}, skipping backtest")
+            return
+
+        thermal_coeff = profile.learned.thermal_coefficient
+        if thermal_coeff is None:
+            print(f"  WARNING: No thermal coefficient learned, skipping backtest")
+            return
+
+        print(f"  Thermal coefficient: {thermal_coeff:.6f}")
+        print(f"  Target indoor temp: {profile.comfort.target_indoor_temp}°C")
+
+        # Fetch actual heating data for the backtest period
+        query = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: {backtest_start.isoformat()}, stop: {end_time.isoformat()})
+            |> filter(fn: (r) => r["_measurement"] == "heating_system")
+            |> filter(fn: (r) => r["{self.influx_tag}"] == "{self.house_id}")
+            |> filter(fn: (r) =>
+                r["_field"] == "room_temperature" or
+                r["_field"] == "outdoor_temperature"
+            )
+            |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+            |> sort(columns: ["_time"])
+        '''
+
+        try:
+            tables = query_api.query(query, org=self.influx_org)
+        except Exception as e:
+            print(f"  ERROR: Failed to query backtest data: {e}")
+            return
+
+        # Build time series from query results
+        actual_data = []
+        for table in tables:
+            for record in table.records:
+                ts = record.get_time()
+                indoor = record.values.get('room_temperature')
+                outdoor = record.values.get('outdoor_temperature')
+                if ts and indoor is not None and outdoor is not None:
+                    actual_data.append({
+                        'timestamp': ts,
+                        'indoor': float(indoor),
+                        'outdoor': float(outdoor)
+                    })
+
+        if len(actual_data) < 10:
+            print(f"  WARNING: Only {len(actual_data)} data points in backtest period, skipping")
+            return
+
+        print(f"  Actual data points: {len(actual_data)}")
+
+        # Initialize the forecaster with the learned profile
+        from temperature_forecaster import TemperatureForecaster
+        forecaster = TemperatureForecaster(profile)
+
+        # Walk through the backtest period, generating predictions
+        # For each point, use the previous indoor temp + current outdoor temp
+        # to predict what the indoor temp should be
+        results = []
+        errors = []
+
+        for i in range(1, len(actual_data)):
+            prev = actual_data[i - 1]
+            curr = actual_data[i]
+
+            # Generate a 1-step prediction using the physics model
+            weather_forecast = [{
+                'time': curr['timestamp'].isoformat(),
+                'temp': curr['outdoor']
+            }]
+
+            try:
+                forecast_points = forecaster.generate_forecast(
+                    current_indoor=prev['indoor'],
+                    current_outdoor=prev['outdoor'],
+                    weather_forecast=weather_forecast
+                )
+
+                # Find the indoor_temp prediction
+                predicted_indoor = None
+                for fp in forecast_points:
+                    if fp.forecast_type == 'indoor_temp':
+                        predicted_indoor = fp.value
+                        break
+
+                if predicted_indoor is not None:
+                    error = predicted_indoor - curr['indoor']
+                    results.append({
+                        'timestamp': curr['timestamp'],
+                        'predicted': predicted_indoor,
+                        'actual': curr['indoor'],
+                        'outdoor': curr['outdoor'],
+                        'error': error,
+                        'abs_error': abs(error)
+                    })
+                    errors.append(abs(error))
+
+            except Exception as e:
+                self.log(f"Prediction error at {curr['timestamp']}: {e}")
+
+        if not results:
+            print(f"  WARNING: No predictions generated")
+            return
+
+        # Calculate statistics
+        mae = sum(errors) / len(errors)
+        max_error = max(errors)
+        within_05 = sum(1 for e in errors if e <= 0.5) / len(errors) * 100
+        within_10 = sum(1 for e in errors if e <= 1.0) / len(errors) * 100
+
+        # Group by day for per-day summary
+        daily_errors = {}
+        for r in results:
+            day = r['timestamp'].strftime('%Y-%m-%d')
+            if day not in daily_errors:
+                daily_errors[day] = []
+            daily_errors[day].append(r['abs_error'])
+
+        print(f"\n  Backtest Results:")
+        print(f"  {'='*50}")
+        print(f"  Predictions: {len(results)}")
+        print(f"  MAE (Mean Absolute Error): {mae:.2f}°C")
+        print(f"  Max error: {max_error:.2f}°C")
+        print(f"  Within 0.5°C: {within_05:.0f}%")
+        print(f"  Within 1.0°C: {within_10:.0f}%")
+
+        print(f"\n  Per-day MAE:")
+        for day in sorted(daily_errors):
+            day_mae = sum(daily_errors[day]) / len(daily_errors[day])
+            count = len(daily_errors[day])
+            print(f"    {day}: {day_mae:.2f}°C ({count} points)")
+
+        # Write results to InfluxDB
+        write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
+        batch_size = 500
+        points = []
+
+        for r in results:
+            p = Point("prediction_backtest") \
+                .tag(self.influx_tag, self.house_id) \
+                .tag("model", "model_c") \
+                .time(r['timestamp'], WritePrecision.S) \
+                .field("predicted_indoor", round(r['predicted'], 2)) \
+                .field("actual_indoor", round(r['actual'], 2)) \
+                .field("outdoor_temp", round(r['outdoor'], 2)) \
+                .field("error", round(r['error'], 2)) \
+                .field("abs_error", round(r['abs_error'], 2))
+            points.append(p)
+
+            if len(points) >= batch_size:
+                write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+                points = []
+
+        if points:
+            write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+
+        print(f"\n  Wrote {len(results)} backtest results to InfluxDB (prediction_backtest)")
 
     def _print_comparison(self, used_k, recal_result):
         """Print side-by-side comparison with source house."""
@@ -1464,8 +1672,10 @@ class ArrigoBootstrapper:
         """Execute the full bootstrap pipeline."""
         print("=" * 60)
         print(f"Bootstrap: {self.house_id}")
+        print(f"Entity type: {self.entity_type} (tag: {self.influx_tag})")
         print(f"Source: {self.source_house_id or 'none'}")
         print(f"Days: {self.days}, Resolution: {self.resolution} min")
+        print(f"Learn: {self.days - self.backtest_days} days, Backtest: {self.backtest_days} days")
         print("=" * 60)
 
         # Initialize Arrigo
@@ -1509,12 +1719,16 @@ class ArrigoBootstrapper:
             print("\nDry run complete. No data written.")
             return True
 
-        # Phase 6: Run calibration
+        # Phase 6: Run calibration (on learning period only)
         if no_calibrate:
             print("\nSkipping calibration (--no-calibrate)")
             return True
 
         used_k, recal_result = self._phase6_calibrate()
+
+        # Phase 7: Backtest predictions on reserved days
+        if self.backtest_days > 0:
+            self._phase7_backtest_predictions()
 
         # Print comparison
         self._print_comparison(used_k, recal_result)
@@ -1649,7 +1863,8 @@ def run_bootstrap(args):
         longitude=args.lon,
         days=args.days,
         resolution=args.resolution,
-        verbose=args.verbose
+        verbose=args.verbose,
+        backtest_days=args.backtest_days
     )
 
     try:
@@ -1716,6 +1931,8 @@ Examples:
                         help='Days of history for bootstrap (default: 90)')
     parser.add_argument('--no-calibrate', action='store_true',
                         help='Skip calibration after bootstrap (data import only)')
+    parser.add_argument('--backtest-days', type=int, default=10,
+                        help='Days to reserve for prediction backtest (default: 10)')
 
     # Time range options
     parser.add_argument('--from-midnight', action='store_true',

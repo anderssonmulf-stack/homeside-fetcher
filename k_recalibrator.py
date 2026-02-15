@@ -64,11 +64,13 @@ class KRecalibrator:
         influx_token: str,
         influx_org: str,
         influx_bucket: str,
-        dry_run: bool = False
+        dry_run: bool = False,
+        entity_tag: str = "house_id"
     ):
         self.influx_org = influx_org
         self.influx_bucket = influx_bucket
         self.dry_run = dry_run
+        self.entity_tag = entity_tag
 
         self.client = InfluxDBClient(
             url=influx_url,
@@ -86,7 +88,7 @@ class KRecalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{days}d)
             |> filter(fn: (r) => r["_measurement"] == "energy_separated")
-            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "heating_energy_kwh" or r["_field"] == "total_energy_kwh" or r["_field"] == "confidence")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
@@ -115,7 +117,7 @@ class KRecalibrator:
             from(bucket: "{self.influx_bucket}")
             |> range(start: -{days}d)
             |> filter(fn: (r) => r["_measurement"] == "heating_system")
-            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
             |> filter(fn: (r) => r["_field"] == "room_temperature" or r["_field"] == "outdoor_temperature")
             |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
@@ -252,7 +254,7 @@ class KRecalibrator:
 
         try:
             point = Point("k_calibration_history") \
-                .tag("house_id", result.house_id) \
+                .tag(self.entity_tag, result.house_id) \
                 .tag("method", result.method) \
                 .field("k_value", round(result.k_value, 5)) \
                 .field("k_median", round(result.k_median, 5)) \
@@ -339,10 +341,11 @@ def recalibrate_house(
     profiles_dir: str = "profiles",
     days: int = 30,
     dry_run: bool = False,
-    update_profile: bool = True
+    update_profile: bool = True,
+    entity_tag: str = "house_id"
 ) -> Optional[CalibrationResult]:
     """
-    Convenience function to recalibrate a single house.
+    Convenience function to recalibrate a single house or building.
 
     Can be called from the main fetcher.
     """
@@ -373,7 +376,8 @@ def recalibrate_house(
         influx_token=influx_token,
         influx_org=influx_org,
         influx_bucket=influx_bucket,
-        dry_run=dry_run
+        dry_run=dry_run,
+        entity_tag=entity_tag
     )
 
     return recalibrator.recalibrate(profile, days=days, update_profile=update_profile)
