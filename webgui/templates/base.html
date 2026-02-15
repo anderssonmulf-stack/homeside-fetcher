@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}{{ theme.site_short_name }}{% endblock %} - {{ theme.site_title_suffix }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% if ai_enabled and session.user_id %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/chat.css') }}">
+    {% endif %}
     {% if theme.css_overrides %}
     <style>:root { {% for prop, val in theme.css_overrides.items() %}{{ prop }}: {{ val }}; {% endfor %}}</style>
     {% endif %}
@@ -33,6 +36,14 @@
             <span class="user-role">({{ session.user_role }})</span>
             <a href="{{ url_for('logout') }}" class="btn btn-small">Log out</a>
         </div>
+        {% if ai_enabled %}
+        <button class="nav-chat-btn" onclick="toggleChat()" title="AI Assistent">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span>Assistent</span>
+        </button>
+        {% endif %}
     </nav>
     {% endif %}
 
@@ -56,5 +67,10 @@
     </footer>
 
     {% block extra_scripts %}{% endblock %}
+
+    {% if ai_enabled and session.user_id %}
+    {% include 'partials/chat_panel.html' %}
+    <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+    {% endif %}
 </body>
 </html>

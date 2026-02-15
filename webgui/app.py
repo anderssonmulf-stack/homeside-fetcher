@@ -2497,6 +2497,159 @@ def test_homeside_credentials():
 
 
 # =============================================================================
+# AI Assistant Routes
+# =============================================================================
+
+@app.route('/api/assistant/chat', methods=['POST'])
+@require_login
+def api_assistant_chat():
+    """AI assistant chat endpoint."""
+    from ai_assistant import get_assistant, load_conversation, save_conversation, _check_rate_limit
+    import uuid
+
+    # Check API key configured
+    assistant = get_assistant(admin=(session.get('user_role') == 'admin'))
+    if not assistant:
+        return jsonify({'error': 'AI assistant is not configured (missing API key).'}), 503
+
+    # Rate limit
+    username = session.get('user_id', '')
+    if not _check_rate_limit(username):
+        return jsonify({'error': 'Du har natt gransen for antal meddelanden per timme.'}), 429
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Invalid request'}), 400
+
+    message = (data.get('message') or '').strip()
+    if not message:
+        return jsonify({'error': 'Empty message'}), 400
+    if len(message) > 2000:
+        return jsonify({'error': 'Message too long (max 2000 characters)'}), 400
+
+    conversation_id = data.get('conversation_id') or str(uuid.uuid4())
+
+    # Build user context
+    role = session.get('user_role', 'viewer')
+    user_houses_raw = session.get('user_houses', [])
+    verified_customer_id = session.get('verified_customer_id', '')
+
+    # Resolve accessible houses
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+
+    if role == 'admin' or '*' in user_houses_raw:
+        house_ids = user_manager.get_all_houses()
+    else:
+        house_ids = list(user_houses_raw)
+        if verified_customer_id and verified_customer_id not in house_ids:
+            house_ids.append(verified_customer_id)
+
+    accessible_houses = []
+    for hid in house_ids:
+        if hid == '*':
+            continue
+        try:
+            profile = CustomerProfile.load(hid, profiles_dir)
+            accessible_houses.append({'id': hid, 'friendly_name': profile.friendly_name or hid})
+        except Exception:
+            accessible_houses.append({'id': hid, 'friendly_name': hid})
+
+    # Resolve accessible buildings
+    accessible_buildings = []
+    if role == 'admin' or '*' in user_houses_raw:
+        building_ids = user_manager.get_all_buildings()
+        buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+        for bid in building_ids:
+            try:
+                import json as _json
+                with open(os.path.join(buildings_dir, f"{bid}.json"), 'r') as f:
+                    bdata = _json.load(f)
+                accessible_buildings.append({'id': bid, 'friendly_name': bdata.get('friendly_name', bid)})
+            except Exception:
+                accessible_buildings.append({'id': bid, 'friendly_name': bid})
+
+    user_context = {
+        'role': role,
+        'username': username,
+        'accessible_houses': accessible_houses,
+        'accessible_buildings': accessible_buildings,
+        'can_edit_fn': lambda hid: user_manager.can_edit_house(username, hid),
+    }
+
+    # Load conversation history (keep last 10 messages for context)
+    history = load_conversation(username, conversation_id)
+    history = history[-10:]
+    history.append({'role': 'user', 'content': message})
+
+    try:
+        response_text = assistant.chat(history, user_context)
+    except Exception as e:
+        print(f"AI assistant error: {e}")
+        return jsonify({'error': 'Ett fel uppstod. Forsok igen.'}), 500
+
+    history.append({'role': 'assistant', 'content': response_text})
+
+    # Check for support ticket
+    support_ticket = bool(user_context.get('_support_ticket'))
+    if support_ticket:
+        ticket = user_context['_support_ticket']
+        try:
+            user = user_manager.get_user(username)
+            user_email = user.get('email', '') if user else ''
+            user_name = user.get('name', username) if user else username
+            email_service.send_support_ticket(
+                user_name=user_name,
+                user_email=user_email,
+                summary=ticket.get('summary', ''),
+                transcript=history,
+            )
+        except Exception as e:
+            print(f"Failed to send support ticket email: {e}")
+
+    # Save conversation
+    save_conversation(username, conversation_id, history, support_ticket=support_ticket)
+
+    # Audit log write operations
+    if user_context.get('_support_ticket'):
+        audit_logger.log('SupportTicket', username, {
+            'summary': user_context['_support_ticket'].get('summary', ''),
+        })
+
+    return jsonify({
+        'response': response_text,
+        'conversation_id': conversation_id,
+    })
+
+
+@app.route('/api/assistant/history')
+@require_login
+def api_assistant_history():
+    """Get the user's recent chat conversations."""
+    from ai_assistant import get_user_conversations
+    username = session.get('user_id', '')
+    conversations = get_user_conversations(username)
+    return jsonify({'conversations': conversations})
+
+
+@app.route('/api/assistant/conversation/<conversation_id>')
+@require_login
+def api_assistant_conversation(conversation_id):
+    """Get a specific conversation's messages."""
+    from ai_assistant import load_conversation
+    username = session.get('user_id', '')
+    messages = load_conversation(username, conversation_id)
+    return jsonify({'messages': messages, 'conversation_id': conversation_id})
+
+
+@app.context_processor
+def inject_ai_enabled():
+    """Inject AI assistant availability into all templates."""
+    ai_enabled = bool(os.environ.get('ANTHROPIC_API_KEY'))
+    return {'ai_enabled': ai_enabled}
+
+
+# =============================================================================
 # Error Handlers
 # =============================================================================
 

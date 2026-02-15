@@ -418,6 +418,62 @@ This link will expire in 24 hours.
     # System Notification Emails
     # =========================================================================
 
+    def send_support_ticket(self, user_name: str, user_email: str,
+                           summary: str, transcript: list):
+        """Send support ticket email to admins with chat transcript."""
+        subject = f"[{self.email_prefix}] Support Ticket: {summary[:60]}"
+
+        # Build transcript HTML
+        transcript_html = ""
+        for msg in transcript[-20:]:  # Last 20 messages
+            role = msg.get('role', 'user')
+            content = msg.get('content', '')
+            if isinstance(content, str):
+                content_escaped = content.replace('<', '&lt;').replace('>', '&gt;')
+                label = 'User' if role == 'user' else 'Assistant'
+                color = '#3498db' if role == 'user' else '#27ae60'
+                transcript_html += f'<p><strong style="color:{color}">{label}:</strong> {content_escaped[:500]}</p>\n'
+
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #e74c3c;">Support Ticket</h2>
+
+            <table style="border-collapse: collapse; width: 100%; margin: 20px 0;">
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">From:</td>
+                    <td style="padding: 10px; border: 1px solid #ddd;">{user_name} ({user_email})</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Summary:</td>
+                    <td style="padding: 10px; border: 1px solid #ddd;">{summary}</td>
+                </tr>
+            </table>
+
+            <h3>Chat Transcript</h3>
+            <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; font-size: 14px;">
+                {transcript_html}
+            </div>
+
+            <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
+                This is an automated message from {self.email_system_name} AI Assistant.
+            </p>
+        </body>
+        </html>
+        """
+
+        text_body = f"""
+Support Ticket from {user_name} ({user_email})
+
+Summary: {summary}
+
+Chat transcript included in HTML version.
+        """
+
+        for admin_email in self.admin_emails:
+            if admin_email.strip():
+                self._send_email(admin_email.strip(), subject, html_body, text_body)
+
     def send_setting_changed_notification(self, user: Dict, house_id: str,
                                            setting: str, old_value, new_value,
                                            changed_by: str):

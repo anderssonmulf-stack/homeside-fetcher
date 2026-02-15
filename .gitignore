@@ -38,3 +38,4 @@ offboarded.json
 
 # WebGUI
 webgui/users.json
+webgui/chat_history.json
