@@ -69,7 +69,7 @@ class GapDetector:
         self,
         start_time: datetime,
         end_time: datetime,
-        expected_interval_minutes: int = 15,
+        expected_interval_minutes: int = 5,
         measurement: str = "heating_system"
     ) -> List[Tuple[datetime, datetime]]:
         """
@@ -272,7 +272,7 @@ class GapFiller:
         self,
         start_time: datetime,
         end_time: datetime,
-        expected_interval_minutes: int = 15
+        expected_interval_minutes: int = 5
     ) -> List[Tuple[datetime, datetime]]:
         """Detect gaps in the specified time range."""
         self._init_detector()
@@ -422,7 +422,7 @@ class GapFiller:
         self,
         start_time: datetime,
         end_time: datetime,
-        expected_interval_minutes: int = 15,
+        expected_interval_minutes: int = 5,
         dry_run: bool = False
     ) -> Tuple[int, int, int]:
         """
@@ -498,7 +498,7 @@ class WeatherGapFiller:
         self,
         start_time: datetime,
         end_time: datetime,
-        expected_interval_minutes: int = 15
+        expected_interval_minutes: int = 5
     ) -> List[Tuple[datetime, datetime]]:
         """Detect gaps in weather observation data."""
         query = f'''
@@ -554,34 +554,40 @@ class WeatherGapFiller:
         self,
         start_time: datetime,
         end_time: datetime,
-        expected_interval_minutes: int = 15,
-        dry_run: bool = False
+        expected_interval_minutes: int = 5,
+        dry_run: bool = False,
+        all_house_ids: List[str] = None
     ) -> Tuple[int, int, int]:
         """
         Detect and fill weather observation gaps using SMHI historical data.
 
+        Weather data is the same for all houses sharing a location (same SMHI
+        station). When all_house_ids is provided, SMHI is fetched once and
+        gaps are filled for every house_id. Without it, only self.house_id
+        is filled.
+
         Returns:
             Tuple of (written, skipped, errors)
         """
-        gaps = self.detect_weather_gaps(start_time, end_time, expected_interval_minutes)
+        house_ids = all_house_ids or [self.house_id]
 
-        if not gaps:
+        # Detect gaps per house and collect union of all gap periods
+        per_house_gaps = {}
+        all_gap_periods = []
+        for hid in house_ids:
+            gaps = self._detect_weather_gaps_for(hid, start_time, end_time, expected_interval_minutes)
+            per_house_gaps[hid] = gaps
+            all_gap_periods.extend(gaps)
+
+        if not all_gap_periods:
             return 0, 0, 0
 
-        total_gap_minutes = sum(
-            (gap_end - gap_start).total_seconds() / 60
-            for gap_start, gap_end in gaps
-        )
-        print(f"  Weather: Found {len(gaps)} gap(s) ({total_gap_minutes:.0f} minutes)")
-
-        # Fetch historical observations from SMHI
+        # Fetch SMHI once for the full range
         smhi = SMHIWeather(
             latitude=self.latitude,
             longitude=self.longitude,
             logger=self.logger
         )
-
-        # Fetch for the entire range (SMHI returns all available data)
         observations = smhi.get_historical_observations(start_time, end_time)
 
         if not observations:
@@ -590,58 +596,127 @@ class WeatherGapFiller:
 
         print(f"  Weather: Retrieved {len(observations)} observations from SMHI")
 
-        # Filter observations to those within gaps
-        gap_observations = []
-        for obs in observations:
-            ts = obs['timestamp']
-            for gap_start, gap_end in gaps:
-                if gap_start <= ts <= gap_end:
-                    gap_observations.append(obs)
-                    break
+        total_written = 0
+        total_skipped = 0
+        total_errors = 0
 
-        if not gap_observations:
-            print("  Weather: No observations fall within gap periods")
-            return 0, 0, 0
+        for hid in house_ids:
+            gaps = per_house_gaps[hid]
+            if not gaps:
+                print(f"  Weather [{hid}]: no gaps")
+                continue
 
-        print(f"  Weather: {len(gap_observations)} observations within gaps")
+            total_gap_minutes = sum(
+                (gap_end - gap_start).total_seconds() / 60
+                for gap_start, gap_end in gaps
+            )
 
-        written = 0
-        skipped = 0
-        errors = 0
+            # Filter observations to those within this house's gaps
+            gap_observations = []
+            for obs in observations:
+                ts = obs['timestamp']
+                for gap_start, gap_end in gaps:
+                    if gap_start <= ts <= gap_end:
+                        gap_observations.append(obs)
+                        break
 
-        for obs in gap_observations:
-            try:
-                if dry_run:
+            if not gap_observations:
+                print(f"  Weather [{hid}]: {len(gaps)} gap(s) ({total_gap_minutes:.0f} min), 0 observations match")
+                continue
+
+            written = 0
+            errors = 0
+
+            for obs in gap_observations:
+                try:
+                    if dry_run:
+                        written += 1
+                        continue
+
+                    point = Point("weather_observation") \
+                        .tag("house_id", hid) \
+                        .tag("station_name", obs.get('station_name', 'unknown')) \
+                        .tag("station_id", str(obs.get('station_id', 0))) \
+                        .tag("source", "gap_fill") \
+                        .field("temperature", round(float(obs['temperature']), 2)) \
+                        .time(obs['timestamp'])
+
+                    if obs.get('wind_speed') is not None:
+                        point.field("wind_speed", round(float(obs['wind_speed']), 2))
+                    if obs.get('humidity') is not None:
+                        point.field("humidity", round(float(obs['humidity']), 2))
+                    if obs.get('distance_km') is not None:
+                        point.field("distance_km", round(float(obs['distance_km']), 2))
+
+                    self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=point)
                     written += 1
-                    continue
 
-                point = Point("weather_observation") \
-                    .tag("house_id", self.house_id) \
-                    .tag("station_name", obs.get('station_name', 'unknown')) \
-                    .tag("station_id", str(obs.get('station_id', 0))) \
-                    .tag("source", "gap_fill") \
-                    .field("temperature", round(float(obs['temperature']), 2)) \
-                    .time(obs['timestamp'])
+                except Exception as e:
+                    errors += 1
+                    if errors <= 3:
+                        print(f"  Weather write error [{hid}]: {e}")
 
-                if obs.get('wind_speed') is not None:
-                    point.field("wind_speed", round(float(obs['wind_speed']), 2))
-                if obs.get('humidity') is not None:
-                    point.field("humidity", round(float(obs['humidity']), 2))
-                if obs.get('distance_km') is not None:
-                    point.field("distance_km", round(float(obs['distance_km']), 2))
+            action = "Would write" if dry_run else "Wrote"
+            print(f"  Weather [{hid}]: {action} {written} ({total_gap_minutes:.0f} min gaps), Errors: {errors}")
 
-                self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=point)
-                written += 1
+            total_written += written
+            total_errors += errors
 
-            except Exception as e:
-                errors += 1
-                if errors <= 3:
-                    print(f"  Weather write error: {e}")
+        return total_written, total_skipped, total_errors
 
-        action = "Would write" if dry_run else "Wrote"
-        print(f"  Weather: {action} {written}, Skipped: {skipped}, Errors: {errors}")
+    def _detect_weather_gaps_for(
+        self,
+        house_id: str,
+        start_time: datetime,
+        end_time: datetime,
+        expected_interval_minutes: int = 5
+    ) -> List[Tuple[datetime, datetime]]:
+        """Detect weather gaps for a specific house_id."""
+        query = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
+            |> filter(fn: (r) => r["_measurement"] == "weather_observation")
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
+            |> filter(fn: (r) => r["_field"] == "temperature")
+            |> keep(columns: ["_time"])
+        '''
 
-        return written, skipped, errors
+        try:
+            tables = self.query_api.query(query, org=self.influx_org)
+
+            timestamps = []
+            for table in tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    if ts:
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        timestamps.append(ts)
+
+            timestamps = sorted(set(timestamps))
+
+            if not timestamps:
+                return [(start_time, end_time)]
+
+            gaps = []
+            gap_threshold = timedelta(minutes=expected_interval_minutes * 2)
+
+            if timestamps[0] - start_time > gap_threshold:
+                gaps.append((start_time, timestamps[0]))
+
+            for i in range(len(timestamps) - 1):
+                delta = timestamps[i + 1] - timestamps[i]
+                if delta > gap_threshold:
+                    gaps.append((timestamps[i], timestamps[i + 1]))
+
+            if end_time - timestamps[-1] > gap_threshold:
+                gaps.append((timestamps[-1], end_time))
+
+            return gaps
+
+        except Exception as e:
+            print(f"Error detecting weather gaps for {house_id}: {e}")
+            return []
 
     def close(self):
         self.client.close()
@@ -1778,6 +1853,9 @@ def fill_gaps_on_startup(
         are kept for potential future use with new house bootstrapping.
     """
     try:
+        # Read interval from settings (single source of truth)
+        interval_minutes = settings.get('data_collection', {}).get('heating_data_interval_minutes', 5)
+
         # Check for gaps in last 24 hours
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=24)
@@ -1808,7 +1886,9 @@ def fill_gaps_on_startup(
                 )
 
                 weather_written, _, weather_errors = weather_filler.fill_weather_gaps(
-                    start_time, end_time, dry_run=False
+                    start_time, end_time,
+                    expected_interval_minutes=interval_minutes,
+                    dry_run=False
                 )
 
                 weather_filler.close()
@@ -1841,6 +1921,18 @@ def fill_gaps_on_startup(
         logger.warning(f"Gap filling failed: {e}")
         print(f"⚠ Gap filling failed: {e}")
         return False
+
+
+def _get_all_entity_ids():
+    """Get all house/building IDs from profiles/ and buildings/ directories."""
+    ids = set()
+    for directory in ['profiles', 'buildings']:
+        dirpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), directory)
+        if os.path.isdir(dirpath):
+            for filename in os.listdir(dirpath):
+                if filename.endswith('.json') and '_signals.json' not in filename:
+                    ids.add(filename.replace('.json', ''))
+    return sorted(ids)
 
 
 def run_bootstrap(args):
@@ -1958,8 +2050,16 @@ Examples:
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done')
     parser.add_argument('--detect-only', action='store_true', help='Only detect gaps, do not fill')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
-    parser.add_argument('--interval', type=int, default=15,
-                        help='Expected data interval in minutes (default: 15)')
+    # Read default interval from settings.json
+    default_interval = 5
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings.json')) as f:
+            _settings = json.load(f)
+            default_interval = _settings.get('data_collection', {}).get('heating_data_interval_minutes', 5)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    parser.add_argument('--interval', type=int, default=default_interval,
+                        help=f'Expected data interval in minutes (default: {default_interval}, from settings.json)')
 
     args = parser.parse_args()
 
@@ -2060,6 +2160,13 @@ Examples:
     # === WEATHER DATA ===
     if not args.heating_only and args.lat and args.lon:
         print("\n--- Weather Data ---")
+
+        # Discover all house/building IDs so SMHI is fetched once for all
+        all_house_ids = _get_all_entity_ids()
+        if house_id not in all_house_ids:
+            all_house_ids.append(house_id)
+        print(f"Houses: {', '.join(all_house_ids)}")
+
         weather_filler = WeatherGapFiller(
             influx_url=args.influx_url,
             influx_token=args.influx_token,
@@ -2072,19 +2179,21 @@ Examples:
         )
 
         if args.detect_only:
-            gaps = weather_filler.detect_weather_gaps(start_utc, end_utc, args.interval)
-            if gaps:
-                print(f"Found {len(gaps)} weather gap(s):")
-                for gap_start, gap_end in gaps:
-                    duration = (gap_end - gap_start).total_seconds() / 60
-                    gs = gap_start.astimezone(SWEDISH_TZ)
-                    ge = gap_end.astimezone(SWEDISH_TZ)
-                    print(f"  {gs.strftime('%Y-%m-%d %H:%M')} to {ge.strftime('%Y-%m-%d %H:%M')} ({duration:.0f} min)")
-            else:
-                print("No weather gaps found")
+            for hid in all_house_ids:
+                gaps = weather_filler._detect_weather_gaps_for(hid, start_utc, end_utc, args.interval)
+                if gaps:
+                    print(f"Found {len(gaps)} weather gap(s) for {hid}:")
+                    for gap_start, gap_end in gaps:
+                        duration = (gap_end - gap_start).total_seconds() / 60
+                        gs = gap_start.astimezone(SWEDISH_TZ)
+                        ge = gap_end.astimezone(SWEDISH_TZ)
+                        print(f"  {gs.strftime('%Y-%m-%d %H:%M')} to {ge.strftime('%Y-%m-%d %H:%M')} ({duration:.0f} min)")
+                else:
+                    print(f"No weather gaps found for {hid}")
         else:
             written, skipped, errors = weather_filler.fill_weather_gaps(
-                start_utc, end_utc, args.interval, dry_run=args.dry_run
+                start_utc, end_utc, args.interval, dry_run=args.dry_run,
+                all_house_ids=all_house_ids
             )
             total_written += written
             total_skipped += skipped
