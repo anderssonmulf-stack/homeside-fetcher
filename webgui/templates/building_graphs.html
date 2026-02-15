@@ -1378,7 +1378,7 @@
 
                 // Update summary
                 if (!extendDays) {
-                    const kDisplay = kValue ? `${kValue} kW/°C` : 'N/A';
+                    const kDisplay = kValue ? `${(kValue * 1000).toFixed(1)} W/°C` : 'N/A';
                     summaryDiv.innerHTML = `
                         <div class="metric-item">
                             <div class="metric-value">${totals.actual || 0} kWh</div>

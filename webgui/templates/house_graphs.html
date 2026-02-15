@@ -2244,7 +2244,7 @@
 
                 // Update summary
                 if (!extendDays) {
-                    const kDisplay = kValue ? `${kValue} kW/°C` : 'N/A';
+                    const kDisplay = kValue ? `${(kValue * 1000).toFixed(1)} W/°C` : 'N/A';
                     // Build prediction accuracy display if available
                     let accuracyHtml = '';
                     if (totals.prediction_accuracy && totals.days_with_predictions > 0) {
@@ -2512,9 +2512,9 @@
         const regLineY = regLineX.map(x => Math.max(0, reg.slope * x + reg.intercept));
 
         // k from regression: slope depends on resolution
-        // Day: kWh/day per °C → divide by 24 to get kW/°C
-        // Hour: kWh/h per °C → already kW/°C
-        // Month: kWh/month per °C → divide by ~720 to get kW/°C
+        // Day: kWh/day per °C → divide by 24 to get kW/°C → ×1000 for W/°C
+        // Hour: kWh/h per °C → already kW/°C → ×1000 for W/°C
+        // Month: kWh/month per °C → divide by ~720 to get kW/°C → ×1000 for W/°C
         let kDivisor, yLabel, pointLabel;
         if (resolution === 'hour') {
             kDivisor = 1;
@@ -2530,7 +2530,7 @@
             pointLabel = 'Daily Heating';
         }
 
-        const regK = Math.round(Math.abs(reg.slope) / kDivisor * 1000) / 1000;
+        const regK = (Math.abs(reg.slope) / kDivisor * 1000).toFixed(1);
 
         const traces = [
             {
@@ -2551,7 +2551,7 @@
                 x: regLineX,
                 y: regLineY,
                 mode: 'lines',
-                name: `Regression (k\u2248${regK} kW/\u00b0C)`,
+                name: `Regression (k\u2248${regK} W/\u00b0C)`,
                 line: { color: '#e74c3c', width: 2, dash: 'dash' },
                 hoverinfo: 'skip'
             }
@@ -2596,7 +2596,7 @@
             });
 
         // Summary
-        const calibratedK = kValue ? `${kValue} kW/\u00b0C` : 'N/A';
+        const calibratedK = kValue ? `${(kValue * 1000).toFixed(1)} W/\u00b0C` : 'N/A';
         const r2Pct = Math.round(reg.r2 * 100);
         const r2Color = r2Pct >= 80 ? '#27ae60' : (r2Pct >= 60 ? '#f39c12' : '#e74c3c');
         const r2Label = r2Pct >= 80 ? 'Good fit' : (r2Pct >= 60 ? 'Fair fit' : 'Weak fit');
@@ -2607,7 +2607,7 @@
                 <div class="metric-label">Calibrated k</div>
             </div>
             <div class="metric-item">
-                <div class="metric-value" style="color: #e74c3c">${regK} kW/\u00b0C</div>
+                <div class="metric-value" style="color: #e74c3c">${regK} W/\u00b0C</div>
                 <div class="metric-label">Regression k</div>
             </div>
             <div class="metric-item">
@@ -2728,10 +2728,10 @@
                 }
 
                 const timestamps = data.map(d => d.timestamp_display);
-                const kValues = data.map(d => d.k_value);
-                const kMedians = data.map(d => d.k_median);
-                const kStddevUpper = data.map(d => d.k_median + d.k_stddev);
-                const kStddevLower = data.map(d => d.k_median - d.k_stddev);
+                const kValues = data.map(d => d.k_value * 1000);
+                const kMedians = data.map(d => d.k_median * 1000);
+                const kStddevUpper = data.map(d => (d.k_median + d.k_stddev) * 1000);
+                const kStddevLower = data.map(d => (d.k_median - d.k_stddev) * 1000);
 
                 const traces = [
                     // Stddev band (shaded area)
@@ -2757,7 +2757,7 @@
                             size: data.map((_, i) => i === data.length - 1 ? 12 : 6),
                             color: '#e74c3c'
                         },
-                        hovertemplate: '%{x}<br>k: %{y:.4f} kW/°C<extra></extra>'
+                        hovertemplate: '%{x}<br>k: %{y:.1f} W/°C<extra></extra>'
                     },
                     // K-median line
                     {
@@ -2767,7 +2767,7 @@
                         mode: 'lines',
                         name: 'k (median)',
                         line: { color: '#3498db', width: 2, dash: 'dash' },
-                        hovertemplate: '%{x}<br>Median: %{y:.4f} kW/°C<extra></extra>'
+                        hovertemplate: '%{x}<br>Median: %{y:.1f} W/°C<extra></extra>'
                     }
                 ];
 
@@ -2779,7 +2779,7 @@
                         gridcolor: 'rgba(0,0,0,0.1)'
                     },
                     yaxis: {
-                        title: 'k (kW/°C)',
+                        title: 'k (W/°C)',
                         showgrid: true,
                         gridcolor: 'rgba(0,0,0,0.1)',
                         rangemode: 'tozero'
@@ -2807,22 +2807,22 @@
                     .then(() => {
                         // Update summary with latest values
                         const latest = data[data.length - 1];
-                        const change = data.length > 1 ? (latest.k_value - data[0].k_value) : 0;
-                        const changeStr = change >= 0 ? `+${(change * 1000).toFixed(2)}` : `${(change * 1000).toFixed(2)}`;
-                        const changeColor = Math.abs(change) < 0.005 ? '#27ae60' : '#e67e22';  // Green if stable
+                        const change = data.length > 1 ? (latest.k_value - data[0].k_value) * 1000 : 0;
+                        const changeStr = change >= 0 ? `+${change.toFixed(1)}` : `${change.toFixed(1)}`;
+                        const changeColor = Math.abs(change) < 5 ? '#27ae60' : '#e67e22';  // Green if stable
 
                         summaryDiv.innerHTML = `
                             <div class="metric-item">
-                                <div class="metric-value" style="color: #e74c3c">${latest.k_value.toFixed(4)} kW/°C</div>
+                                <div class="metric-value" style="color: #e74c3c">${(latest.k_value * 1000).toFixed(1)} W/°C</div>
                                 <div class="metric-label">Current k (15th pct)</div>
                             </div>
                             <div class="metric-item">
-                                <div class="metric-value" style="color: #3498db">${latest.k_median.toFixed(4)} kW/°C</div>
+                                <div class="metric-value" style="color: #3498db">${(latest.k_median * 1000).toFixed(1)} W/°C</div>
                                 <div class="metric-label">Median k</div>
                             </div>
                             <div class="metric-item">
-                                <div class="metric-value" style="color: ${changeColor}">${changeStr}</div>
-                                <div class="metric-label">Change (×10⁻³)</div>
+                                <div class="metric-value" style="color: ${changeColor}">${changeStr} W/°C</div>
+                                <div class="metric-label">Change</div>
                             </div>
                             <div class="metric-item">
                                 <div class="metric-value">${(latest.confidence * 100).toFixed(0)}%</div>
