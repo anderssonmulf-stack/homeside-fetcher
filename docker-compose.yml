@@ -3,7 +3,7 @@ services:
   # Add new houses by creating a profile + adding credentials to .env
   homeside-orchestrator:
     build: .
-    container_name: ${CONTAINER_PREFIX:-homeside}-orchestrator
+    container_name: ${CONTAINER_PREFIX:-SvenskEB}-orchestrator
     restart: unless-stopped
     cpus: "2.4"
     mem_limit: 3g
@@ -32,7 +32,7 @@ services:
 
   influxdb:
     image: influxdb:2.7-alpine
-    container_name: ${CONTAINER_PREFIX:-homeside}-influxdb
+    container_name: ${CONTAINER_PREFIX:-SvenskEB}-influxdb
     restart: unless-stopped
     cpus: "2.4"
     mem_limit: 3g
@@ -68,5 +68,5 @@ volumes:
 
 networks:
   app-network:
-    name: ${DOCKER_NETWORK:-dryckesmail_beer-network}
+    name: ${DOCKER_NETWORK:-shared-infra}
     external: true

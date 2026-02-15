@@ -15,6 +15,10 @@ NAS_CREDENTIALS="/home/ulf/.nas_credentials"
 MOUNT_POINT="/mnt/nas_backup"
 PROJECT_DIR="/opt/dev/homeside-fetcher"
 PROJECT_NAME="homeside-fetcher"
+
+# Read container prefix from .env (used for Docker container/image/volume names)
+CONTAINER_PREFIX=$(grep -m1 '^CONTAINER_PREFIX=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2-)
+CONTAINER_PREFIX="${CONTAINER_PREFIX:-SvenskEB}"
 SAVE_TO_NAS=true  # Set to false to only create local backup
 
 # Colors for output
@@ -61,8 +65,8 @@ backup_docker_images() {
     local total_size_mb=0
     local image_count=0
 
-    # Get list of custom images (homeside-*)
-    local custom_images=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "homeside-" || true)
+    # Get list of custom images (matching container prefix)
+    local custom_images=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -i "${CONTAINER_PREFIX}\|homeside-" || true)
 
     if [ -z "$custom_images" ]; then
         echo -e "   ${YELLOW}⚠️  No custom Docker images found${NC}"
@@ -103,8 +107,9 @@ backup_docker_volumes() {
     local total_size_mb=0
     local volume_count=0
 
-    # Get list of homeside volumes
+    # Get list of project volumes
     local volumes=$(docker volume ls --format "{{.Name}}" | grep "homeside-fetcher" || true)
+
 
     if [ -z "$volumes" ]; then
         echo -e "   ${YELLOW}⚠️  No homeside-fetcher volumes found${NC}"
@@ -144,7 +149,7 @@ backup_influxdb_data() {
     mkdir -p "$backup_dir/influxdb_backup"
 
     # Check if InfluxDB container is running
-    if ! docker ps --format "{{.Names}}" | grep -q "homeside-influxdb"; then
+    if ! docker ps --format "{{.Names}}" | grep -q "${CONTAINER_PREFIX}-influxdb"; then
         echo -e "   ${YELLOW}⚠️  InfluxDB container not running, skipping native backup${NC}"
         return 0
     fi
@@ -158,7 +163,7 @@ backup_influxdb_data() {
     influx_token=$(grep -m1 '^INFLUXDB_TOKEN=' "${SCRIPT_DIR}/../.env" | cut -d= -f2-)
 
     # Run influx backup inside the container
-    docker exec homeside-influxdb influx backup /tmp/influx_backup \
+    docker exec "${CONTAINER_PREFIX}-influxdb" influx backup /tmp/influx_backup \
         --org homeside \
         --token "${influx_token}" 2>/dev/null || {
         echo -e "   ${YELLOW}⚠️  Native InfluxDB backup failed (will use volume backup instead)${NC}"
@@ -166,10 +171,10 @@ backup_influxdb_data() {
     }
 
     # Copy backup out of container
-    docker cp homeside-influxdb:/tmp/influx_backup/. "$backup_dir/influxdb_backup/"
+    docker cp "${CONTAINER_PREFIX}-influxdb":/tmp/influx_backup/. "$backup_dir/influxdb_backup/"
 
     # Clean up backup inside container
-    docker exec homeside-influxdb rm -rf /tmp/influx_backup 2>/dev/null || true
+    docker exec "${CONTAINER_PREFIX}-influxdb" rm -rf /tmp/influx_backup 2>/dev/null || true
 
     local end_time=$(date +%s.%N)
     local duration=$(echo "$end_time - $start_time" | bc)
@@ -189,7 +194,7 @@ backup_configurations() {
     mkdir -p "$backup_dir/config"
 
     # Save current container list
-    docker ps -a --filter "name=homeside" --format "{{.Names}}\t{{.Image}}\t{{.Status}}" > "$backup_dir/config/containers.txt"
+    docker ps -a --filter "name=${CONTAINER_PREFIX}" --format "{{.Names}}\t{{.Image}}\t{{.Status}}" > "$backup_dir/config/containers.txt"
     echo -e "   ${GREEN}✅ containers list${NC}"
 
     # Save current network configuration
