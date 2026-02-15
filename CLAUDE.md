@@ -422,9 +422,9 @@ If you see `⚠ No customer profile found`, verify:
 2. The `customer_id` in the profile matches the auto-discovered client ID
 3. The profiles volume is mounted correctly
 
-### Step 6: Add User to Web GUI (svenskeb.se)
+### Step 6: Add User to Web GUI (bvpro.hem.se)
 
-1. Have the customer register at `https://svenskeb.se/register`
+1. Have the customer register at `https://bvpro.hem.se/register`
 2. Admin receives email notification
 3. Admin logs in and approves the user at `/admin/users`
 4. Assign the customer's house(s) during approval
@@ -610,7 +610,7 @@ This reads `EventType='DataCollected'` events from Seq and writes them to the `t
 
 ## Customer Profiles
 
-Each customer has a JSON profile in `profiles/` containing all customer-specific settings and learned parameters. This centralizes configuration for maintainability and GUI integration (svenskeb.se).
+Each customer has a JSON profile in `profiles/` containing all customer-specific settings and learned parameters. This centralizes configuration for maintainability and GUI integration (bvpro.hem.se).
 
 ### Profile Structure
 
@@ -782,13 +782,13 @@ from(bucket: "heating")
 
 ## Web Infrastructure
 
-The system is exposed publicly via **svenskeb.se** (Svensk EnergiBesparing) with multiple security layers.
+The system is exposed publicly via **bvpro.hem.se** (Svensk EnergiBesparing) with multiple security layers.
 
 ### Domain & URLs
 
 | URL | Purpose |
 |-----|---------|
-| `svenskeb.se` | Web GUI - user registration, house settings, admin panel, data graphs |
+| `bvpro.hem.se` | Web GUI - user registration, house settings, admin panel, data graphs |
 
 ### nginx Reverse Proxy
 
@@ -796,7 +796,7 @@ Configuration files in `nginx/`:
 
 | File | Purpose |
 |------|---------|
-| `svenskeb.se.conf` | Site config for the web GUI |
+| `bvpro.hem.se.conf` | Site config for the web GUI |
 | `rate-limiting.conf` | Rate limit zones (login: 1 req/s, general: 10 req/s) |
 | `geoip-sweden-only.conf` | GeoIP config to allow only Swedish IPs |
 | `fail2ban-nginx.conf` | Auto-ban after 3 failed logins |
@@ -854,7 +854,7 @@ sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 
 # Get SSL certificate
-sudo certbot --nginx -d svenskeb.se
+sudo certbot --nginx -d bvpro.hem.se
 
 # Reload services
 sudo systemctl reload nginx
@@ -897,12 +897,12 @@ sudo systemctl status certbot.timer
 
 ## Settings GUI (webgui/)
 
-A Flask-based web application at **svenskeb.se** for customer self-service and admin management.
+A Flask-based web application at **bvpro.hem.se** for customer self-service and admin management.
 
 ### Architecture
 
 ```
-Internet → nginx (svenskeb.se) → Gunicorn → Flask App
+Internet → nginx (bvpro.hem.se) → Gunicorn → Flask App
                                     ↓
                               InfluxDB (real-time data)
                               profiles/*.json (settings)
@@ -919,7 +919,7 @@ Internet → nginx (svenskeb.se) → Gunicorn → Flask App
 | `email_service.py` | SMTP email notifications via one.com (send.one.com:587) |
 | `influx_reader.py` | Queries real-time heating data from InfluxDB |
 | `create_admin.py` | CLI tool to create initial admin user |
-| `svenskeb-gui.service` | systemd service file for production deployment |
+| `bvpro-gui.service` | systemd service file for production deployment |
 
 ### Templates
 
@@ -1054,7 +1054,7 @@ def get_my_data(self, house_id: str, days: int = 30) -> dict:
 
 ### Deployment
 
-**systemd service** (`svenskeb-gui.service`):
+**systemd service** (`bvpro-gui.service`):
 ```ini
 [Unit]
 Description=Svenskeb Settings GUI
@@ -1076,13 +1076,13 @@ WantedBy=multi-user.target
 **Commands:**
 ```bash
 # Install/update service
-sudo cp webgui/svenskeb-gui.service /etc/systemd/system/
+sudo cp webgui/bvpro-gui.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable svenskeb-gui
-sudo systemctl restart svenskeb-gui
+sudo systemctl enable bvpro-gui
+sudo systemctl restart bvpro-gui
 
 # View logs
-sudo journalctl -u svenskeb-gui -f
+sudo journalctl -u bvpro-gui -f
 
 # Create admin user
 cd /opt/dev/homeside-fetcher/webgui
@@ -1095,9 +1095,9 @@ python create_admin.py
 SECRET_KEY=your-secret-key
 SMTP_HOST=send.one.com
 SMTP_PORT=587
-SMTP_USER=info@svenskeb.se
+SMTP_USER=info@bvpro.hem.se
 SMTP_PASSWORD=your-password
-ADMIN_EMAIL=admin@svenskeb.se
+ADMIN_EMAIL=admin@bvpro.hem.se
 INFLUXDB_URL=http://localhost:8086
 INFLUXDB_TOKEN=your-token
 INFLUXDB_ORG=homeside
@@ -1106,15 +1106,15 @@ INFLUXDB_BUCKET=heating
 
 ### nginx Configuration
 
-Site config at `/etc/nginx/sites-available/svenskeb.se`:
+Site config at `/etc/nginx/sites-available/bvpro.hem.se`:
 ```nginx
 server {
     listen 443 ssl;
-    server_name svenskeb.se www.svenskeb.se;
+    server_name bvpro.hem.se www.bvpro.hem.se;
 
     # SSL via Let's Encrypt
-    ssl_certificate /etc/letsencrypt/live/svenskeb.se/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/svenskeb.se/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/bvpro.hem.se/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/bvpro.hem.se/privkey.pem;
 
     # GeoIP Sweden-only
     if ($allowed_country = 0) { return 444; }
