@@ -1,0 +1,1427 @@
+{% extends "base.html" %}
+{% block title %}Graphs - {{ friendly_name }}{% endblock %}
+
+{% block content %}
+<div class="house-detail">
+    <div class="page-header">
+        <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to Dashboard</a>
+        <h1 class="friendly-name">Data Overview</h1>
+        <p class="subtitle">{{ friendly_name }}</p>
+    </div>
+
+    <!-- Current Status Widgets -->
+    <div class="status-widgets">
+        {% if realtime %}
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.outdoor_temp_fvc and realtime.outdoor_temp_fvc >= 5 %}mild{% elif realtime.outdoor_temp_fvc and realtime.outdoor_temp_fvc >= 0 %}cool{% else %}cold{% endif %}">
+                {{ "%.1f"|format(realtime.outdoor_temp_fvc) if realtime.outdoor_temp_fvc else '--' }}°C
+            </div>
+            <div class="stat-label">Outdoor</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.vs1_supply_temp and realtime.vs1_supply_temp >= 25 and realtime.vs1_supply_temp <= 50 %}good{% elif realtime.vs1_supply_temp and realtime.vs1_supply_temp > 50 %}warm{% else %}neutral{% endif %}">
+                {{ "%.1f"|format(realtime.vs1_supply_temp) if realtime.vs1_supply_temp else '--' }}°C
+            </div>
+            <div class="stat-label">Supply</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value neutral">
+                {{ "%.1f"|format(realtime.vs1_return_temp) if realtime.vs1_return_temp else '--' }}°C
+            </div>
+            <div class="stat-label">Return</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.vv1_hot_water_temp and realtime.vv1_hot_water_temp >= 50 %}good{% elif realtime.vv1_hot_water_temp and realtime.vv1_hot_water_temp >= 40 %}warm{% else %}cold{% endif %}">
+                {{ "%.1f"|format(realtime.vv1_hot_water_temp) if realtime.vv1_hot_water_temp else '--' }}°C
+            </div>
+            <div class="stat-label">Hot Water</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value neutral">
+                {{ "%.1f"|format(realtime.dh_power_total) if realtime.dh_power_total else '--' }} kW
+            </div>
+            <div class="stat-label">DH Power</div>
+        </div>
+        <div class="stat-widget">
+            <div class="stat-value {% if realtime.system_pressure and realtime.system_pressure >= 100 and realtime.system_pressure <= 200 %}good{% elif realtime.system_pressure and realtime.system_pressure < 80 %}cold{% else %}neutral{% endif %}">
+                {{ "%.0f"|format(realtime.system_pressure) if realtime.system_pressure else '--' }} kPa
+            </div>
+            <div class="stat-label">Pressure</div>
+        </div>
+        {% else %}
+        <div class="stat-widget wide">
+            <div class="stat-value neutral">No data</div>
+            <div class="stat-label">Building system offline</div>
+        </div>
+        {% endif %}
+    </div>
+    {% if realtime and realtime.timestamp_friendly %}
+    <p class="status-timestamp {% if realtime.age_minutes and realtime.age_minutes <= 6 %}fresh{% else %}stale{% endif %}">
+        Last updated: {{ realtime.timestamp_friendly }}
+        {% if realtime.age_minutes %}({{ realtime.age_minutes|int }} min ago){% endif %}
+    </p>
+    {% endif %}
+
+    <!-- Supply & Return Temperatures Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Supply & Return Temperatures</h2>
+            <div class="chart-controls">
+                <select id="supply-return-days-select" class="role-select" onchange="updateSupplyReturnChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Heating circuit supply and return water temperatures with setpoint.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color supply-temp"></span> Supply</span>
+                <span class="legend-item"><span class="legend-color return-temp"></span> Return</span>
+                <span class="legend-item"><span class="legend-color heat-curve"></span> Setpoint</span>
+                <span class="legend-item"><span class="legend-color" style="background: #95a5a6;"></span> Outdoor</span>
+            </span>
+        </p>
+        <div id="supply-return-chart" class="chart-container"></div>
+    </div>
+
+    <!-- Data Availability Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Data Availability</h2>
+            <div class="chart-controls">
+                <select id="days-select" class="role-select" onchange="updateChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Shows data coverage per category. Darker blue = more data points.
+        </p>
+
+        {% if availability.categories %}
+        <div id="availability-chart" class="chart-container"></div>
+        {% else %}
+        <p class="muted">No data available for this building yet.</p>
+        {% endif %}
+    </div>
+
+    <!-- Primary vs Secondary Temperature Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Primary vs Secondary Temperatures</h2>
+            <div class="chart-controls">
+                <select id="temp-history-days-select" class="role-select" onchange="updateTemperatureHistoryChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Compares <strong>District Heating</strong> (primary side from utility) with
+            <strong>Building Heating</strong> (secondary side to radiators).
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color dh-supply"></span> DH Supply</span>
+                <span class="legend-item"><span class="legend-color dh-return"></span> DH Return</span>
+                <span class="legend-item"><span class="legend-color house-supply"></span> Bld Supply</span>
+                <span class="legend-item"><span class="legend-color house-return"></span> Bld Return</span>
+            </span>
+        </p>
+        <div id="temp-history-chart" class="chart-container"></div>
+    </div>
+
+    <!-- Efficiency Metrics Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Efficiency Metrics (Delta T)</h2>
+            <div class="chart-controls">
+                <select id="efficiency-days-select" class="role-select" onchange="updateEfficiencyChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            <strong>Delta T</strong> shows temperature difference between supply and return.
+            Higher DH delta T = more heat extracted from district heating.
+            Good values: DH 25-40°C, Building 5-15°C.
+        </p>
+        <div id="efficiency-chart" class="chart-container"></div>
+        <div id="efficiency-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- Energy Consumption Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Energy Consumption<span id="energy-data-source" class="data-source-badge" style="display:none;"></span></h2>
+            <div class="chart-controls">
+                <select id="energy-days-select" class="role-select" onchange="updateEnergyChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Daily district heating energy consumption (kWh).
+        </p>
+        <div id="energy-chart" class="chart-container"></div>
+        <div id="energy-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- Cost Estimate Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Cost Estimate<span id="cost-data-source" class="data-source-badge" style="display:none;"></span></h2>
+            <div class="chart-controls">
+                <label class="price-label">
+                    Price (SEK/kWh):
+                    <input type="number" id="price-input" class="price-input" value="1.20" step="0.01" min="0" onchange="updateCostChart()">
+                </label>
+                <select id="cost-days-select" class="role-select" onchange="updateCostChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Estimated heating costs based on energy consumption and price per kWh.
+            Default price is typical Swedish district heating rate.
+        </p>
+        <div id="cost-chart" class="chart-container"></div>
+        <div id="cost-summary" class="cost-summary-box"></div>
+    </div>
+
+    <!-- Energy Breakdown (Heating vs Hot Water) -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Energy Breakdown (Heating vs Hot Water)</h2>
+            <div class="chart-controls">
+                <select id="separation-days-select" class="role-select" onchange="updateEnergySeparationChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Daily energy split into <strong style="color:#3498db">Space Heating</strong> and
+            <strong style="color:#e67e22">Hot Water (DHW)</strong> using the k-value calibration model.
+        </p>
+        <div id="separation-chart" class="chart-container"></div>
+        <div id="separation-summary" class="metric-summary"></div>
+    </div>
+</div>
+
+<style>
+/* Status Widgets */
+.status-widgets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.stat-widget {
+    background: var(--white, #fff);
+    border-radius: 8px;
+    padding: 16px 20px;
+    min-width: 100px;
+    flex: 1;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.stat-widget.wide {
+    flex: 2;
+    min-width: 200px;
+}
+.stat-value {
+    font-size: 1.8em;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.stat-value.good { color: #27ae60; }
+.stat-value.warm { color: #e67e22; }
+.stat-value.cold { color: #3498db; }
+.stat-value.mild { color: #27ae60; }
+.stat-value.cool { color: #3498db; }
+.stat-value.neutral { color: var(--text-color, #333); }
+.stat-label {
+    font-size: 0.85em;
+    color: var(--muted, #7f8c8d);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.status-timestamp {
+    font-size: 0.85em;
+    color: var(--muted);
+    text-align: right;
+    margin-bottom: 20px;
+}
+.status-timestamp.fresh { color: #27ae60; }
+.status-timestamp.stale { color: #e67e22; }
+
+.card-header-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.card-header-flex h2 {
+    margin: 0;
+}
+.chart-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.chart-container {
+    width: 100%;
+    min-height: 300px;
+}
+.legend-inline {
+    display: inline-flex;
+    gap: 15px;
+    margin-left: 10px;
+}
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.85em;
+    color: var(--muted);
+}
+.legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+}
+.loading-spinner {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-style: italic;
+}
+/* Data source badges */
+.data-source-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+    text-transform: uppercase;
+}
+.data-source-badge.live {
+    background: #27ae60;
+    color: white;
+}
+.data-source-badge.imported {
+    background: #3498db;
+    color: white;
+}
+/* Temperature legend colors */
+.legend-color.dh-supply {
+    background: #e74c3c;
+}
+.legend-color.dh-return {
+    background: #c0392b;
+}
+.legend-color.house-supply {
+    background: #3498db;
+}
+.legend-color.house-return {
+    background: #2980b9;
+}
+/* Supply/Return chart colors */
+.legend-color.supply-temp {
+    background: #e74c3c;
+}
+.legend-color.return-temp {
+    background: #3498db;
+}
+.legend-color.heat-curve {
+    background: #27ae60;
+}
+/* Metric summary boxes */
+.metric-summary {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 15px;
+    padding: 15px;
+    background: var(--card-bg, #f8f9fa);
+    border-radius: 8px;
+}
+.metric-item {
+    text-align: center;
+    min-width: 100px;
+}
+.metric-value {
+    font-size: 1.5em;
+    font-weight: 600;
+    color: var(--primary, #3498db);
+}
+.metric-label {
+    font-size: 0.85em;
+    color: var(--muted);
+    margin-top: 4px;
+}
+/* Cost summary box */
+.cost-summary-box {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    margin-top: 15px;
+    padding: 20px;
+    background: linear-gradient(135deg, #e8f4fd 0%, #d4edda 100%);
+    border-radius: 8px;
+}
+.cost-item {
+    text-align: center;
+}
+.cost-item.highlight {
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.cost-value {
+    font-size: 1.8em;
+    font-weight: 700;
+    color: #27ae60;
+}
+.cost-value.projection {
+    color: #2980b9;
+}
+.cost-label {
+    font-size: 0.85em;
+    color: var(--muted);
+    margin-top: 4px;
+}
+/* Price input styling */
+.price-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+    color: var(--muted);
+}
+.price-input {
+    width: 70px;
+    padding: 4px 8px;
+    border: 1px solid var(--border, #ddd);
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+/* No data message */
+.no-data-message {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-style: italic;
+    background: var(--card-bg, #f8f9fa);
+    border-radius: 8px;
+}
+</style>
+
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script>
+    const buildingId = "{{ building_id }}";
+    let currentChart = null;
+
+    // Initial chart data from server
+    const initialData = {{ graph_json | safe }};
+    const chartConfig = {{ config_json | safe }};
+
+    function renderChart(data) {
+        Plotly.newPlot('availability-chart', data.data, data.layout, chartConfig);
+    }
+
+    // Helper function to update data source badge
+    function updateDataSourceBadge(elementId, dataSource) {
+        const badge = document.getElementById(elementId);
+        if (!badge) return;
+
+        if (dataSource === 'live') {
+            badge.textContent = 'Live Data';
+            badge.className = 'data-source-badge live';
+            badge.style.display = 'inline-block';
+        } else if (dataSource === 'imported') {
+            badge.textContent = 'Imported Data';
+            badge.className = 'data-source-badge imported';
+            badge.style.display = 'inline-block';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    // Supply & Return Temperatures Chart
+    function updateSupplyReturnChart() {
+        const hours = document.getElementById('supply-return-days-select').value;
+        const chartDiv = document.getElementById('supply-return-chart');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading supply/return data...</div>';
+
+        fetch(`/api/building/${buildingId}/supply-return?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { history: [] })
+            .then(result => {
+                const history = result.history || [];
+
+                if (history.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No supply/return temperature data available.</div>';
+                    return;
+                }
+
+                const histTimestamps = history.map(d => d.timestamp_display);
+
+                const traces = [
+                    // Supply Temperature (solid red)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.supply_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Supply',
+                        line: { color: '#e74c3c', width: 2 },
+                        hovertemplate: '%{x}<br>Supply: %{y}°C<extra></extra>'
+                    },
+                    // Return Temperature (solid blue)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.return_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Return',
+                        line: { color: '#3498db', width: 2 },
+                        hovertemplate: '%{x}<br>Return: %{y}°C<extra></extra>'
+                    },
+                    // Supply Setpoint (dashed green)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.supply_setpoint),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Setpoint',
+                        line: { color: '#27ae60', width: 2, dash: 'dash' },
+                        hovertemplate: '%{x}<br>Setpoint: %{y}°C<extra></extra>'
+                    },
+                    // Outdoor temp (thin gray dashed)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.outdoor_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Outdoor',
+                        line: { color: '#95a5a6', width: 1, dash: 'dash' },
+                        yaxis: 'y2',
+                        hovertemplate: '%{x}<br>Outdoor: %{y}°C<extra></extra>'
+                    }
+                ];
+
+                const layout = {
+                    xaxis: {
+                        title: 'Time',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis: {
+                        title: 'Temperature (°C)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis2: {
+                        title: 'Outdoor (°C)',
+                        overlaying: 'y',
+                        side: 'right',
+                        showgrid: false
+                    },
+                    height: 400,
+                    margin: { l: 60, r: 60, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                chartDiv.innerHTML = '';
+
+                Plotly.newPlot('supply-return-chart', traces, layout, chartConfig)
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load supply/return data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load supply/return data.</div>';
+            });
+    }
+
+    // Data Availability Chart
+    function updateChart() {
+        const days = document.getElementById('days-select').value;
+        const chartDiv = document.getElementById('availability-chart');
+
+        chartDiv.style.opacity = '0.5';
+
+        fetch(`/api/building/${buildingId}/data-availability?days=${days}`)
+            .then(response => response.json())
+            .then(availability => {
+                if (!availability.categories || availability.categories.length === 0) {
+                    chartDiv.innerHTML = '<p class="muted">No data available.</p>';
+                    chartDiv.style.opacity = '1';
+                    return;
+                }
+
+                const allDatesSet = new Set();
+                availability.categories.forEach(cat => {
+                    cat.data.forEach(d => allDatesSet.add(d.date));
+                });
+                const allDates = Array.from(allDatesSet).sort();
+
+                const categoryNames = availability.categories.map(c => c.name);
+                const zValues = availability.categories.map(cat => {
+                    const dateToCount = {};
+                    cat.data.forEach(d => { dateToCount[d.date] = d.count; });
+                    return allDates.map(date => dateToCount[date] || 0);
+                });
+
+                const traces = [{
+                    z: zValues,
+                    x: allDates,
+                    y: categoryNames,
+                    type: 'heatmap',
+                    colorscale: [
+                        [0, '#f8f9fa'],
+                        [0.01, '#e3f2fd'],
+                        [0.25, '#90caf9'],
+                        [0.5, '#42a5f5'],
+                        [1, '#1565c0']
+                    ],
+                    showscale: true,
+                    colorbar: {
+                        title: { text: 'Data points', side: 'right' }
+                    },
+                    hovertemplate: '%{x}<br>%{y}: %{z} points<extra></extra>'
+                }];
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: null,
+                        autorange: 'reversed'
+                    },
+                    height: Math.max(300, availability.categories.length * 40 + 150),
+                    margin: { l: 130, r: 80, t: 20, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: 'pan'
+                };
+
+                Plotly.react('availability-chart', traces, layout, chartConfig);
+                chartDiv.style.opacity = '1';
+            })
+            .catch(error => {
+                console.error('Failed to update chart:', error);
+                chartDiv.style.opacity = '1';
+            });
+    }
+
+    // Primary vs Secondary Temperature Chart
+    const tempHistoryState = {
+        loadedHours: 0,
+        isLoading: false,
+        data: [],
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function buildTempHistoryTraces(data) {
+        const timestamps = data.map(d => d.timestamp_display);
+        return [
+            // DH Primary Side
+            {
+                x: timestamps,
+                y: data.map(d => d.dh_supply_temp),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'DH Supply',
+                line: { color: '#e74c3c', width: 2 },
+                hovertemplate: '%{x}<br>DH Supply: %{y}°C<extra></extra>'
+            },
+            {
+                x: timestamps,
+                y: data.map(d => d.dh_return_temp),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'DH Return',
+                line: { color: '#c0392b', width: 2, dash: 'dot' },
+                hovertemplate: '%{x}<br>DH Return: %{y}°C<extra></extra>'
+            },
+            // Building Secondary Side
+            {
+                x: timestamps,
+                y: data.map(d => d.supply_temp),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Bld Supply',
+                line: { color: '#3498db', width: 2 },
+                hovertemplate: '%{x}<br>Bld Supply: %{y}°C<extra></extra>'
+            },
+            {
+                x: timestamps,
+                y: data.map(d => d.return_temp),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Bld Return',
+                line: { color: '#2980b9', width: 2, dash: 'dot' },
+                hovertemplate: '%{x}<br>Bld Return: %{y}°C<extra></extra>'
+            },
+            // Outdoor reference
+            {
+                x: timestamps,
+                y: data.map(d => d.outdoor_temperature),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Outdoor',
+                line: { color: '#95a5a6', width: 1, dash: 'dash' },
+                hovertemplate: '%{x}<br>Outdoor: %{y}°C<extra></extra>'
+            }
+        ];
+    }
+
+    function updateTemperatureHistoryChart(extendHours = null) {
+        const selectEl = document.getElementById('temp-history-days-select');
+        const hours = extendHours || parseInt(selectEl.value);
+        const chartDiv = document.getElementById('temp-history-chart');
+
+        if (!extendHours) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading temperature data...</div>';
+            tempHistoryState.data = [];
+        }
+        tempHistoryState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/temperature-history?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                tempHistoryState.isLoading = false;
+                const data = result.data || [];
+
+                if (data.length === 0 && !extendHours) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No temperature data available.</div>';
+                    return;
+                }
+
+                tempHistoryState.loadedHours = hours;
+                tempHistoryState.data = data;
+                if (data.length > 0) {
+                    tempHistoryState.minLoadedTime = new Date(data[0].timestamp);
+                    tempHistoryState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                const traces = buildTempHistoryTraces(data);
+
+                const layout = {
+                    xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Temperature (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    height: 400,
+                    margin: { l: 60, r: 30, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                if (!extendHours) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendHours ? Plotly.react : Plotly.newPlot;
+                plotFn('temp-history-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendHours) {
+                            document.getElementById('temp-history-chart').on('plotly_relayout', (e) => handleChartPan(e, tempHistoryState, 'temp-history-days-select', updateTemperatureHistoryChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendHours) {
+                            chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                        }
+                    });
+            })
+            .catch(error => {
+                tempHistoryState.isLoading = false;
+                console.error('Failed to load temperature history:', error);
+                if (!extendHours) {
+                    chartDiv.innerHTML = '<div class="no-data-message">Failed to load temperature data.</div>';
+                }
+            });
+    }
+
+    // Parse display time format to Date
+    function parseDisplayTime(timeStr) {
+        if (!timeStr) return null;
+        try {
+            if (timeStr.includes('T')) {
+                return new Date(timeStr);
+            }
+            const [datePart, timePart] = timeStr.split(' ');
+            if (!datePart) return null;
+            const [year, month, day] = datePart.split('-').map(Number);
+            const [hour, minute] = (timePart || '00:00').split(':').map(Number);
+            return new Date(year, month - 1, day, hour, minute);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Generic pan handler for hours-based charts
+    function handleChartPan(eventData, state, selectId, updateFn, maxHours = 720) {
+        if (state.isLoading || !eventData['xaxis.range[0]']) return;
+
+        const visibleStart = parseDisplayTime(eventData['xaxis.range[0]']);
+        const visibleEnd = parseDisplayTime(eventData['xaxis.range[1]']);
+
+        if (!visibleStart || !visibleEnd || !state.minLoadedTime) return;
+
+        const loadedRange = state.maxLoadedTime - state.minLoadedTime;
+        const buffer = loadedRange * 0.1;
+
+        const needsMore = visibleStart < new Date(state.minLoadedTime.getTime() + buffer) ||
+                          visibleEnd > new Date(state.maxLoadedTime.getTime() - buffer);
+
+        if (needsMore) {
+            const newHours = Math.min(state.loadedHours * 2, maxHours);
+            if (newHours > state.loadedHours) {
+                updateFn(newHours);
+                const selectEl = document.getElementById(selectId);
+                if (selectEl) {
+                    const options = Array.from(selectEl.options).map(o => parseInt(o.value));
+                    const closest = options.reduce((p, c) => Math.abs(c - newHours) < Math.abs(p - newHours) ? c : p);
+                    selectEl.value = closest.toString();
+                }
+            }
+        }
+    }
+
+    // Generic pan handler for days-based charts
+    function handleChartPanDays(eventData, state, selectId, updateFn, maxDays = 365) {
+        if (state.isLoading || !eventData['xaxis.range[0]']) return;
+
+        const visibleStart = parseDisplayTime(eventData['xaxis.range[0]']);
+        const visibleEnd = parseDisplayTime(eventData['xaxis.range[1]']);
+
+        if (!visibleStart || !visibleEnd || !state.minLoadedTime) return;
+
+        const loadedRange = state.maxLoadedTime - state.minLoadedTime;
+        const buffer = loadedRange * 0.1;
+
+        const needsMore = visibleStart < new Date(state.minLoadedTime.getTime() + buffer) ||
+                          visibleEnd > new Date(state.maxLoadedTime.getTime() - buffer);
+
+        if (needsMore) {
+            const newDays = Math.min(state.loadedDays * 2, maxDays);
+            if (newDays > state.loadedDays) {
+                updateFn(newDays);
+                const selectEl = document.getElementById(selectId);
+                if (selectEl) {
+                    const options = Array.from(selectEl.options).map(o => parseInt(o.value));
+                    const closest = options.reduce((p, c) => Math.abs(c - newDays) < Math.abs(p - newDays) ? c : p);
+                    selectEl.value = closest.toString();
+                }
+            }
+        }
+    }
+
+    // Efficiency Metrics Chart (Delta T)
+    const efficiencyState = {
+        loadedHours: 0,
+        isLoading: false,
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function buildEfficiencyTraces(data) {
+        const timestamps = data.map(d => d.timestamp_display);
+        return [
+            {
+                x: timestamps,
+                y: data.map(d => d.dh_delta_t),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'DH Delta T',
+                fill: 'tozeroy',
+                line: { color: '#e74c3c', width: 2 },
+                fillcolor: 'rgba(231, 76, 60, 0.2)',
+                hovertemplate: '%{x}<br>DH \u0394T: %{y}°C<extra></extra>'
+            },
+            {
+                x: timestamps,
+                y: data.map(d => d.house_delta_t),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Building Delta T',
+                fill: 'tozeroy',
+                line: { color: '#3498db', width: 2 },
+                fillcolor: 'rgba(52, 152, 219, 0.2)',
+                hovertemplate: '%{x}<br>Bld \u0394T: %{y}°C<extra></extra>'
+            }
+        ];
+    }
+
+    function updateEfficiencyChart(extendHours = null) {
+        const selectEl = document.getElementById('efficiency-days-select');
+        const hours = extendHours || parseInt(selectEl.value);
+        const chartDiv = document.getElementById('efficiency-chart');
+        const summaryDiv = document.getElementById('efficiency-summary');
+
+        if (!extendHours) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading efficiency data...</div>';
+            summaryDiv.innerHTML = '';
+        }
+        efficiencyState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/efficiency-metrics?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                efficiencyState.isLoading = false;
+                const data = result.data || [];
+
+                if (data.length === 0 && !extendHours) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No efficiency data available.</div>';
+                    return;
+                }
+
+                efficiencyState.loadedHours = hours;
+                if (data.length > 0) {
+                    efficiencyState.minLoadedTime = new Date(data[0].timestamp);
+                    efficiencyState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                const traces = buildEfficiencyTraces(data);
+
+                const layout = {
+                    xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Delta T (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                if (!extendHours) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendHours ? Plotly.react : Plotly.newPlot;
+                plotFn('efficiency-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendHours) {
+                            document.getElementById('efficiency-chart').on('plotly_relayout', (e) => handleChartPan(e, efficiencyState, 'efficiency-days-select', updateEfficiencyChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendHours) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Calculate and show summary
+                if (!extendHours && data.length > 0) {
+                    const dhDeltas = data.filter(d => d.dh_delta_t != null).map(d => d.dh_delta_t);
+                    const bldDeltas = data.filter(d => d.house_delta_t != null).map(d => d.house_delta_t);
+                    const avgDh = dhDeltas.length > 0 ? (dhDeltas.reduce((a, b) => a + b, 0) / dhDeltas.length).toFixed(1) : '-';
+                    const avgBld = bldDeltas.length > 0 ? (bldDeltas.reduce((a, b) => a + b, 0) / bldDeltas.length).toFixed(1) : '-';
+
+                    summaryDiv.innerHTML = `
+                        <div class="metric-item">
+                            <div class="metric-value">${avgDh}°C</div>
+                            <div class="metric-label">Avg DH Delta T</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value">${avgBld}°C</div>
+                            <div class="metric-label">Avg Bld Delta T</div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                efficiencyState.isLoading = false;
+                console.error('Failed to load efficiency data:', error);
+                if (!extendHours) chartDiv.innerHTML = '<div class="no-data-message">Failed to load efficiency data.</div>';
+            });
+    }
+
+    // Energy Consumption Chart
+    const energyState = {
+        loadedDays: 0,
+        isLoading: false,
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function updateEnergyChart(extendDays = null) {
+        const selectEl = document.getElementById('energy-days-select');
+        const days = extendDays || parseInt(selectEl.value);
+        const chartDiv = document.getElementById('energy-chart');
+        const summaryDiv = document.getElementById('energy-summary');
+
+        if (!extendDays) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading energy data...</div>';
+            summaryDiv.innerHTML = '';
+        }
+        energyState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/energy-consumption?days=${days}&aggregation=daily`)
+            .then(r => r.ok ? r.json() : { data: {}, error: 'Failed to fetch' })
+            .then(result => {
+                energyState.isLoading = false;
+
+                // Update data source badge
+                if (!extendDays) {
+                    updateDataSourceBadge('energy-data-source', result.data_source);
+                }
+
+                const allData = result.data || {};
+                const totals = result.totals || {};
+
+                // Flatten all energy types into one series
+                let dataPoints = [];
+                for (const [type, entries] of Object.entries(allData)) {
+                    dataPoints = dataPoints.concat(entries);
+                }
+
+                if (dataPoints.length === 0 && !extendDays) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No energy data available. Import energy data first.</div>';
+                    return;
+                }
+
+                // Sort by timestamp
+                dataPoints.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+                energyState.loadedDays = days;
+                if (dataPoints.length > 0) {
+                    energyState.minLoadedTime = new Date(dataPoints[0].timestamp);
+                    energyState.maxLoadedTime = new Date(dataPoints[dataPoints.length - 1].timestamp);
+                }
+
+                const traces = [{
+                    x: dataPoints.map(d => d.timestamp_display),
+                    y: dataPoints.map(d => d.value),
+                    type: 'bar',
+                    name: 'Energy (kWh)',
+                    marker: { color: '#3498db' },
+                    hovertemplate: '%{x}<br>%{y} kWh<extra></extra>'
+                }];
+
+                const layout = {
+                    xaxis: { title: 'Date', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Energy (kWh)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', rangemode: 'tozero' },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: 'pan'
+                };
+
+                if (!extendDays) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendDays ? Plotly.react : Plotly.newPlot;
+                plotFn('energy-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendDays) {
+                            document.getElementById('energy-chart').on('plotly_relayout', (e) => handleChartPanDays(e, energyState, 'energy-days-select', updateEnergyChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Summary
+                if (!extendDays) {
+                    const totalKwh = Object.values(totals).reduce((a, b) => a + b, 0);
+                    const dailyAvg = days > 0 ? (totalKwh / days).toFixed(1) : 0;
+
+                    summaryDiv.innerHTML = `
+                        <div class="metric-item">
+                            <div class="metric-value">${totalKwh.toFixed(0)} kWh</div>
+                            <div class="metric-label">Total (${days} days)</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value">${dailyAvg} kWh</div>
+                            <div class="metric-label">Daily Average</div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                energyState.isLoading = false;
+                console.error('Failed to load energy data:', error);
+                if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy data.</div>';
+            });
+    }
+
+    // Cost Estimate Chart
+    const costState = {
+        loadedDays: 0,
+        isLoading: false,
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function updateCostChart(extendDays = null) {
+        const selectEl = document.getElementById('cost-days-select');
+        const days = extendDays || parseInt(selectEl.value);
+        const price = document.getElementById('price-input').value || 1.20;
+        const chartDiv = document.getElementById('cost-chart');
+        const summaryDiv = document.getElementById('cost-summary');
+
+        if (!extendDays) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading cost data...</div>';
+            summaryDiv.innerHTML = '';
+        }
+        costState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/cost-estimate?days=${days}&price=${price}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                costState.isLoading = false;
+                const data = result.data || [];
+                const summary = result.summary || {};
+
+                // Update data source badge
+                if (!extendDays) {
+                    updateDataSourceBadge('cost-data-source', result.data_source);
+                }
+
+                if (data.length === 0 && !extendDays) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No cost data available. Import energy data first.</div>';
+                    return;
+                }
+
+                costState.loadedDays = days;
+                if (data.length > 0) {
+                    costState.minLoadedTime = new Date(data[0].timestamp);
+                    costState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                // Group by date for daily costs
+                const dailyCosts = {};
+                data.forEach(d => {
+                    const date = d.timestamp_display.split(' ')[0];
+                    if (!dailyCosts[date]) dailyCosts[date] = 0;
+                    dailyCosts[date] += d.cost;
+                });
+
+                const dates = Object.keys(dailyCosts).sort();
+                const costs = dates.map(d => Math.round(dailyCosts[d] * 100) / 100);
+
+                const traces = [{
+                    x: dates,
+                    y: costs,
+                    type: 'bar',
+                    name: 'Daily Cost',
+                    marker: {
+                        color: costs.map(c => c > summary.daily_avg_cost * 1.5 ? '#e74c3c' : '#27ae60')
+                    },
+                    hovertemplate: '%{x}<br>%{y} SEK<extra></extra>'
+                }];
+
+                // Add average line
+                if (summary.daily_avg_cost) {
+                    traces.push({
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [summary.daily_avg_cost, summary.daily_avg_cost],
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Daily Avg',
+                        line: { color: '#f39c12', width: 2, dash: 'dash' },
+                        hovertemplate: 'Average: %{y} SEK<extra></extra>'
+                    });
+                }
+
+                const layout = {
+                    xaxis: { title: 'Date', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Cost (SEK)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', rangemode: 'tozero' },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                    dragmode: 'pan'
+                };
+
+                if (!extendDays) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendDays ? Plotly.react : Plotly.newPlot;
+                plotFn('cost-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendDays) {
+                            document.getElementById('cost-chart').on('plotly_relayout', (e) => handleChartPanDays(e, costState, 'cost-days-select', updateCostChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Update summary
+                if (!extendDays) {
+                    summaryDiv.innerHTML = `
+                        <div class="cost-item">
+                            <div class="cost-value">${summary.total_kwh || 0} kWh</div>
+                            <div class="cost-label">Total Energy</div>
+                        </div>
+                        <div class="cost-item highlight">
+                            <div class="cost-value">${summary.total_cost || 0} SEK</div>
+                            <div class="cost-label">Total Cost (${days} days)</div>
+                        </div>
+                        <div class="cost-item">
+                            <div class="cost-value">${summary.daily_avg_kwh || 0} kWh</div>
+                            <div class="cost-label">Daily Avg Energy</div>
+                        </div>
+                        <div class="cost-item">
+                            <div class="cost-value">${summary.daily_avg_cost || 0} SEK</div>
+                            <div class="cost-label">Daily Avg Cost</div>
+                        </div>
+                        <div class="cost-item highlight">
+                            <div class="cost-value projection">${summary.monthly_projection || 0} SEK</div>
+                            <div class="cost-label">Monthly Projection</div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                costState.isLoading = false;
+                console.error('Failed to load cost data:', error);
+                if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to load cost data.</div>';
+            });
+    }
+
+    // Energy Separation Chart (Heating vs Hot Water)
+    const separationState = {
+        loadedDays: 0,
+        isLoading: false,
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function updateEnergySeparationChart(extendDays = null) {
+        const selectEl = document.getElementById('separation-days-select');
+        const days = extendDays || parseInt(selectEl.value);
+        const chartDiv = document.getElementById('separation-chart');
+        const summaryDiv = document.getElementById('separation-summary');
+
+        if (!extendDays) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading energy separation data...</div>';
+            summaryDiv.innerHTML = '';
+        }
+        separationState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/energy-separated?days=${days}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                separationState.isLoading = false;
+                const data = result.data || [];
+                const totals = result.totals || {};
+                const kValue = result.k_value;
+
+                if (data.length === 0 && !extendDays) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No energy separation data available yet. Data appears after the daily calibration runs.</div>';
+                    return;
+                }
+
+                separationState.loadedDays = days;
+                if (data.length > 0) {
+                    separationState.minLoadedTime = new Date(data[0].timestamp);
+                    separationState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                const timestamps = data.map(d => d.timestamp_display);
+                const hasNoBreakdown = data.some(d => d.no_breakdown);
+
+                // Stacked bar chart: Heating (bottom) + DHW (top)
+                const traces = [
+                    {
+                        x: timestamps,
+                        y: data.map(d => d.no_breakdown ? 0 : d.heating_kwh),
+                        type: 'bar',
+                        name: 'Heating',
+                        marker: { color: '#3498db' },
+                        hovertext: data.map(d => `${d.timestamp_display}<br>Heating: ${d.no_breakdown ? 0 : d.heating_kwh} kWh`),
+                        hoverinfo: 'text'
+                    },
+                    {
+                        x: timestamps,
+                        y: data.map(d => d.no_breakdown ? 0 : d.dhw_kwh),
+                        type: 'bar',
+                        name: 'Hot Water (DHW)',
+                        marker: { color: '#e67e22' },
+                        hovertext: data.map(d => `${d.timestamp_display}<br>Hot Water: ${d.no_breakdown ? 0 : d.dhw_kwh} kWh`),
+                        hoverinfo: 'text'
+                    }
+                ];
+
+                // Grey bar for days without enough temperature data for breakdown
+                if (hasNoBreakdown) {
+                    traces.push({
+                        x: timestamps,
+                        y: data.map(d => d.no_breakdown ? d.actual_kwh : 0),
+                        type: 'bar',
+                        name: 'Total (no breakdown)',
+                        marker: { color: '#bdc3c7' },
+                        hovertext: data.map(d => d.no_breakdown ? `${d.timestamp_display}<br>Total: ${d.actual_kwh} kWh<br>(insufficient temp data)` : ''),
+                        hoverinfo: 'text'
+                    });
+                }
+
+                // Actual total markers
+                traces.push({
+                    x: timestamps,
+                    y: data.map(d => d.actual_kwh),
+                    type: 'scatter',
+                    mode: 'markers',
+                    name: 'Actual Total',
+                    marker: { color: '#2c3e50', size: 8, symbol: 'diamond' },
+                    hovertext: data.map(d => `${d.timestamp_display}<br>Actual: ${d.actual_kwh} kWh`),
+                    hoverinfo: 'text'
+                });
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: 'Energy (kWh)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        rangemode: 'tozero'
+                    },
+                    barmode: 'stack',
+                    height: 400,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                if (!extendDays) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendDays ? Plotly.react : Plotly.newPlot;
+                plotFn('separation-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendDays) {
+                            document.getElementById('separation-chart').on('plotly_relayout', (e) => handleChartPanDays(e, separationState, 'separation-days-select', updateEnergySeparationChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Update summary
+                if (!extendDays) {
+                    const kDisplay = kValue ? `${kValue} kW/°C` : 'N/A';
+                    summaryDiv.innerHTML = `
+                        <div class="metric-item">
+                            <div class="metric-value">${totals.actual || 0} kWh</div>
+                            <div class="metric-label">Total Consumption</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #3498db">${totals.heating || 0} kWh</div>
+                            <div class="metric-label">Heating (${totals.heating_pct || 0}%)</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #e67e22">${totals.dhw || 0} kWh</div>
+                            <div class="metric-label">Hot Water (${totals.dhw_pct || 0}%)</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #7f8c8d; font-size: 1.2em">${kDisplay}</div>
+                            <div class="metric-label">Heat Loss Coeff (k)</div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                separationState.isLoading = false;
+                console.error('Failed to load energy separation:', error);
+                if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy separation data.</div>';
+            });
+    }
+
+    // Initialize charts on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        // Supply & Return chart (top priority)
+        updateSupplyReturnChart();
+
+        // Data availability heatmap
+        if (document.getElementById('availability-chart')) {
+            renderChart(initialData);
+        }
+
+        // Other charts - stagger loading
+        setTimeout(() => updateTemperatureHistoryChart(), 100);
+        setTimeout(() => updateEfficiencyChart(), 200);
+        setTimeout(() => updateEnergyChart(), 300);
+        setTimeout(() => updateCostChart(), 400);
+        setTimeout(() => updateEnergySeparationChart(), 500);
+    });
+</script>
+{% endblock %}

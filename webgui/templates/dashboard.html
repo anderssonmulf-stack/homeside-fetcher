@@ -50,10 +50,13 @@
         <div class="house-grid">
             {% for building in buildings %}
             <div class="house-card-wrapper">
-                <div class="house-card" style="cursor: default;">
+                <a href="{{ url_for('building_graphs', building_id=building.id) }}" class="house-card">
                     <div class="house-icon">🏢</div>
                     <div class="house-name">{{ building.name }}</div>
                     <div class="house-id">{{ building.id }}</div>
+                </a>
+                <div class="house-links">
+                    <a href="{{ url_for('building_graphs', building_id=building.id) }}" class="house-link">📈 Graphs</a>
                 </div>
             </div>
             {% endfor %}

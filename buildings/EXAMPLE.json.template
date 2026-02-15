@@ -3,6 +3,21 @@
   "building_id": "SITE_BuildingName",
   "friendly_name": "Building Name",
   "building_type": "commercial",
+  "meter_ids": [],
+  "energy_separation": {
+    "enabled": false,
+    "method": "k_calibration",
+    "heat_loss_k": null,
+    "k_percentile": 15,
+    "calibration_date": null,
+    "calibration_days": 60,
+    "dhw_percentage": null,
+    "assumed_indoor_temp": 21.0,
+    "field_mapping": {
+      "outdoor_temperature": "outdoor_temp_fvc",
+      "hot_water_temp": "vv1_hot_water_temp"
+    }
+  },
   "connection": {
     "system": "arrigo",
     "host": "exodriftXX.systeminstallation.se",
