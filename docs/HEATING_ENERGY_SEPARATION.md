@@ -185,7 +185,7 @@ handled by deduplication).
 ## Web GUI Integration
 
 The energy separation data is displayed in Plotly graphs at:
-**https://svenskeb.se/house/HEM_FJV_Villa_149/graphs**
+**https://bvpro.hem.se/house/{building_id}/graphs**
 
 We're using Plotly in the Flask web GUI for charting because:
 - Good mobile experience

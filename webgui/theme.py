@@ -44,8 +44,8 @@ THEMES = {
 def get_theme(theme_name: str = None) -> dict:
     """Return theme dict for the given name, or from SITE_THEME env var.
 
-    Falls back to 'svenskeb' if unset or unknown.
+    Falls back to 'bvpro' if unset or unknown.
     """
     if theme_name is None:
-        theme_name = os.environ.get('SITE_THEME', 'svenskeb')
-    return THEMES.get(theme_name, THEMES['svenskeb'])
+        theme_name = os.environ.get('SITE_THEME', 'bvpro')
+    return THEMES.get(theme_name, THEMES['bvpro'])

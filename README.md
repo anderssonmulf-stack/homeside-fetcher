@@ -173,7 +173,7 @@ homeside-fetcher/
 - [x] Seq structured logging
 - [x] Multi-site support
 - [x] Public access with security (nginx, HTTPS, geo-blocking)
-- [x] Settings GUI with user management (svenskeb.se)
+- [x] Settings GUI with user management (bvpro.hem.se)
 - [x] Automatic token refresh (HomeSide API and Dropbox OAuth)
 - [x] Energy data import from Dropbox with daily scheduling
 
@@ -187,7 +187,7 @@ homeside-fetcher/
 
 ### Settings GUI
 
-A Flask-based customer portal at **svenskeb.se** for:
+A Flask-based customer portal at **bvpro.hem.se** for:
 
 - **User self-registration** - new users can register with their HomeSide credentials
 - **Admin approval workflow** - admins receive email notifications and can test credentials

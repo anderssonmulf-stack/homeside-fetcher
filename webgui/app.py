@@ -1370,7 +1370,7 @@ def upload_energy_data(house_id):
 
         # Create unique file for this import
         import_id = str(uuid.uuid4())
-        temp_dir = os.path.join(tempfile.gettempdir(), 'svenskeb_imports')
+        temp_dir = os.path.join(tempfile.gettempdir(), 'bvpro_imports')
         os.makedirs(temp_dir, exist_ok=True)
         temp_file = os.path.join(temp_dir, f'{import_id}.json')
 
@@ -1420,7 +1420,7 @@ def confirm_energy_import(house_id):
     # Load parsed data from temp file
     import json
     import tempfile
-    temp_dir = os.path.join(tempfile.gettempdir(), 'svenskeb_imports')
+    temp_dir = os.path.join(tempfile.gettempdir(), 'bvpro_imports')
     temp_file = os.path.join(temp_dir, f'{import_id}.json')
 
     try:
