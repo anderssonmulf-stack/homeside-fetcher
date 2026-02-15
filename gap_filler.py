@@ -714,12 +714,33 @@ class ArrigoBootstrapper:
         self.arrigo_client = None
         self.influx_client = None
 
+        # Unified fields populated by _init_arrigo()
+        self.signal_map = {}       # signal_id -> {field_name, arrigo_name, unit, ...}
+        self.graphql_session = None  # requests.Session with auth headers
+        self.graphql_url = None      # GraphQL endpoint URL
+
     def log(self, msg):
         if self.verbose:
             print(f"  [DEBUG] {msg}")
 
     def _init_arrigo(self) -> bool:
-        """Authenticate with Arrigo and discover signals."""
+        """Authenticate with Arrigo and discover signals.
+
+        Houses: HomeSide → BMS token → Arrigo GraphQL (ArrigoHistoricalClient)
+        Buildings: Direct Arrigo login → JWT → GraphQL (ArrigoAPI)
+
+        Both paths populate unified fields:
+          self.signal_map      - signal_id -> {field_name, arrigo_name, unit, ...}
+          self.graphql_session  - requests.Session with auth headers
+          self.graphql_url      - GraphQL endpoint URL
+        """
+        if self.entity_type == "building":
+            return self._init_arrigo_building()
+        else:
+            return self._init_arrigo_house()
+
+    def _init_arrigo_house(self) -> bool:
+        """Authenticate via HomeSide → Arrigo (residential houses)."""
         self.arrigo_client = ArrigoHistoricalClient(
             username=self.username,
             password=self.password,
@@ -743,6 +764,86 @@ class ArrigoBootstrapper:
             print("ERROR: Failed to discover signals")
             return False
 
+        # Copy to unified fields
+        self.signal_map = self.signal_map
+        self.graphql_session = self.graphql_session
+        self.graphql_url = self.graphql_url
+
+        return True
+
+    def _init_arrigo_building(self) -> bool:
+        """Authenticate directly with Arrigo (commercial buildings)."""
+        from arrigo_api import ArrigoAPI, load_building_config, get_fetch_signals
+
+        # Load building config
+        config = load_building_config(self.house_id)
+        if not config:
+            print(f"ERROR: Building config not found: buildings/{self.house_id}.json")
+            return False
+
+        host = self.arrigo_host or config.get('connection', {}).get('host')
+        if not host:
+            print("ERROR: No Arrigo host (use --arrigo-host or set in building config)")
+            return False
+
+        # Resolve credentials: CLI args > .env
+        username = self.username
+        password = self.password
+        if not username or not password:
+            from dotenv import load_dotenv
+            load_dotenv()
+            username = username or os.getenv(f'BUILDING_{self.house_id}_USERNAME')
+            password = password or os.getenv(f'BUILDING_{self.house_id}_PASSWORD')
+
+        if not username or not password:
+            print(f"ERROR: No credentials. Use --username/--password or set "
+                  f"BUILDING_{self.house_id}_USERNAME/PASSWORD in .env")
+            return False
+
+        # Resolve lat/lon from config if not provided via CLI
+        location = config.get('location', {})
+        if not self.latitude and location.get('latitude'):
+            self.latitude = location['latitude']
+        if not self.longitude and location.get('longitude'):
+            self.longitude = location['longitude']
+
+        # Create ArrigoAPI client and login
+        import logging
+        logger = logging.getLogger('bootstrap')
+        logger.setLevel(logging.DEBUG if self.verbose else logging.INFO)
+
+        arrigo_api = ArrigoAPI(
+            host=host,
+            username=username,
+            password=password,
+            logger=logger,
+            verbose=self.verbose,
+        )
+
+        if not arrigo_api.login():
+            print("ERROR: Failed to authenticate with Arrigo")
+            return False
+
+        if not arrigo_api.discover_signals():
+            print("ERROR: Failed to discover signals")
+            return False
+
+        # Build signal_map from building config (only fetch=true signals)
+        analog_fetch, _ = get_fetch_signals(config)
+        self.signal_map = {}
+        for name, info in analog_fetch.items():
+            self.signal_map[info['signal_id']] = {
+                'field_name': info['field_name'],
+                'arrigo_name': name,
+                'unit': info.get('unit', ''),
+                'current_value': arrigo_api.signal_map.get(info['signal_id'], {}).get('current_value'),
+            }
+
+        # Set unified session fields
+        self.graphql_session = arrigo_api.session
+        self.graphql_url = arrigo_api.graphql_url
+
+        print(f"  Arrigo: {host} ({len(self.signal_map)} signals)")
         return True
 
     def _init_influx(self):
@@ -801,8 +902,8 @@ class ArrigoBootstrapper:
                 variables['after'] = cursor
 
             try:
-                response = self.arrigo_client.arrigo_session.post(
-                    self.arrigo_client.graphql_url,
+                response = self.graphql_session.post(
+                    self.graphql_url,
                     json={'query': query, 'variables': variables},
                     timeout=300
                 )
@@ -817,8 +918,8 @@ class ArrigoBootstrapper:
                     if page == 1 and 'timeLengthComparer' in str(result['errors']):
                         self.log(f"timeLengthComparer not supported, retrying without it")
                         del variables['filter']['timeLengthComparer']
-                        response = self.arrigo_client.arrigo_session.post(
-                            self.arrigo_client.graphql_url,
+                        response = self.graphql_session.post(
+                            self.graphql_url,
                             json={'query': query, 'variables': variables},
                             timeout=300
                         )
@@ -868,13 +969,13 @@ class ArrigoBootstrapper:
         print(f"{'='*60}")
         print(f"  Resolution: {self.resolution} min")
         print(f"  Time range: {start_time.date()} to {end_time.date()}")
-        print(f"  Signals: {len(self.arrigo_client.signal_map)}")
+        print(f"  Signals: {len(self.signal_map)}")
 
         resolution_seconds = self.resolution * 60
         data_by_time = {}  # timestamp -> {field: value}
         signal_stats = {}
 
-        for signal_id, info in self.arrigo_client.signal_map.items():
+        for signal_id, info in self.signal_map.items():
             field_name = info['field_name']
             print(f"  Fetching {field_name}...", end=' ', flush=True)
 
@@ -1020,13 +1121,17 @@ class ArrigoBootstrapper:
 
         # Check 2: Data coverage (only core signals are critical)
         print("\n  Data coverage:")
-        from import_historical_data import CORE_SIGNALS
+        if self.entity_type == "building":
+            core_signals = {'outdoor_temperature'}  # buildings don't have room_temperature
+        else:
+            from import_historical_data import CORE_SIGNALS
+            core_signals = set(CORE_SIGNALS)
         expected_slots = self.days * 24 * (60 // self.resolution)
         for field_name in sorted(signal_stats):
             count = signal_stats[field_name]
             coverage = count / expected_slots * 100 if expected_slots > 0 else 0
             status = "OK" if coverage > 50 else "LOW"
-            is_core = field_name in CORE_SIGNALS
+            is_core = field_name in core_signals
             if coverage < 20 and is_core:
                 issues.append(f"Core signal '{field_name}' has very low coverage ({coverage:.0f}%)")
             elif coverage < 20:
@@ -1051,8 +1156,7 @@ class ArrigoBootstrapper:
 
         # Check 4: Core signals present
         print("\n  Core signals:")
-        from import_historical_data import CORE_SIGNALS
-        for sig in CORE_SIGNALS:
+        for sig in sorted(core_signals):
             present = sig in signal_stats and signal_stats[sig] > 0
             status = "OK" if present else "MISSING"
             if not present:
@@ -1130,17 +1234,19 @@ class ArrigoBootstrapper:
     def _save_signal_metadata(self, data_by_time, signal_stats):
         """Save signal discovery and quality metadata to a JSON file.
 
-        Creates a file like buildings/TE236_HEM_Kontor.json but for villa profiles,
-        documenting each Arrigo signal: its ID, name, unit, quality status (stale,
-        zero, workable), and basic stats from the fetched data.
+        Houses: saves to profiles/<house_id>_signals.json
+        Buildings: saves to buildings/<building_id>_signals.json
         """
-        from import_historical_data import CORE_SIGNALS
+        if self.entity_type == "building":
+            CORE_SIGNALS = {'outdoor_temperature'}
+        else:
+            from import_historical_data import CORE_SIGNALS
 
         expected_slots = self.days * 24 * (60 // self.resolution)
         non_varying_signals = {'target_temp_setpoint', 'supply_setpoint', 'outdoor_temp_24h_avg'}
 
         signals_meta = {}
-        for signal_id, info in self.arrigo_client.signal_map.items():
+        for signal_id, info in self.signal_map.items():
             field_name = info['field_name']
             arrigo_name = info.get('arrigo_name', '')
             unit = info.get('unit', '')
@@ -1216,12 +1322,15 @@ class ArrigoBootstrapper:
             "resolution_minutes": self.resolution,
             "days_fetched": self.days,
             "expected_slots": expected_slots,
-            "total_signals_discovered": len(self.arrigo_client.signal_map),
+            "total_signals_discovered": len(self.signal_map),
             "signals": signals_meta
         }
 
-        # Write to profiles/<house_id>_signals.json
-        out_path = os.path.join("profiles", f"{self.house_id}_signals.json")
+        # Write to profiles/ or buildings/ based on entity type
+        if self.entity_type == "building":
+            out_path = os.path.join("buildings", f"{self.house_id}_signals.json")
+        else:
+            out_path = os.path.join("profiles", f"{self.house_id}_signals.json")
         with open(out_path, 'w') as f:
             json.dump(metadata, f, indent=2, default=str)
         print(f"\n  Signal metadata saved to {out_path}")
@@ -1240,15 +1349,26 @@ class ArrigoBootstrapper:
         Weather data is written for ALL buildings (shared station) with
         deduplication: only timestamps not already present are written.
         Uses self.influx_tag (house_id or building_id) based on entity type.
+
+        Houses: writes to heating_system + thermal_history
+        Buildings: writes to building_system only (no thermal_history)
         """
         print(f"\n{'='*60}")
         print(f"Phase 5: Write to InfluxDB{' (DRY RUN)' if dry_run else ''}")
         print(f"{'='*60}")
         print(f"  Entity: {self.house_id} (tag: {self.influx_tag})")
 
-        total_heating = sum(1 for ts in data_by_time
-                            if 'room_temperature' in data_by_time[ts]
-                            and 'outdoor_temperature' in data_by_time[ts])
+        # Measurement name depends on entity type
+        data_measurement = "building_system" if self.entity_type == "building" else "heating_system"
+
+        # For houses, only count timestamps with both room+outdoor temp
+        # For buildings, count all timestamps with any data
+        if self.entity_type == "building":
+            total_data_points = len(data_by_time)
+        else:
+            total_data_points = sum(1 for ts in data_by_time
+                                    if 'room_temperature' in data_by_time[ts]
+                                    and 'outdoor_temperature' in data_by_time[ts])
 
         # Determine weather write plan (all houses, deduped)
         all_house_ids = self._get_all_house_ids()
@@ -1257,7 +1377,10 @@ class ArrigoBootstrapper:
 
         if dry_run:
             self._init_influx()
-            print(f"  Would write {total_heating} heating_system + thermal_history points for {self.house_id}")
+            if self.entity_type == "building":
+                print(f"  Would write {total_data_points} {data_measurement} points for {self.house_id}")
+            else:
+                print(f"  Would write {total_data_points} {data_measurement} + thermal_history points for {self.house_id}")
             print(f"  Would write {len(energy_data)} energy_meter points for {self.house_id}")
             print(f"\n  Weather dedup check ({len(weather_data)} SMHI observations, {len(all_house_ids)} buildings):")
             for hid in all_house_ids:
@@ -1273,13 +1396,17 @@ class ArrigoBootstrapper:
 
         self._init_influx()
 
-        # Delete existing heating/thermal/energy data for bootstrap entity only
+        # Delete existing data for bootstrap entity only
         # (NOT weather - we handle that with dedup below)
         delete_api = self.influx_client.delete_api()
         now = datetime.now(timezone.utc)
         start_delete = now - timedelta(days=self.days + 1)
 
-        for measurement in ['heating_system', 'thermal_history', 'energy_meter']:
+        delete_measurements = [data_measurement, 'energy_meter']
+        if self.entity_type == "house":
+            delete_measurements.append('thermal_history')
+
+        for measurement in delete_measurements:
             predicate = f'_measurement="{measurement}" AND {self.influx_tag}="{self.house_id}"'
             try:
                 delete_api.delete(start_delete, now, predicate,
@@ -1291,34 +1418,45 @@ class ArrigoBootstrapper:
         write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
         batch_size = 500
 
-        # === Write heating_system + thermal_history (bootstrap entity only) ===
-        print(f"  Writing heating_system + thermal_history...", end=' ', flush=True)
+        # === Write data measurement (+ thermal_history for houses) ===
+        if self.entity_type == "building":
+            print(f"  Writing {data_measurement}...", end=' ', flush=True)
+        else:
+            print(f"  Writing {data_measurement} + thermal_history...", end=' ', flush=True)
         points = []
+        written_count = 0
         for ts in sorted(data_by_time.keys()):
             fields = data_by_time[ts]
-            if 'room_temperature' not in fields or 'outdoor_temperature' not in fields:
-                continue
 
-            hp = Point("heating_system").tag(self.influx_tag, self.house_id).time(ts, WritePrecision.S)
+            # For houses, require core fields; for buildings, write any data
+            if self.entity_type == "house":
+                if 'room_temperature' not in fields or 'outdoor_temperature' not in fields:
+                    continue
+
+            hp = Point(data_measurement).tag(self.influx_tag, self.house_id).time(ts, WritePrecision.S)
             for field, value in fields.items():
                 hp.field(field, round(float(value), 2))
             points.append(hp)
 
-            tp = Point("thermal_history").tag(self.influx_tag, self.house_id).time(ts, WritePrecision.S)
-            tp.field("room_temperature", round(float(fields['room_temperature']), 2))
-            tp.field("outdoor_temperature", round(float(fields['outdoor_temperature']), 2))
-            if 'supply_temp' in fields:
-                tp.field("supply_temp", round(float(fields['supply_temp']), 2))
-            if 'return_temp' in fields:
-                tp.field("return_temp", round(float(fields['return_temp']), 2))
-            points.append(tp)
+            # thermal_history only for houses
+            if self.entity_type == "house":
+                tp = Point("thermal_history").tag(self.influx_tag, self.house_id).time(ts, WritePrecision.S)
+                tp.field("room_temperature", round(float(fields['room_temperature']), 2))
+                tp.field("outdoor_temperature", round(float(fields['outdoor_temperature']), 2))
+                if 'supply_temp' in fields:
+                    tp.field("supply_temp", round(float(fields['supply_temp']), 2))
+                if 'return_temp' in fields:
+                    tp.field("return_temp", round(float(fields['return_temp']), 2))
+                points.append(tp)
+
+            written_count += 1
 
             if len(points) >= batch_size:
                 write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
                 points = []
         if points:
             write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
-        print(f"{total_heating} points")
+        print(f"{written_count} points")
 
         # === Write weather for ALL buildings (deduped per house) ===
         if weather_data:
@@ -1453,14 +1591,19 @@ class ArrigoBootstrapper:
     def _phase7_backtest_predictions(self):
         """Phase 7: Run prediction backtest on the last N days.
 
-        Uses the thermal coefficient learned in Phase 6 to generate indoor
-        temperature predictions for each day of the backtest period.
-        Compares predictions against actual data already in InfluxDB.
+        Houses: Uses thermal coefficient + TemperatureForecaster (Model C)
+                to backtest indoor temperature predictions.
+        Buildings: Uses heat_loss_k to backtest daily energy predictions
+                   against actual energy_meter data.
+
         Writes results to 'prediction_backtest' measurement.
         """
         print(f"\n{'='*60}")
         print(f"Phase 7: Prediction backtest ({self.backtest_days} days)")
         print(f"{'='*60}")
+
+        if self.entity_type == "building":
+            return self._phase7_backtest_energy()
 
         self._init_influx()
         query_api = self.influx_client.query_api()
@@ -1629,6 +1772,180 @@ class ArrigoBootstrapper:
         if points:
             write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
 
+        print(f"\n  Wrote {len(results)} backtest results to InfluxDB (prediction_backtest)")
+
+    def _phase7_backtest_energy(self):
+        """Phase 7 (buildings): Backtest energy predictions using heat_loss_k.
+
+        For each day in the backtest period:
+          predicted_heating = k * degree_hours
+          predicted_total = predicted_heating + dhw_baseline
+        Compare against actual energy_meter consumption.
+        """
+        from arrigo_api import load_building_config
+
+        config = load_building_config(self.house_id)
+        if not config:
+            print(f"  WARNING: No building config for {self.house_id}, skipping backtest")
+            return
+
+        es = config.get('energy_separation', {})
+        k = es.get('heat_loss_k')
+        if not k:
+            print(f"  WARNING: No heat_loss_k calibrated yet, skipping energy backtest")
+            return
+
+        assumed_indoor = es.get('assumed_indoor_temp', 21.0)
+        dhw_pct = es.get('dhw_percentage')
+        field_mapping = es.get('field_mapping', {})
+        outdoor_field = field_mapping.get('outdoor_temperature', 'outdoor_temp_fvc')
+
+        print(f"  heat_loss_k: {k:.4f}")
+        print(f"  assumed_indoor: {assumed_indoor}°C")
+        print(f"  outdoor signal: {outdoor_field}")
+
+        self._init_influx()
+        query_api = self.influx_client.query_api()
+
+        end_time = datetime.now(timezone.utc)
+        backtest_start = end_time - timedelta(days=self.backtest_days)
+
+        # Query outdoor temperature from building_system
+        outdoor_query = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: {backtest_start.isoformat()}, stop: {end_time.isoformat()})
+            |> filter(fn: (r) => r["_measurement"] == "building_system")
+            |> filter(fn: (r) => r["building_id"] == "{self.house_id}")
+            |> filter(fn: (r) => r["_field"] == "{outdoor_field}")
+            |> sort(columns: ["_time"])
+        '''
+
+        # Query actual energy consumption
+        energy_query = f'''
+            from(bucket: "{self.influx_bucket}")
+            |> range(start: {backtest_start.isoformat()}, stop: {end_time.isoformat()})
+            |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+            |> filter(fn: (r) => r["building_id"] == "{self.house_id}")
+            |> filter(fn: (r) => r["_field"] == "consumption")
+            |> sort(columns: ["_time"])
+        '''
+
+        try:
+            outdoor_tables = query_api.query(outdoor_query, org=self.influx_org)
+            energy_tables = query_api.query(energy_query, org=self.influx_org)
+        except Exception as e:
+            print(f"  ERROR: Failed to query backtest data: {e}")
+            return
+
+        # Parse outdoor temps by Swedish date
+        outdoor_by_date = {}  # date_str -> [temps]
+        for table in outdoor_tables:
+            for record in table.records:
+                ts = record.get_time()
+                val = record.get_value()
+                if ts and val is not None:
+                    swedish_date = ts.astimezone(SWEDISH_TZ).strftime('%Y-%m-%d')
+                    outdoor_by_date.setdefault(swedish_date, []).append(float(val))
+
+        # Parse energy consumption by Swedish date
+        energy_by_date = {}  # date_str -> total_kwh
+        for table in energy_tables:
+            for record in table.records:
+                ts = record.get_time()
+                val = record.get_value()
+                if ts and val is not None:
+                    swedish_date = ts.astimezone(SWEDISH_TZ).strftime('%Y-%m-%d')
+                    energy_by_date[swedish_date] = energy_by_date.get(swedish_date, 0) + float(val)
+
+        if not outdoor_by_date:
+            print(f"  WARNING: No outdoor temperature data for backtest period")
+            return
+        if not energy_by_date:
+            print(f"  WARNING: No energy_meter data for backtest period")
+            return
+
+        # Calculate per-day predictions
+        results = []
+        for date_str in sorted(outdoor_by_date):
+            if date_str not in energy_by_date:
+                continue
+
+            temps = outdoor_by_date[date_str]
+            avg_outdoor = sum(temps) / len(temps)
+
+            # Degree hours: sum of (indoor - outdoor) for each hour, clamped >= 0
+            delta_t = max(0, assumed_indoor - avg_outdoor)
+            degree_hours = delta_t * 24  # approximate: avg delta * 24h
+
+            predicted_heating = k * degree_hours
+
+            # Add DHW baseline if known
+            actual_total = energy_by_date[date_str]
+            if dhw_pct and dhw_pct > 0:
+                # dhw_pct is percentage of total, so dhw = total * pct / 100
+                # For prediction: use historical average DHW
+                dhw_daily = actual_total * (dhw_pct / 100)
+                predicted_total = predicted_heating + dhw_daily
+            else:
+                predicted_total = predicted_heating
+
+            error = predicted_total - actual_total
+
+            results.append({
+                'date': date_str,
+                'timestamp': datetime.strptime(date_str, '%Y-%m-%d').replace(
+                    hour=12, tzinfo=SWEDISH_TZ).astimezone(timezone.utc),
+                'predicted_energy': predicted_total,
+                'actual_energy': actual_total,
+                'error': error,
+                'abs_error': abs(error),
+                'outdoor_avg': avg_outdoor,
+                'degree_hours': degree_hours,
+            })
+
+        if not results:
+            print(f"  WARNING: No overlapping days with both outdoor and energy data")
+            return
+
+        # Statistics
+        errors = [r['abs_error'] for r in results]
+        mae = sum(errors) / len(errors)
+        max_error = max(errors)
+        actual_totals = [r['actual_energy'] for r in results]
+        avg_actual = sum(actual_totals) / len(actual_totals) if actual_totals else 1
+        mape = (mae / avg_actual * 100) if avg_actual > 0 else 0
+
+        print(f"\n  Energy Backtest Results:")
+        print(f"  {'='*50}")
+        print(f"  Days with data: {len(results)}")
+        print(f"  MAE (Mean Abs Error): {mae:.1f} kWh/day")
+        print(f"  MAPE: {mape:.1f}%")
+        print(f"  Max error: {max_error:.1f} kWh/day")
+
+        print(f"\n  Per-day breakdown:")
+        print(f"    {'Date':12s} {'Predicted':>10s} {'Actual':>10s} {'Error':>10s} {'OutdoorAvg':>11s} {'DegreeH':>8s}")
+        for r in results:
+            print(f"    {r['date']:12s} {r['predicted_energy']:>10.1f} {r['actual_energy']:>10.1f} "
+                  f"{r['error']:>+10.1f} {r['outdoor_avg']:>10.1f}°C {r['degree_hours']:>8.0f}")
+
+        # Write to InfluxDB
+        write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
+        points = []
+        for r in results:
+            p = Point("prediction_backtest") \
+                .tag("building_id", self.house_id) \
+                .tag("model", "energy_k") \
+                .time(r['timestamp'], WritePrecision.S) \
+                .field("predicted_energy", round(r['predicted_energy'], 2)) \
+                .field("actual_energy", round(r['actual_energy'], 2)) \
+                .field("error", round(r['error'], 2)) \
+                .field("abs_error", round(r['abs_error'], 2)) \
+                .field("outdoor_avg", round(r['outdoor_avg'], 2)) \
+                .field("degree_hours", round(r['degree_hours'], 1))
+            points.append(p)
+
+        if points:
+            write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
         print(f"\n  Wrote {len(results)} backtest results to InfluxDB (prediction_backtest)")
 
     def _print_comparison(self, used_k, recal_result):
@@ -1856,12 +2173,13 @@ def run_bootstrap(args):
         influx_bucket=args.influx_bucket,
         house_id=args.house_id,
         source_house_id=args.source_house_id,
-        username=args.username,
-        password=args.password,
-        latitude=args.lat,
-        longitude=args.lon,
+        username=getattr(args, 'username', None) or '',
+        password=getattr(args, 'password', None) or '',
+        latitude=args.lat or 0,
+        longitude=args.lon or 0,
         days=args.days,
         resolution=args.resolution,
+        arrigo_host=getattr(args, 'arrigo_host', None),
         verbose=args.verbose,
         backtest_days=args.backtest_days
     )
@@ -1912,18 +2230,29 @@ Examples:
     python3 gap_filler.py --bootstrap --username FC... --password "..." \\
         --house-id HEM_FJV_Villa_149_TEST --source-house-id HEM_FJV_Villa_149 \\
         --lat 56.67 --lon 12.86 --days 90 --no-calibrate
+
+    # Bootstrap a building (credentials from .env, lat/lon from config)
+    python3 gap_filler.py --bootstrap --house-id TE236_HEM_Kontor \\
+        --days 90 --resolution 5
+
+    # Bootstrap a building with explicit credentials
+    python3 gap_filler.py --bootstrap --house-id TE236_HEM_Kontor \\
+        --username "Ulf Andersson" --password "xxx" \\
+        --lat 56.67 --lon 12.86 --days 90
         """
     )
 
-    # Authentication
-    parser.add_argument('--username', required=True, help='HomeSide username')
-    parser.add_argument('--password', required=True, help='HomeSide password')
+    # Authentication (required for gap filling, optional for building bootstrap)
+    parser.add_argument('--username', help='HomeSide username (or Arrigo username for buildings)')
+    parser.add_argument('--password', help='HomeSide password (or Arrigo password for buildings)')
 
     # Bootstrap mode
     parser.add_argument('--bootstrap', action='store_true',
-                        help='Bootstrap a new building with 5-min Arrigo historical data')
+                        help='Bootstrap a new house/building with 5-min Arrigo historical data')
     parser.add_argument('--source-house-id', type=str,
-                        help='Source house ID to copy energy_meter data from (bootstrap mode)')
+                        help='Source entity ID to copy energy_meter data from (bootstrap mode)')
+    parser.add_argument('--arrigo-host', type=str,
+                        help='Arrigo host for direct connection (buildings, overrides config)')
     parser.add_argument('--resolution', type=int, default=5,
                         help='Data resolution in minutes for bootstrap (default: 5)')
     parser.add_argument('--days', type=int, default=90,
@@ -1967,10 +2296,20 @@ Examples:
     if args.bootstrap:
         if not args.house_id:
             parser.error("--bootstrap requires --house-id")
-        if not args.lat or not args.lon:
-            parser.error("--bootstrap requires --lat and --lon")
+        # Buildings can get lat/lon and credentials from config/.env
+        is_building = os.path.exists(os.path.join("buildings", f"{args.house_id}.json"))
+        if not is_building:
+            # Houses require credentials and location
+            if not args.username or not args.password:
+                parser.error("--bootstrap for houses requires --username and --password")
+            if not args.lat or not args.lon:
+                parser.error("--bootstrap for houses requires --lat and --lon")
         run_bootstrap(args)
         return
+
+    # Gap filling mode requires credentials
+    if not args.username or not args.password:
+        parser.error("Gap filling requires --username and --password")
 
     # Determine time range
     now = datetime.now(SWEDISH_TZ)

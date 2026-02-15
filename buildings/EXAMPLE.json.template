@@ -18,6 +18,10 @@
       "hot_water_temp": "vv1_hot_water_temp"
     }
   },
+  "location": {
+    "latitude": null,
+    "longitude": null
+  },
   "connection": {
     "system": "arrigo",
     "host": "exodriftXX.systeminstallation.se",

@@ -89,8 +89,14 @@ def main():
                         help='Arrigo account name')
     parser.add_argument('--meter-id', type=str, action='append', dest='meter_ids',
                         help='Energy meter ID (can be repeated)')
+    parser.add_argument('--lat', type=float,
+                        help='Latitude for weather data and energy separation')
+    parser.add_argument('--lon', type=float,
+                        help='Longitude for weather data and energy separation')
+    parser.add_argument('--source-building', type=str,
+                        help='Source entity ID to copy energy_meter data from')
     parser.add_argument('--bootstrap', action='store_true',
-                        help='Import 90 days of historical data after setup')
+                        help='Run full 7-phase bootstrap (Arrigo data, weather, calibration)')
     parser.add_argument('--bootstrap-days', type=int, default=90,
                         help='Days of historical data to bootstrap')
     parser.add_argument('--verbose', '-v', action='store_true')
@@ -109,6 +115,9 @@ def main():
         building_id = args.building_id
         account = args.account
         meter_ids = args.meter_ids or []
+        latitude = args.lat
+        longitude = args.lon
+        source_building = args.source_building
         do_bootstrap = args.bootstrap
     else:
         host = input("Arrigo host (e.g., exodrift05.systeminstallation.se): ").strip()
@@ -119,7 +128,13 @@ def main():
         account = input("Arrigo account name (press Enter to skip): ").strip()
         meter_input = input("Energy meter ID (press Enter to skip): ").strip()
         meter_ids = [meter_input] if meter_input else []
-        do_bootstrap = input("Bootstrap 90 days of historical data? [y/N]: ").strip().lower() == 'y'
+        lat_input = input("Latitude (e.g., 56.67, press Enter to skip): ").strip()
+        lon_input = input("Longitude (e.g., 12.86, press Enter to skip): ").strip()
+        latitude = float(lat_input) if lat_input else None
+        longitude = float(lon_input) if lon_input else None
+        source_input = input("Source entity to copy energy data from (press Enter to skip): ").strip()
+        source_building = source_input if source_input else None
+        do_bootstrap = input("Bootstrap historical data? [y/N]: ").strip().lower() == 'y'
 
     if not all([host, username, password, friendly_name, building_id]):
         print("ERROR: All fields are required (host, username, password, name, building-id)")
@@ -164,6 +179,10 @@ def main():
     config["building_id"] = building_id
     config["friendly_name"] = friendly_name
     config["meter_ids"] = meter_ids
+    config["location"] = {
+        "latitude": latitude,
+        "longitude": longitude,
+    }
     config["energy_separation"] = {
         "enabled": bool(meter_ids),
         "method": "k_calibration",
@@ -207,24 +226,31 @@ def main():
     else:
         print(f"\n4. No meter IDs - skipping Dropbox sync")
 
-    # Step 5: Bootstrap historical data
+    # Step 5: Bootstrap historical data (full 7-phase pipeline via gap_filler.py)
     if do_bootstrap:
         print(f"\n5. Bootstrapping {args.bootstrap_days} days of historical data...")
-        print("   (This may take a few minutes)")
+        print("   (Full pipeline: Arrigo data, weather, energy, calibration, backtest)")
         cmd = [
-            sys.executable, 'building_import_historical_data.py',
-            '--building', building_id,
+            sys.executable, 'gap_filler.py',
+            '--bootstrap',
+            '--house-id', building_id,
+            '--arrigo-host', host,
+            '--username', username,
+            '--password', password,
             '--days', str(args.bootstrap_days),
+            '--resolution', '5',
         ]
+        if latitude and longitude:
+            cmd += ['--lat', str(latitude), '--lon', str(longitude)]
+        if source_building:
+            cmd += ['--source-house-id', source_building]
         if args.verbose:
             cmd.append('--verbose')
-        result = subprocess.run(cmd, env={**os.environ,
-                                          'ARRIGO_USERNAME': username,
-                                          'ARRIGO_PASSWORD': password})
+        result = subprocess.run(cmd)
         if result.returncode == 0:
-            print("  Historical data import complete")
+            print("  Bootstrap complete")
         else:
-            print("  Historical data import failed (non-fatal)")
+            print("  Bootstrap failed (non-fatal)")
     else:
         print(f"\n5. Skipping historical data bootstrap")
 
@@ -238,12 +264,16 @@ def main():
     if meter_ids:
         print(f"  Meter IDs: {', '.join(meter_ids)}")
         print(f"  Energy separation: enabled")
+    if latitude and longitude:
+        print(f"  Location: {latitude}, {longitude}")
     print(f"\n  NEXT STEPS:")
     print(f"  1. Edit {saved_path} to set field_name and fetch=true for signals")
     print(f"  2. The orchestrator will auto-detect within 60 seconds")
     if not meter_ids:
         print(f"  3. Add meter_ids to the config when available")
         print(f"  4. Run: python3 dropbox_sync.py  (to sync meters)")
+    if not latitude or not longitude:
+        print(f"  3. Add location (lat/lon) to the config for weather & energy separation")
 
 
 if __name__ == '__main__':
