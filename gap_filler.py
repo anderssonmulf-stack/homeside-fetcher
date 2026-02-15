@@ -2273,7 +2273,7 @@ Examples:
     # InfluxDB options
     parser.add_argument('--influx-url', default='http://localhost:8086')
     parser.add_argument('--influx-token', default=os.getenv('INFLUXDB_TOKEN', ''))
-    parser.add_argument('--influx-org', default='homeside')
+    parser.add_argument('--influx-org', default=os.getenv('INFLUXDB_ORG', 'bvpro'))
     parser.add_argument('--influx-bucket', default='heating')
     parser.add_argument('--house-id', help='House ID (auto-detected if not specified)')
 

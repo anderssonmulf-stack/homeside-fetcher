@@ -16,7 +16,7 @@ Environment variables:
     DROPBOX_ACCESS_TOKEN  - Dropbox API token (legacy, deprecated)
     INFLUXDB_URL          - InfluxDB URL (default: http://localhost:8086)
     INFLUXDB_TOKEN        - InfluxDB token (required)
-    INFLUXDB_ORG          - InfluxDB org (default: homeside)
+    INFLUXDB_ORG          - InfluxDB org (default: bvpro)
     INFLUXDB_BUCKET       - InfluxDB bucket (default: heating)
 """
 
@@ -465,13 +465,44 @@ from(bucket: "{self.influx_bucket}")
 
         return True
 
-    def delete_file(self, path: str):
-        """Delete file from Dropbox after successful import."""
+    def archive_file(self, path: str):
+        """Move file to /data/processed/ after successful import (kept 7 days)."""
+        filename = os.path.basename(path)
+        dest = f"/data/processed/{filename}"
         try:
-            self.dbx.files_delete_v2(path)
-            self._log(f"Deleted {path}")
+            # Ensure /data/processed/ exists
+            try:
+                self.dbx.files_create_folder_v2('/data/processed')
+            except dropbox.exceptions.ApiError:
+                pass  # Already exists
+
+            self.dbx.files_move_v2(path, dest, autorename=True)
+            self._log(f"Archived {path} -> {dest}")
         except dropbox.exceptions.ApiError as e:
-            self._log_error(f"Failed to delete file {path}: {e}", properties={'Path': path, 'Error': str(e)})
+            self._log_error(f"Failed to archive file {path}: {e}", properties={'Path': path, 'Error': str(e)})
+
+    def cleanup_processed(self, max_age_days: int = 7):
+        """Delete processed files older than max_age_days."""
+        try:
+            result = self.dbx.files_list_folder('/data/processed')
+        except dropbox.exceptions.ApiError:
+            return  # Folder doesn't exist yet
+
+        now = datetime.utcnow()  # Naive UTC to match Dropbox server_modified
+        deleted = 0
+        for entry in result.entries:
+            if not isinstance(entry, FileMetadata):
+                continue
+            age = now - entry.server_modified
+            if age.days >= max_age_days:
+                try:
+                    self.dbx.files_delete_v2(entry.path_display)
+                    deleted += 1
+                except dropbox.exceptions.ApiError as e:
+                    self._log_warning(f"Failed to delete old processed file {entry.name}: {e}")
+
+        if deleted:
+            self._log(f"Cleaned up {deleted} processed file(s) older than {max_age_days} days")
 
     def process_file(self, file_meta: FileMetadata) -> Tuple[int, List[str]]:
         """Process a single file."""
@@ -509,10 +540,10 @@ from(bucket: "{self.influx_bucket}")
             total_processed += len(meter_records)
             errors.extend(write_errors)
 
-        # Delete file after successful processing (even if all records were duplicates)
-        # Only keep file if there were errors or no records could be mapped to a house
+        # Archive file after successful processing (moved to /data/processed/, kept 7 days)
+        # Only keep in /data/ if there were errors or no records could be mapped
         if not self.dry_run and total_processed > 0 and len(errors) == 0:
-            self.delete_file(path)
+            self.archive_file(path)
 
         return total_written, errors
 
@@ -539,6 +570,13 @@ from(bucket: "{self.influx_bucket}")
             count, errors = self.process_file(file_meta)
             total_records += count
             all_errors.extend(errors)
+
+        # Clean up old processed files (older than 7 days)
+        if not self.dry_run:
+            try:
+                self.cleanup_processed()
+            except Exception as e:
+                self._log_warning(f"Failed to clean up processed files: {e}")
 
         # Sync meters to Dropbox after successful import
         # This updates the from_date for imported meters
@@ -596,7 +634,7 @@ def main():
 
     influx_url = os.getenv('INFLUXDB_URL', 'http://localhost:8086')
     influx_token = os.getenv('INFLUXDB_TOKEN')
-    influx_org = os.getenv('INFLUXDB_ORG', 'homeside')
+    influx_org = os.getenv('INFLUXDB_ORG', 'bvpro')
     influx_bucket = os.getenv('INFLUXDB_BUCKET', 'heating')
 
     if not args.dry_run and not influx_token:

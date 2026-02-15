@@ -19,7 +19,7 @@ The system supports two entity types with separate fetcher processes but shared 
 | **Offboard** | `remove_customer.py` | `remove_customer.py --type building` |
 | **Poll interval** | 5 min (configurable) | 5 min (configurable) |
 
-Shared across both: energy separation (`heating_energy_calibrator.py`), k-value recalibration (`k_recalibrator.py`), Dropbox energy import, InfluxDB, Seq logging, web GUI.
+Shared across both: energy separation (`heating_energy_calibrator.py`), k-value recalibration (`k_recalibrator.py`), unified 7-phase bootstrap (`gap_filler.py`), Dropbox energy import, InfluxDB, Seq logging, web GUI.
 
 ## Project Structure
 
@@ -80,7 +80,8 @@ Shared across both: energy separation (`heating_energy_calibrator.py`), k-value 
 | `remove_customer.py` | Removes houses/buildings: hard (immediate InfluxDB delete) or soft (30-day grace period via `offboarded.json`) |
 | `migrate_seq_to_influx.py` | Migrates historical data from Seq logs to InfluxDB (for data recovery) |
 | `import_historical_data.py` | Fetches historical data from Arrigo GraphQL API to bootstrap thermal analyzer for new houses |
-| `building_import_historical_data.py` | Bootstraps `building_system` data from Arrigo history for new buildings |
+| `building_import_historical_data.py` | Legacy building bootstrap (superseded by `gap_filler.py --bootstrap` for buildings) |
+| `gap_filler.py` | Unified 7-phase bootstrap pipeline for both houses and buildings (Arrigo data, weather, energy, sanity checks, InfluxDB write, calibration, backtest) |
 
 ### Migration Scripts
 
@@ -139,6 +140,54 @@ python3 import_historical_data.py --username FC... --password "..." --arrigo-hos
 | Retur värme, FC... | return_temp |
 | Tappvarmvatten, FC... | hot_water_temp |
 | Framledning Börvärde | supply_setpoint |
+
+## Unified Bootstrap Pipeline (gap_filler.py)
+
+Both houses and buildings use the same 7-phase bootstrap pipeline in `gap_filler.py` (`ArrigoBootstrapper` class). The pipeline auto-detects entity type based on whether `buildings/<id>.json` exists.
+
+### 7 Phases
+
+| Phase | Description | Houses | Buildings |
+|-------|-------------|--------|-----------|
+| 1 | Fetch Arrigo signal history (5-min, cursor pagination) | Via HomeSide → BMS token → Arrigo | Direct Arrigo login |
+| 2 | Fetch SMHI weather observations (~4 months) | Yes | Yes |
+| 3 | Copy energy_meter data from source entity | Optional | Optional |
+| 4 | Sanity checks (stale signals, coverage, range) | Core: outdoor, room, supply, return | Core: outdoor only |
+| 5 | Write to InfluxDB | `heating_system` + `thermal_history` + `weather` + `energy` | `building_system` + `weather` + `energy` |
+| 6 | Energy separation + k-recalibration | Yes (if meter data) | Yes (if meter data) |
+| 7 | Backtest predictions | Indoor temp (Model C) | Energy (k × degree_hours) |
+
+### Auth Differences
+
+- **Houses:** `ArrigoHistoricalClient` authenticates via HomeSide API → BMS token → Arrigo GraphQL. Requires `--username`/`--password` (HomeSide credentials).
+- **Buildings:** `ArrigoAPI` authenticates directly with Arrigo using host/username/password. Credentials resolved from CLI args or `.env` (`BUILDING_<id>_USERNAME/PASSWORD`). Host and location read from `buildings/<id>.json`.
+
+### Usage
+
+```bash
+# Bootstrap a building (credentials/location from config + .env)
+python3 gap_filler.py --bootstrap --house-id TE236_HEM_Kontor --days 90
+
+# Bootstrap a building with explicit args
+python3 gap_filler.py --bootstrap --house-id TE236_HEM_Kontor \
+    --arrigo-host exodrift05.systeminstallation.se \
+    --username "user" --password "pass" \
+    --lat 56.67 --lon 12.86 --days 90 --resolution 5
+
+# Bootstrap a house
+python3 gap_filler.py --bootstrap --house-id HEM_FJV_Villa_149 \
+    --username FC2000232581 --password "pass" \
+    --lat 56.67 --lon 12.86 --days 90
+
+# Dry run
+python3 gap_filler.py --bootstrap --house-id TE236_HEM_Kontor --days 90 --dry-run
+```
+
+### Signal Metadata
+
+Bootstrap saves signal metadata for audit:
+- Houses: `profiles/<house_id>_signals.json`
+- Buildings: `buildings/<building_id>_signals.json`
 
 ## Dropbox Energy Data Exchange
 
@@ -483,10 +532,11 @@ python3 add_building.py
 The script will:
 1. Prompt for Arrigo connection details (host, username, password)
 2. Connect to Arrigo and discover all available signals
-3. Create `buildings/<building_id>.json` with discovered signals
+3. Create `buildings/<building_id>.json` with discovered signals and location
 4. Add credentials to `.env` (`BUILDING_<id>_USERNAME/PASSWORD`)
-5. Optionally sync Dropbox meters and bootstrap historical data
-6. The orchestrator auto-detects the new config within 60 seconds
+5. Optionally sync Dropbox meters
+6. Optionally run full 7-phase bootstrap via `gap_filler.py` (Arrigo data, weather, energy, calibration, backtest)
+7. The orchestrator auto-detects the new config within 60 seconds
 
 For non-interactive use:
 ```bash
@@ -494,6 +544,7 @@ python3 add_building.py --non-interactive \
     --host exodrift05.systeminstallation.se \
     --username "Ulf Andersson" --password "xxx" \
     --name "HEM Kontor" --building-id TE236_HEM_Kontor \
+    --lat 56.67 --lon 12.86 \
     --meter-id 735999255020055028 --bootstrap
 ```
 
@@ -506,6 +557,7 @@ Collect:
 - **Arrigo username and password**
 - **Friendly name** (e.g., `HEM Kontor TE236`)
 - **Building ID** (e.g., `TE236_HEM_Kontor` — used as InfluxDB tag and config filename)
+- **Location coordinates** (latitude/longitude for weather data and energy separation)
 - **Energy meter ID** (if available, for energy separation)
 
 #### Step 2: Create Building Config
@@ -533,11 +585,16 @@ Create `buildings/<building_id>.json` (see `buildings/EXAMPLE.json.template`):
       "hot_water_temp": "vv1_hot_water_temp"
     }
   },
+  "location": {
+    "latitude": null,
+    "longitude": null
+  },
   "connection": {
     "system": "arrigo",
     "host": "exodriftXX.systeminstallation.se",
     "account": "AccountName"
   },
+  "sub_areas": [],
   "analog_signals": {},
   "digital_signals": {},
   "alarm_monitoring": {
@@ -568,15 +625,37 @@ No Docker or service restart needed. The orchestrator scans the `buildings/` dir
 
 #### Step 5: Bootstrap Historical Data (Optional)
 
+Uses the unified 7-phase bootstrap pipeline (`gap_filler.py`), the same one used for houses:
+
 ```bash
-# Import 90 days of history for immediate energy separation
-python3 building_import_historical_data.py --building TE236_HEM_Kontor --days 90
+# Full bootstrap: Arrigo data, weather, energy, sanity checks, InfluxDB write, calibration, backtest
+python3 gap_filler.py --bootstrap \
+    --house-id TE236_HEM_Kontor \
+    --days 90 --resolution 5
+
+# With explicit credentials and location (otherwise read from config/.env)
+python3 gap_filler.py --bootstrap \
+    --house-id TE236_HEM_Kontor \
+    --arrigo-host exodrift05.systeminstallation.se \
+    --username "user" --password "pass" \
+    --lat 56.67 --lon 12.86 \
+    --days 90 --resolution 5
 
 # Dry run
-python3 building_import_historical_data.py --building TE236_HEM_Kontor --days 90 --dry-run
+python3 gap_filler.py --bootstrap \
+    --house-id TE236_HEM_Kontor --days 90 --dry-run
 ```
 
-This writes to the `building_system` measurement so energy separation can start immediately.
+The bootstrap auto-detects the entity type (building vs house) from the config directory and runs all 7 phases:
+1. Fetch Arrigo signal history (5-min resolution with cursor pagination)
+2. Fetch SMHI weather observations (~4 months)
+3. Copy energy_meter data from source entity (if `--source-house-id` given)
+4. Sanity checks (stale signals, coverage, range)
+5. Write to InfluxDB (`building_system` + `weather_observation` + `energy_meter`)
+6. Energy separation + k-recalibration
+7. Energy prediction backtest (predicted vs actual consumption)
+
+**Note:** For buildings, credentials and location can come from the building config + `.env` file, so `--username`/`--password`/`--lat`/`--lon` are optional if already configured.
 
 #### Step 6: Enable Energy Separation
 
@@ -593,7 +672,11 @@ Once meter IDs are configured and some data exists:
 | **Credential storage** | Docker env vars in `docker-compose.yml` | `.env` file: `BUILDING_<id>_USERNAME/PASSWORD` |
 | **Deployment** | `docker compose up -d` | Orchestrator auto-detects (no restart) |
 | **Signal discovery** | Fixed via `variables_config.json` | Dynamic via `add_building.py` (Arrigo API) |
-| **Historical bootstrap** | `import_historical_data.py` | `building_import_historical_data.py` |
+| **Historical bootstrap** | `gap_filler.py --bootstrap` (via HomeSide → Arrigo) | `gap_filler.py --bootstrap` (direct Arrigo auth) |
+| **Bootstrap auth** | HomeSide API → BMS token → Arrigo GraphQL | Direct Arrigo login (host/username/password from config + `.env`) |
+| **InfluxDB write target** | `heating_system` + `thermal_history` | `building_system` (no `thermal_history`) |
+| **Backtest type** | Indoor temperature prediction (Model C) | Energy prediction (k × degree_hours vs actual) |
+| **Core sanity signals** | outdoor_temp, room_temp, supply_temp, return_temp | outdoor_temp only |
 
 ## Removing Houses & Buildings (Offboarding)
 
