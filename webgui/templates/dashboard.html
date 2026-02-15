@@ -43,6 +43,23 @@
         {% endif %}
     </section>
 
+    {% if buildings %}
+    <section class="section">
+        <h2>Your Buildings</h2>
+
+        <div class="house-grid">
+            {% for building in buildings %}
+            <div class="house-card-wrapper">
+                <div class="house-card" style="cursor: default;">
+                    <div class="house-icon">🏢</div>
+                    <div class="house-name">{{ building.name }}</div>
+                    <div class="house-id">{{ building.id }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
 
     <section class="section">
         <h2>Recent Activity</h2>

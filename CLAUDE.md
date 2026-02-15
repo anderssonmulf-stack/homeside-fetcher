@@ -19,7 +19,7 @@ A Python application that fetches heating system data from HomeSide district hea
 | `customer_profile.py` | Manages customer-specific settings and learned parameters. Each customer has a JSON profile in `profiles/`. |
 | `temperature_forecaster.py` | Model C hybrid forecaster: combines physics-based prediction with historical learning for accurate temperature forecasts. |
 | `dropbox_client.py` | Dropbox OAuth client with automatic token refresh (uses refresh token to renew short-lived access tokens). |
-| `dropbox_sync.py` | Manages meter request file (`/data/SvenskEB_DH.csv`) - syncs meter IDs and from-dates to Dropbox. |
+| `dropbox_sync.py` | Manages meter request file (`/data/BVPro_DH.csv`) - syncs meter IDs and from-dates to Dropbox. |
 | `energy_importer.py` | Imports energy data files from Dropbox into InfluxDB. Deletes files after successful import. |
 | `setup_dropbox_auth.py` | One-time OAuth setup script for Dropbox authentication. |
 
@@ -129,7 +129,7 @@ Automated district heating energy data exchange via Dropbox between this server 
 Personal Server (07:55)              Dropbox /data/                Work Server (07:45)
 ┌────────────────────┐            ┌──────────────────────┐        ┌────────────────────┐
 │                    │            │                      │        │                    │
-│ Writes request     │──write────▶│ SvenskEB_DH.csv      │◀──read─│ Reads meter IDs    │
+│ Writes request     │──write────▶│ BVPro_DH.csv      │◀──read─│ Reads meter IDs    │
 │ (meter IDs + dates)│            │                      │        │                    │
 │                    │◀──read─────│ energy_YYYYMMDD.txt  │◀─write─│ Exports hourly     │
 │ Imports to InfluxDB│            │                      │        │ energy data        │
@@ -141,10 +141,10 @@ Personal Server (07:55)              Dropbox /data/                Work Server (
 
 | File | Direction | Format |
 |------|-----------|--------|
-| `SvenskEB_DH.csv` | This server writes | `meter_id;from_datetime;house_name` |
+| `BVPro_DH.csv` | This server writes | `meter_id;from_datetime;house_name` |
 | `energy_*.txt` | Work server writes | Semicolon-separated energy data |
 
-### Request File Format (`SvenskEB_DH.csv`)
+### Request File Format (`BVPro_DH.csv`)
 
 ```csv
 meter_id;from_datetime;house_name

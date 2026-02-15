@@ -38,6 +38,7 @@ import sys
 import json
 import re
 import time
+import logging
 import argparse
 import requests
 import base64
@@ -132,7 +133,7 @@ class ArrigoAPI:
 
         self.username = username
         self.password = password
-        self.logger = logger
+        self.logger = logger or logging.getLogger(__name__)
         self.verbose = verbose
 
         # Auth tokens

@@ -133,7 +133,7 @@ remove_customer.py (hard)
     │   └── Building: BUILDING_TE236_HEM_Kontor_USERNAME, _PASSWORD
     │
     └── Step 4: Re-sync Dropbox meter CSV
-        └── Removes the entity's meter IDs from SvenskEB_DH.csv
+        └── Removes the entity's meter IDs from BVPro_DH.csv
 ```
 
 **This is irreversible.** All historical InfluxDB data (heating_system, energy_meter, thermal_history, temperature_forecast, etc.) is permanently deleted.
@@ -321,7 +321,7 @@ Completed purges are moved to the `purged` array with a `purged_at` timestamp. T
 | `.env` credentials | Deleted | Deleted | Lines matching `HOUSE_<id>_*` or `BUILDING_<id>_*` |
 | Per-customer env file | Kept | Deleted | `envs/<id>.env` (web GUI deployments) |
 | InfluxDB data | Kept (grace period) | Deleted immediately | All measurements tagged with entity ID |
-| Dropbox meter CSV | Not re-synced | Re-synced | `/data/SvenskEB_DH.csv` |
+| Dropbox meter CSV | Not re-synced | Re-synced | `/data/BVPro_DH.csv` |
 | Docker container | Stops within 60s | Stopped and removed | `homeside-fetcher-<id>` |
 
 ### InfluxDB Measurements Affected

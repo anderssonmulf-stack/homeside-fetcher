@@ -377,11 +377,32 @@ def dashboard():
     if len(houses) > 1:
         houses.insert(0, {'id': '__all__', 'name': 'All houses', 'is_aggregate': True})
 
+    # Get buildings this user can see (admins and wildcard users see all)
+    buildings = []
+    if role == 'admin' or '*' in user_houses:
+        building_ids = user_manager.get_all_buildings()
+        buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+        for building_id in building_ids:
+            filepath = os.path.join(buildings_dir, f"{building_id}.json")
+            try:
+                import json as _json
+                with open(filepath, 'r') as f:
+                    bdata = _json.load(f)
+                buildings.append({
+                    'id': building_id,
+                    'name': bdata.get('friendly_name') or building_id,
+                    'type': bdata.get('building_type', 'commercial'),
+                })
+            except Exception:
+                buildings.append({'id': building_id, 'name': building_id, 'type': 'commercial'})
+        buildings.sort(key=lambda x: x['name'].lower())
+
     # Get recent changes for user's houses
     recent_changes = audit_logger.get_recent_changes(house_ids, limit=10)
 
     return render_template('dashboard.html',
                            houses=houses,
+                           buildings=buildings,
                            recent_changes=recent_changes)
 
 
