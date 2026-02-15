@@ -1932,10 +1932,10 @@ class InfluxReader:
         try:
             import sys, os
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-            from smhi_weather import SMHIWeatherClient
+            from smhi_weather import SMHIWeather
             import logging
 
-            client = SMHIWeatherClient(latitude, longitude, logging.getLogger('smhi_forecast'))
+            client = SMHIWeather(latitude, longitude, logging.getLogger('smhi_forecast'))
             weather = client.get_forecast(hours_ahead=hours)
 
             if not weather:
