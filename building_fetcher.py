@@ -28,7 +28,7 @@ import logging
 import argparse
 from datetime import datetime, timezone, timedelta
 
-from arrigo_api import ArrigoAPI, load_building_config, get_fetch_signals
+from arrigo_api import load_building_config, get_fetch_signals
 
 try:
     from influxdb_client import InfluxDBClient, Point, WritePrecision
@@ -216,7 +216,7 @@ class BuildingInfluxWriter:
             self.client.close()
 
 
-def fetch_and_write(client: ArrigoAPI, analog_fetch: dict,
+def fetch_and_write(client, analog_fetch: dict,
                     influx: BuildingInfluxWriter, config: dict,
                     logger, dry_run: bool = False) -> dict:
     """
@@ -346,20 +346,16 @@ def main():
     building_id = config['building_id']
     friendly_name = config.get('friendly_name') or building_id
     connection = config.get('connection', {})
-    host = connection.get('host')
+    system = connection.get('system', 'arrigo')
     interval_minutes = config.get('poll_interval_minutes', 5)
 
-    if not host:
-        logger.error("No host in building config")
-        sys.exit(1)
-
-    # Resolve credentials
-    username = args.username or os.getenv('ARRIGO_USERNAME')
-    password = args.password or os.getenv('ARRIGO_PASSWORD')
+    # Resolve credentials: BMS_* (generic) > ARRIGO_* (legacy)
+    username = args.username or os.getenv('BMS_USERNAME') or os.getenv('ARRIGO_USERNAME')
+    password = args.password or os.getenv('BMS_PASSWORD') or os.getenv('ARRIGO_PASSWORD')
 
     if not username or not password:
         logger.error("Credentials required. Use --username/--password or "
-                     "ARRIGO_USERNAME/ARRIGO_PASSWORD env vars")
+                     "BMS_USERNAME/BMS_PASSWORD env vars")
         sys.exit(1)
 
     # Get fetch signal map
@@ -381,25 +377,51 @@ def main():
             display_name_source='friendly_name',
         )
 
-    logger.info(f"Building Fetcher: {friendly_name} | host={host} | "
+    # Initialize BMS client based on system type
+    if system == 'ebo':
+        from ebo_adapter import EboBmsAdapter
+        base_url = connection.get('base_url')
+        domain = connection.get('domain', '')
+        if not base_url:
+            logger.error("No base_url in building config connection block")
+            sys.exit(1)
+        client = EboBmsAdapter(
+            base_url=base_url,
+            username=username,
+            password=password,
+            domain=domain,
+            logger=logger,
+            verbose=args.verbose,
+        )
+        # Configure subscription paths from signal IDs (which are EBO paths)
+        signal_paths = [info['signal_id'] for info in analog_fetch.values()]
+        client.configure_signals(signal_paths)
+        bms_label = base_url
+    else:
+        from arrigo_api import ArrigoAPI
+        host = connection.get('host')
+        if not host:
+            logger.error("No host in building config")
+            sys.exit(1)
+        client = ArrigoAPI(
+            host=host,
+            username=username,
+            password=password,
+            logger=logger,
+            verbose=args.verbose,
+        )
+        bms_label = host
+
+    logger.info(f"Building Fetcher: {friendly_name} | {system}={bms_label} | "
                 f"signals={len(analog_fetch)} analog, {len(digital_fetch)} digital | "
                 f"interval={interval_minutes}min")
-
-    # Initialize Arrigo API client
-    client = ArrigoAPI(
-        host=host,
-        username=username,
-        password=password,
-        logger=logger,
-        verbose=args.verbose,
-    )
 
     # Authenticate
     if not client.login():
         logger.error("Authentication failed")
         if seq:
             seq.log_error("Authentication failed", properties={
-                'EventType': 'AuthFailed', 'Host': host})
+                'EventType': 'AuthFailed', 'System': system, 'Host': bms_label})
         sys.exit(1)
 
     # Load settings for InfluxDB circuit breaker config

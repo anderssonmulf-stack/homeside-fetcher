@@ -713,28 +713,43 @@ class ArrigoBootstrapper:
 
         self.arrigo_client = None
         self.influx_client = None
+        self.bms_system = 'arrigo'  # overridden to 'ebo' if detected
 
         # Unified fields populated by _init_arrigo()
         self.signal_map = {}       # signal_id -> {field_name, arrigo_name, unit, ...}
         self.graphql_session = None  # requests.Session with auth headers
         self.graphql_url = None      # GraphQL endpoint URL
 
+        # EBO-specific fields (populated by _init_ebo_building)
+        self.ebo_api = None
+        self.ebo_history = None
+
     def log(self, msg):
         if self.verbose:
             print(f"  [DEBUG] {msg}")
 
     def _init_arrigo(self) -> bool:
-        """Authenticate with Arrigo and discover signals.
+        """Authenticate with BMS and discover signals.
 
         Houses: HomeSide → BMS token → Arrigo GraphQL (ArrigoHistoricalClient)
-        Buildings: Direct Arrigo login → JWT → GraphQL (ArrigoAPI)
+        Buildings (Arrigo): Direct Arrigo login → JWT → GraphQL (ArrigoAPI)
+        Buildings (EBO): EBO login → subscription-based data (EboApi)
 
-        Both paths populate unified fields:
-          self.signal_map      - signal_id -> {field_name, arrigo_name, unit, ...}
-          self.graphql_session  - requests.Session with auth headers
-          self.graphql_url      - GraphQL endpoint URL
+        All paths populate unified field:
+          self.signal_map - signal_id -> {field_name, arrigo_name, unit, ...}
+        Arrigo paths also populate: self.graphql_session, self.graphql_url
+        EBO path also populates: self.ebo_api, self.ebo_history
         """
         if self.entity_type == "building":
+            from arrigo_api import load_building_config
+            config = load_building_config(self.house_id)
+            if not config:
+                print(f"ERROR: Building config not found: buildings/{self.house_id}.json")
+                return False
+            system = config.get('connection', {}).get('system', 'arrigo')
+            self.bms_system = system
+            if system == 'ebo':
+                return self._init_ebo_building(config)
             return self._init_arrigo_building()
         else:
             return self._init_arrigo_house()
@@ -786,12 +801,18 @@ class ArrigoBootstrapper:
             print("ERROR: No Arrigo host (use --arrigo-host or set in building config)")
             return False
 
-        # Resolve credentials: CLI args > .env
+        # Resolve credentials: CLI args > credential_ref > legacy .env
         username = self.username
         password = self.password
         if not username or not password:
             from dotenv import load_dotenv
             load_dotenv()
+            # Try credential_ref first
+            cred_ref = config.get('connection', {}).get('credential_ref', '')
+            if cred_ref:
+                username = username or os.getenv(f'{cred_ref}_USERNAME')
+                password = password or os.getenv(f'{cred_ref}_PASSWORD')
+            # Fall back to legacy per-building env vars
             username = username or os.getenv(f'BUILDING_{self.house_id}_USERNAME')
             password = password or os.getenv(f'BUILDING_{self.house_id}_PASSWORD')
 
@@ -844,6 +865,81 @@ class ArrigoBootstrapper:
         self.graphql_url = arrigo_api.graphql_url
 
         print(f"  Arrigo: {host} ({len(self.signal_map)} signals)")
+        return True
+
+    def _init_ebo_building(self, config) -> bool:
+        """Authenticate with EBO and build signal map for bootstrap."""
+        from ebo_api import EboApi
+        from ebo_history import EboHistoryClient
+        from arrigo_api import get_fetch_signals
+
+        connection = config.get('connection', {})
+        base_url = connection.get('base_url')
+        domain = connection.get('domain', '')
+
+        if not base_url:
+            print("ERROR: No base_url in EBO building config")
+            return False
+
+        # Resolve credentials: CLI args > credential_ref > legacy .env
+        username = self.username
+        password = self.password
+        if not username or not password:
+            from dotenv import load_dotenv
+            load_dotenv()
+            cred_ref = connection.get('credential_ref', '')
+            if cred_ref:
+                username = username or os.getenv(f'{cred_ref}_USERNAME')
+                password = password or os.getenv(f'{cred_ref}_PASSWORD')
+                if not domain:
+                    domain = os.getenv(f'{cred_ref}_DOMAIN', '')
+            username = username or os.getenv(f'BUILDING_{self.house_id}_USERNAME')
+            password = password or os.getenv(f'BUILDING_{self.house_id}_PASSWORD')
+
+        if not username or not password:
+            print(f"ERROR: No credentials for EBO building {self.house_id}")
+            return False
+
+        # Resolve lat/lon from config if not provided via CLI
+        location = config.get('location', {})
+        if not self.latitude and location.get('latitude'):
+            self.latitude = location['latitude']
+        if not self.longitude and location.get('longitude'):
+            self.longitude = location['longitude']
+
+        # Login to EBO
+        ebo = EboApi(base_url, username, password, domain)
+        try:
+            ebo.login()
+            ebo.web_entry()
+        except Exception as e:
+            print(f"ERROR: EBO login failed: {e}")
+            return False
+
+        self.ebo_api = ebo
+
+        # Create history client sharing the same session
+        self.ebo_history = EboHistoryClient(
+            base_url=base_url,
+            csrf_token=ebo.session_token,
+            session=ebo.session,
+        )
+
+        # Build signal_map from building config (only fetch=true signals)
+        analog_fetch, _ = get_fetch_signals(config)
+        self.signal_map = {}
+        for name, info in analog_fetch.items():
+            sig_config = config.get('analog_signals', {}).get(name, {})
+            self.signal_map[info['signal_id']] = {
+                'field_name': info['field_name'],
+                'arrigo_name': name,
+                'unit': info.get('unit', ''),
+                'current_value': None,
+                'trend_log': sig_config.get('trend_log', ''),
+                'trend_unit_id': sig_config.get('trend_unit_id', 0),
+            }
+
+        print(f"  EBO: {base_url} ({len(self.signal_map)} signals)")
         return True
 
     def _init_influx(self):
@@ -990,6 +1086,69 @@ class ArrigoBootstrapper:
                 if ts not in data_by_time:
                     data_by_time[ts] = {}
                 data_by_time[ts][field_name] = value
+
+        # Summary
+        print(f"\n  Total unique timestamps: {len(data_by_time)}")
+        mem_estimate = len(data_by_time) * len(signal_stats) * 16 / 1024 / 1024
+        print(f"  Estimated memory: ~{mem_estimate:.1f} MB")
+
+        return data_by_time, signal_stats
+
+    def _phase1_fetch_ebo(self, start_time, end_time):
+        """Phase 1 (EBO): Fetch historical trend log data, one signal at a time."""
+        from ebo_history import UNIT_CELSIUS, UNIT_KW, UNIT_PERCENT, UNIT_NONE
+
+        print(f"\n{'='*60}")
+        print("Phase 1: Fetch EBO historical data")
+        print(f"{'='*60}")
+        print(f"  Time range: {start_time.date()} to {end_time.date()}")
+        print(f"  Signals: {len(self.signal_map)}")
+
+        # Convert time range to microseconds for EBO API
+        start_us = str(int(start_time.timestamp() * 1_000_000))
+        end_us = str(int(end_time.timestamp() * 1_000_000))
+
+        data_by_time = {}  # timestamp -> {field: value}
+        signal_stats = {}
+
+        for signal_id, info in self.signal_map.items():
+            field_name = info['field_name']
+            trend_log = info.get('trend_log', '')
+            trend_unit_id = info.get('trend_unit_id', 0)
+
+            if not trend_log:
+                print(f"  Skipping {field_name}: no trend_log configured")
+                signal_stats[field_name] = 0
+                continue
+
+            print(f"  Fetching {field_name}...", end=' ', flush=True)
+
+            try:
+                records = self.ebo_history.read_trend_log(
+                    log_path=trend_log,
+                    log_unit_id=trend_unit_id or UNIT_NONE,
+                    display_unit_id=trend_unit_id or UNIT_NONE,
+                    max_records=200000,
+                    page_size=4000,
+                    start_time_utc=start_us,
+                    end_time_utc=end_us,
+                )
+
+                points_added = 0
+                for record in records:
+                    ts = record.timestamp_utc
+                    if start_time <= ts <= end_time:
+                        if ts not in data_by_time:
+                            data_by_time[ts] = {}
+                        data_by_time[ts][field_name] = record.value
+                        points_added += 1
+
+                print(f"{points_added} points")
+                signal_stats[field_name] = points_added
+
+            except Exception as e:
+                print(f"ERROR: {e}")
+                signal_stats[field_name] = 0
 
         # Summary
         print(f"\n  Total unique timestamps: {len(data_by_time)}")
@@ -2002,10 +2161,13 @@ class ArrigoBootstrapper:
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(days=self.days)
 
-        # Phase 1: Fetch Arrigo data
-        data_by_time, signal_stats = self._phase1_fetch_arrigo(start_time, end_time)
+        # Phase 1: Fetch BMS data
+        if self.bms_system == 'ebo':
+            data_by_time, signal_stats = self._phase1_fetch_ebo(start_time, end_time)
+        else:
+            data_by_time, signal_stats = self._phase1_fetch_arrigo(start_time, end_time)
         if not data_by_time:
-            print("ERROR: No data from Arrigo. Aborting.")
+            print(f"ERROR: No data from {self.bms_system.upper()}. Aborting.")
             return False
 
         # Phase 2: Fetch weather history

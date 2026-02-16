@@ -1,20 +1,20 @@
 # BVPro
 
-A Python application that monitors heating systems for residential houses (via HomeSide API) and commercial buildings (via Arrigo BMS API), analyzes thermal dynamics, and integrates with weather forecasts to optimize heating control.
+A Python application that monitors heating systems for residential houses (via HomeSide API) and commercial buildings (via Arrigo BMS or Schneider EBO), analyzes thermal dynamics, and integrates with weather forecasts to optimize heating control.
 
 ## Architecture Overview
 
-| | Houses (Residential) | Buildings (Commercial) |
-|---|---|---|
-| **API** | HomeSide district heating | Arrigo BMS (GraphQL) |
-| **Fetcher** | `HSF_Fetcher.py` | `building_fetcher.py` |
-| **Config** | `profiles/*.json` (CustomerProfile) | `buildings/*.json` (plain JSON) |
-| **Deployment** | Docker containers via `docker-compose.yml` | Subprocesses via orchestrator |
-| **Credentials** | Per-container env vars | `.env`: `BUILDING_<id>_USERNAME/PASSWORD` |
-| **InfluxDB tag** | `house_id` | `building_id` |
-| **Measurement** | `heating_system` | `building_system` |
-| **Onboard** | `add_customer.py` | `add_building.py` |
-| **Offboard** | `remove_customer.py` | `remove_customer.py --type building` |
+| | Houses (Residential) | Buildings (Arrigo) | Buildings (EBO) |
+|---|---|---|---|
+| **API** | HomeSide district heating | Arrigo BMS (GraphQL) | Schneider EBO (SxWDigest) |
+| **Fetcher** | `HSF_Fetcher.py` | `building_fetcher.py` | `building_fetcher.py` |
+| **Config** | `profiles/*.json` | `buildings/*.json` | `buildings/*.json` |
+| **Deployment** | Docker containers | Subprocesses via orchestrator | Subprocesses via orchestrator |
+| **Credentials** | Per-container env vars | `.env`: `BUILDING_<id>_*` or `credential_ref` | `.env`: `credential_ref` (shared) |
+| **InfluxDB tag** | `house_id` | `building_id` | `building_id` |
+| **Measurement** | `heating_system` | `building_system` | `building_system` |
+| **Onboard** | `add_customer.py` | `add_building.py` | `add_ebo_building.py` |
+| **Offboard** | `remove_customer.py` | `remove_customer.py --type building` | `remove_customer.py --type building` |
 
 Shared: energy separation (`heating_energy_calibrator.py`), k-value recalibration (`k_recalibrator.py`), bootstrap (`gap_filler.py`), Dropbox energy import, InfluxDB, Seq logging, web GUI.
 
@@ -25,8 +25,11 @@ Shared: energy separation (`heating_energy_calibrator.py`), k-value recalibratio
 | File | Purpose |
 |------|---------|
 | `HSF_Fetcher.py` | House fetcher: polls HomeSide API every 5 min, coordinates all modules |
-| `building_fetcher.py` | Building fetcher: polls Arrigo BMS API, writes signals to InfluxDB |
+| `building_fetcher.py` | Building fetcher: polls BMS API (Arrigo or EBO), writes signals to InfluxDB |
 | `arrigo_api.py` | Arrigo BMS API client (auth, signal discovery, reads) |
+| `ebo_api.py` | Schneider EBO API client (SxWDigest auth, subscriptions, object tree) |
+| `ebo_adapter.py` | EBO adapter: wraps EboApi for building_fetcher compatibility |
+| `ebo_history.py` | EBO historical data client (trend log reads with pagination) |
 | `homeside_api.py` | HomeSide API client (auth, fetch/write heating variables) |
 | `thermal_analyzer.py` | Learns building thermal dynamics (k-coefficient). Needs 24 data points min |
 | `heat_curve_controller.py` | Dynamic heat curve adjustments based on weather forecasts |
@@ -50,12 +53,19 @@ Shared: energy separation (`heating_energy_calibrator.py`), k-value recalibratio
 | `buildings/*.json` | Building configs with Arrigo connection + signal mapping |
 | `offboarded.json` | Soft-offboarded entities pending InfluxDB purge |
 
+### Credential Model
+
+- **Houses:** `HOUSE_<id>_USERNAME/PASSWORD` in `.env`
+- **Buildings (Arrigo legacy):** `BUILDING_<id>_USERNAME/PASSWORD` in `.env`
+- **Buildings (named ref):** `<ref>_USERNAME/PASSWORD/DOMAIN` in `.env`, referenced by `connection.credential_ref` in building config. Multiple buildings can share one credential set.
+
 ### Admin Scripts
 
 | File | Purpose |
 |------|---------|
 | `add_customer.py` | Add houses (creates profile, updates docker-compose, deploys) |
-| `add_building.py` | Add buildings (discovers Arrigo signals, creates config) |
+| `add_building.py` | Add Arrigo buildings (discovers signals, creates config) |
+| `add_ebo_building.py` | Add EBO buildings (browses tree, discovers signals, creates config) |
 | `remove_customer.py` | Remove houses/buildings: hard or soft (30-day grace) |
 | `gap_filler.py` | Unified 7-phase bootstrap for houses and buildings |
 | `import_historical_data.py` | Legacy house bootstrap (superseded by gap_filler) |
@@ -80,8 +90,14 @@ python3 add_customer.py --non-interactive --username FC2000233091 --password "pa
 # Add building (interactive)
 python3 add_building.py
 
-# Add building (non-interactive)
+# Add Arrigo building (non-interactive)
 python3 add_building.py --non-interactive --host exodrift05.systeminstallation.se --username "user" --password "pass" --name "Building" --building-id SITE_Name --lat 56.67 --lon 12.86 --bootstrap
+
+# Add EBO building (browse tree first)
+python3 add_ebo_building.py --base-url https://ebo.halmstad.se --username "user" --password "pass" --browse --site-path "/"
+
+# Add EBO building (non-interactive, with credential ref)
+python3 add_ebo_building.py --non-interactive --base-url https://ebo.halmstad.se --credential-ref EBO_HK_CRED1 --site-path "/Kattegattgymnasiet 20942 AS3" --name "Kattegattgymnasiet" --building-id HK_Kattegatt_20942 --lat 56.67 --lon 12.86 --bootstrap
 ```
 
 ## Removing Houses / Buildings

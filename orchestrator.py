@@ -97,10 +97,40 @@ def build_house_env(config_id: str, friendly_name: str, poll_offset: int = 0) ->
 
 
 def build_building_env(config_id: str, poll_offset: int = 0) -> dict:
-    """Return an env dict for a commercial-building fetcher subprocess."""
+    """Return an env dict for a commercial-building fetcher subprocess.
+
+    Resolves credentials in order:
+      1. credential_ref from building config (e.g. EBO_HK_CRED1 → EBO_HK_CRED1_USERNAME)
+      2. Legacy per-building env vars (BUILDING_<id>_USERNAME)
+    Sets generic BMS_USERNAME/BMS_PASSWORD/BMS_DOMAIN plus ARRIGO_* aliases.
+    """
     env = os.environ.copy()
-    env["ARRIGO_USERNAME"] = os.getenv(_env_key("BUILDING", config_id, "USERNAME"), "")
-    env["ARRIGO_PASSWORD"] = os.getenv(_env_key("BUILDING", config_id, "PASSWORD"), "")
+
+    # Try credential_ref from building config first
+    username = ""
+    password = ""
+    domain = ""
+    config = load_json(os.path.join(BUILDINGS_DIR, f"{config_id}.json"))
+    if config:
+        cred_ref = config.get("connection", {}).get("credential_ref", "")
+        if cred_ref:
+            username = os.getenv(f"{cred_ref}_USERNAME", "")
+            password = os.getenv(f"{cred_ref}_PASSWORD", "")
+            domain = os.getenv(f"{cred_ref}_DOMAIN", "")
+
+    # Fall back to legacy BUILDING_<id>_USERNAME/PASSWORD
+    if not username:
+        username = os.getenv(_env_key("BUILDING", config_id, "USERNAME"), "")
+    if not password:
+        password = os.getenv(_env_key("BUILDING", config_id, "PASSWORD"), "")
+
+    # Generic BMS vars (used by building_fetcher for any BMS type)
+    env["BMS_USERNAME"] = username
+    env["BMS_PASSWORD"] = password
+    env["BMS_DOMAIN"] = domain
+    # Arrigo aliases for backwards compatibility
+    env["ARRIGO_USERNAME"] = username
+    env["ARRIGO_PASSWORD"] = password
     env["POLL_OFFSET_SECONDS"] = str(poll_offset)
     return env
 
@@ -172,10 +202,20 @@ def scan_configs() -> dict[str, dict]:
             if not data:
                 continue
             bid = data.get("building_id", p.stem)
-            env_user = os.getenv(_env_key("BUILDING", bid, "USERNAME"), "")
-            if not env_user:
-                log(f"Skipping {p.name}: no BUILDING_{bid}_USERNAME in env")
-                continue
+
+            # Check for credentials: credential_ref first, then legacy BUILDING_<id>
+            cred_ref = data.get("connection", {}).get("credential_ref", "")
+            if cred_ref:
+                env_user = os.getenv(f"{cred_ref}_USERNAME", "")
+                if not env_user:
+                    log(f"Skipping {p.name}: no {cred_ref}_USERNAME in env")
+                    continue
+            else:
+                env_user = os.getenv(_env_key("BUILDING", bid, "USERNAME"), "")
+                if not env_user:
+                    log(f"Skipping {p.name}: no BUILDING_{bid}_USERNAME in env")
+                    continue
+
             found[bid] = {
                 "path": str(p),
                 "kind": "building",
