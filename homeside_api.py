@@ -253,6 +253,12 @@ class HomeSideAPI:
                 error_msg = data.get('error', 'unknown')
                 self.logger.warning(f"BMS token API returned error: {error_msg}")
                 print(f"⚠ BMS token API error: {error_msg}")
+                if self.seq_logger:
+                    self.seq_logger.log(
+                        "HomeSide API down or not answering: {Error}",
+                        level='Warning',
+                        properties={'EventType': 'HomeSideAPIDown', 'Error': error_msg}
+                    )
                 return False
 
             self.bms_token = data.get('token')
