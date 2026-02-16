@@ -1,0 +1,42 @@
+<!-- AI Assistant Chat Panel -->
+<div id="chat-panel" class="chat-panel">
+    <div class="chat-header">
+        <span class="chat-title">AI Assistent</span>
+        <div class="chat-header-actions">
+            <button class="chat-btn-icon" onclick="chatNewConversation()" title="Ny konversation">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/>
+                </svg>
+            </button>
+            <button class="chat-btn-icon" onclick="toggleChat()" title="Stang">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <div id="chat-messages" class="chat-messages">
+        <div class="chat-welcome">
+            <p><strong>Hej!</strong> Jag kan hjalpa dig med fragor om ditt varmesystem, energiforbrukning och data.</p>
+            <p class="chat-suggestions-label">Prova till exempel:</p>
+            <div class="chat-suggestions">
+                <button class="chat-suggestion" onclick="chatSendSuggestion(this)">Vad ar aktuell status?</button>
+                <button class="chat-suggestion" onclick="chatSendSuggestion(this)">Hur mycket energi anvande jag forra manaden?</button>
+                <button class="chat-suggestion" onclick="chatSendSuggestion(this)">Finns det luckor i min data?</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="chat-input-area">
+        <textarea id="chat-input" class="chat-input" placeholder="Skriv ett meddelande..."
+                  rows="1" maxlength="2000"
+                  onkeydown="chatHandleKey(event)"
+                  oninput="chatAutoResize(this)"></textarea>
+        <button id="chat-send-btn" class="chat-send-btn" onclick="chatSendMessage()" title="Skicka">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+        </button>
+    </div>
+</div>
