@@ -489,7 +489,7 @@ def main():
             level='Information',
             properties={
                 'EventType': 'FetcherStarted',
-                'Host': host,
+                'Host': bms_label,
                 'AnalogSignals': len(analog_fetch),
                 'DigitalSignals': len(digital_fetch),
                 'IntervalMinutes': interval_minutes,

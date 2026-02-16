@@ -77,7 +77,16 @@ class EboBmsAdapter:
         Uses two strategies:
         1. IO Bus paths: batch-read via get_objects on the IO Bus folder
         2. Other paths: batch-read via get_objects on individual object paths
+
+        Re-authenticates before each read to avoid stale sessions.
         """
+        # Re-login to ensure fresh session (EBO sessions go stale between polls)
+        try:
+            self.ebo.login()
+            self.ebo.web_entry()
+        except Exception:
+            pass  # "already logged on" is expected; existing session still works
+
         if not self._signal_paths:
             self.logger.warning("EBO: No signal paths configured")
             return False
@@ -103,6 +112,8 @@ class EboBmsAdapter:
 
             read_count = 0
 
+            self.logger.debug(f"EBO discover: {len(io_bus_paths)} IO Bus folder(s), {len(direct_paths)} direct path(s)")
+
             # Strategy 1: Batch-read IO Bus folders
             for io_folder, points in io_bus_paths.items():
                 try:
@@ -125,6 +136,8 @@ class EboBmsAdapter:
                                 read_count += 1
                 except Exception as e:
                     self.logger.warning(f"EBO: Failed to read IO Bus {io_folder}: {e}")
+
+            self.logger.debug(f"EBO: IO Bus read {read_count} signals")
 
             # Strategy 2: Batch-read server variables via get_objects
             if direct_paths:
@@ -161,8 +174,7 @@ class EboBmsAdapter:
                 except Exception as e:
                     self.logger.warning(f"EBO: Failed to read server variables: {e}")
 
-            if self.verbose:
-                self.logger.debug(f"EBO: Read {read_count}/{len(self._signal_paths)} signals")
+            self.logger.info(f"EBO: Read {read_count}/{len(self._signal_paths)} signals")
 
             return read_count > 0
 

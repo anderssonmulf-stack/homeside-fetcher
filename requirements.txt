@@ -6,3 +6,4 @@ astral>=3.2
 python-dotenv>=1.0.0
 dropbox>=11.36.0
 pytz>=2024.1
+cryptography>=42.0.0

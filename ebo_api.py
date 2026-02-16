@@ -277,7 +277,8 @@ class EboApi:
             f'{self.base_url}/json/POST',
             data=json.dumps(command_data, ensure_ascii=False).encode('utf-8'),
             headers={'Content-Type': 'application/json; charset=utf-8'},
-            verify=self.verify_ssl
+            verify=self.verify_ssl,
+            timeout=30
         )
         resp.raise_for_status()
         return resp.json()
