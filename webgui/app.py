@@ -337,6 +337,33 @@ def register():
 # =============================================================================
 
 @app.route('/')
+def index():
+    """Landing page for visitors, redirect to dashboard if logged in"""
+    if 'user_id' in session:
+        return redirect(url_for('dashboard'))
+    return render_template('landing.html')
+
+
+@app.route('/about')
+def about():
+    """Public about page"""
+    return render_template('about.html')
+
+
+@app.route('/contact')
+def contact():
+    """Public contact page"""
+    return render_template('contact.html')
+
+
+@app.route('/help')
+@require_login
+def help_page():
+    """Authenticated help page explaining dashboard concepts"""
+    return render_template('help.html')
+
+
+@app.route('/dashboard')
 @require_login
 def dashboard():
     """Main dashboard - shows user's houses and recent activity"""

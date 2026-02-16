@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ theme.site_short_name }}{% endblock %} - {{ theme.site_title_suffix }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/public.css') }}">
+    {% if theme.css_overrides %}
+    <style>:root { {% for prop, val in theme.css_overrides.items() %}{{ prop }}: {{ val }}; {% endfor %}}</style>
+    {% endif %}
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <a href="{{ url_for('index') }}">
+                <img src="{{ url_for('static', filename=theme.logo_filename) }}" alt="{{ theme.site_name }}" class="nav-logo">
+            </a>
+        </div>
+        <div class="nav-links">
+            <a href="{{ url_for('about') }}">About</a>
+            <a href="{{ url_for('contact') }}">Contact</a>
+        </div>
+        <div class="nav-user">
+            <a href="{{ url_for('login') }}" class="btn btn-small">Log In</a>
+            <a href="{{ url_for('register') }}" class="btn btn-small btn-primary">Register</a>
+        </div>
+    </nav>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="container">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">
+                {{ message }}
+                <button class="alert-close" onclick="this.parentElement.remove()">&times;</button>
+            </div>
+            {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+
+    <footer class="public-footer">
+        <div class="container">
+            <div class="footer-content">
+                <p class="footer-brand">&copy; 2026 {{ theme.copyright_holder }}</p>
+                <p class="footer-description">{{ theme.company_description }}</p>
+                <div class="footer-links">
+                    <a href="{{ url_for('about') }}">About</a>
+                    <a href="{{ url_for('contact') }}">Contact</a>
+                    <a href="{{ url_for('login') }}">Log In</a>
+                    <a href="{{ url_for('register') }}">Register</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

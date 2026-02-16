@@ -1,0 +1,100 @@
+{% extends "base_public.html" %}
+{% block title %}{{ theme.site_name }}{% endblock %}
+
+{% block content %}
+<!-- Hero -->
+<section class="hero">
+    <div class="hero-content">
+        <img src="{{ url_for('static', filename=theme.logo_hero_filename) }}" alt="{{ theme.site_name }}" class="hero-logo">
+        <h1>{{ theme.hero_tagline }}</h1>
+        <div class="hero-buttons">
+            <a href="{{ url_for('register') }}" class="btn btn-primary btn-large">{{ theme.cta_text }}</a>
+            <a href="{{ url_for('about') }}" class="btn btn-outline btn-large">Learn More</a>
+        </div>
+    </div>
+</section>
+
+<!-- Features -->
+<section class="features">
+    <div class="container">
+        <h2>What You Get</h2>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
+                    </svg>
+                </div>
+                <h3>Real-Time Monitoring</h3>
+                <p>Indoor and outdoor temperatures, supply and return lines, hot water, system pressure — all in one dashboard, updated every five minutes.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="20" x2="18" y2="10"/>
+                        <line x1="12" y1="20" x2="12" y2="4"/>
+                        <line x1="6" y1="20" x2="6" y2="14"/>
+                    </svg>
+                </div>
+                <h3>Energy Analysis</h3>
+                <p>Automatically separates heating from hot water consumption, tracks efficiency over time, and highlights trends you can act on.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/>
+                    </svg>
+                </div>
+                <h3>Weather-Driven Optimization</h3>
+                <p>Integrated weather forecasts enable proactive heating adjustments, reducing waste before temperature changes arrive.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- How It Works -->
+<section class="how-it-works">
+    <div class="container">
+        <h2>How It Works</h2>
+        <div class="steps-grid">
+            <div class="step">
+                <div class="step-number">1</div>
+                <h3>Connect</h3>
+                <p>Integrates with your existing district heating infrastructure. No new hardware needed.</p>
+            </div>
+            <div class="step">
+                <div class="step-number">2</div>
+                <h3>Monitor</h3>
+                <p>Real-time dashboard with interactive graphs, historical trends, and alerts when something needs attention.</p>
+            </div>
+            <div class="step">
+                <div class="step-number">3</div>
+                <h3>Optimize</h3>
+                <p>Intelligent analytics identify energy waste. Weather-driven adjustments keep comfort high and costs low.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- More Capabilities -->
+<section class="capabilities">
+    <div class="container">
+        <h2>More Capabilities</h2>
+        <ul class="capabilities-list">
+            <li>Multi-property portfolio management</li>
+            <li>AI assistant for natural-language questions about your data</li>
+            <li>Thermal efficiency tracking — learns how your building responds to weather</li>
+            <li>Role-based access for teams (admin, manager, viewer)</li>
+            <li>Support ticket system for issue escalation</li>
+        </ul>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+    <div class="container">
+        <h2>Ready to take control of your heating energy?</h2>
+        <a href="{{ url_for('register') }}" class="btn btn-primary btn-large">{{ theme.cta_text }}</a>
+    </div>
+</section>
+{% endblock %}

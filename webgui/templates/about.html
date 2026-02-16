@@ -1,0 +1,71 @@
+{% extends "base_public.html" %}
+{% block title %}About{% endblock %}
+
+{% block content %}
+<div class="public-page">
+    <div class="container">
+        <h1>About {{ theme.site_name }}</h1>
+        <p class="about-intro">{{ theme.about_intro }}</p>
+
+        <div class="about-section">
+            <h2>What We Monitor</h2>
+            <div class="about-grid">
+                <div class="about-card">
+                    <h3>Temperatures</h3>
+                    <p>Indoor, outdoor, supply, return, and hot water — tracked continuously to give a complete picture of your heating system.</p>
+                </div>
+                <div class="about-card">
+                    <h3>Energy Consumption</h3>
+                    <p>Hourly and daily energy data, automatically imported and analyzed to reveal usage patterns and anomalies.</p>
+                </div>
+                <div class="about-card">
+                    <h3>System Status</h3>
+                    <p>System pressure, operating mode, and equipment status — so you know immediately when something changes.</p>
+                </div>
+                <div class="about-card">
+                    <h3>Weather Conditions</h3>
+                    <p>Current observations and forecasts, used to anticipate heating demand and optimize proactively.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="about-section">
+            <h2>Key Capabilities</h2>
+            <ul class="capabilities-list">
+                <li>Energy separation — automatically splits total consumption into heating and hot water</li>
+                <li>Thermal efficiency analysis — learns how your building responds to outdoor conditions</li>
+                <li>Weather integration — forecasts drive proactive adjustments before temperature shifts</li>
+                <li>Multi-property dashboards — manage your entire portfolio from one place</li>
+                <li>AI-powered insights — ask questions about your data in plain language</li>
+                <li>Alerting — get notified when readings fall outside expected ranges</li>
+            </ul>
+        </div>
+
+        <div class="about-section">
+            <h2>Who It's For</h2>
+            <div class="about-grid">
+                <div class="about-card">
+                    <h3>Property Managers</h3>
+                    <p>Oversee heating performance across multiple properties from a single dashboard.</p>
+                </div>
+                <div class="about-card">
+                    <h3>Housing Cooperatives</h3>
+                    <p>Understand and reduce shared heating costs with transparent data and analysis.</p>
+                </div>
+                <div class="about-card">
+                    <h3>Commercial Building Operators</h3>
+                    <p>Monitor complex heating systems and track efficiency across large facilities.</p>
+                </div>
+                <div class="about-card">
+                    <h3>District Heating Customers</h3>
+                    <p>See exactly where your energy goes and identify opportunities to save.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="about-mission">
+            <p>{{ theme.about_mission }}</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

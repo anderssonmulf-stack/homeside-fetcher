@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}Help{% endblock %}
+
+{% block extra_head %}
+<style>
+.help-page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 20px 0 60px;
+}
+
+.help-page h1 {
+    font-size: 1.8rem;
+    margin-bottom: 8px;
+}
+
+.help-intro {
+    color: var(--muted);
+    margin-bottom: 32px;
+    font-size: 1.05rem;
+}
+
+.help-toc {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px 28px;
+    margin-bottom: 40px;
+    box-shadow: var(--shadow);
+}
+
+.help-toc h2 {
+    font-size: 1rem;
+    margin-bottom: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.help-toc ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    columns: 2;
+    column-gap: 24px;
+}
+
+.help-toc li {
+    padding: 4px 0;
+}
+
+.help-toc a {
+    color: var(--primary);
+}
+
+.help-section {
+    margin-bottom: 48px;
+}
+
+.help-section h2 {
+    font-size: 1.4rem;
+    color: var(--dark);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--primary);
+}
+
+.help-section h3 {
+    font-size: 1.1rem;
+    color: var(--dark);
+    margin: 20px 0 8px;
+}
+
+.help-section p,
+.help-section li {
+    color: #444;
+    line-height: 1.7;
+    font-size: 0.95rem;
+}
+
+.help-section ul {
+    margin: 8px 0 16px 20px;
+}
+
+.help-section li {
+    margin-bottom: 4px;
+}
+
+.help-term {
+    display: flex;
+    gap: 16px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+}
+
+.help-term dt {
+    font-weight: 600;
+    color: var(--dark);
+    min-width: 160px;
+    flex-shrink: 0;
+    font-size: 0.95rem;
+}
+
+.help-term dd {
+    color: #444;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.help-tip {
+    background: #eef6ff;
+    border-left: 3px solid var(--primary);
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 16px 0;
+    font-size: 0.95rem;
+    color: #444;
+}
+
+@media (max-width: 768px) {
+    .help-toc ul {
+        columns: 1;
+    }
+
+    .help-term {
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .help-term dt {
+        min-width: auto;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="help-page">
+    <h1>Help</h1>
+    <p class="help-intro">A guide to the readings, graphs, and concepts in {{ theme.site_name }}.</p>
+
+    <nav class="help-toc">
+        <h2>Contents</h2>
+        <ul>
+            <li><a href="#dashboard">Dashboard</a></li>
+            <li><a href="#readings">Understanding the Readings</a></li>
+            <li><a href="#graphs">Graphs</a></li>
+            <li><a href="#energy">Energy Data</a></li>
+            <li><a href="#kvalue">K-Value &amp; Thermal Efficiency</a></li>
+            <li><a href="#settings">Settings</a></li>
+            <li><a href="#weather">Weather &amp; Forecasts</a></li>
+            <li><a href="#ai">AI Assistant</a></li>
+            <li><a href="#roles">Roles &amp; Access</a></li>
+            <li><a href="#faq">FAQ</a></li>
+        </ul>
+    </nav>
+
+    <!-- Dashboard -->
+    <section id="dashboard" class="help-section">
+        <h2>Dashboard</h2>
+        <p>The dashboard shows all properties you have access to. Click a property card to see its current status and settings. Click "Graphs" to go directly to the interactive data view.</p>
+        <p>If you have access to multiple houses, an "All houses" card appears at the top — this shows aggregated energy data across your portfolio.</p>
+        <p>The "Recent Activity" section shows configuration changes made by any user across your properties.</p>
+    </section>
+
+    <!-- Understanding the Readings -->
+    <section id="readings" class="help-section">
+        <h2>Understanding the Readings</h2>
+        <p>The status widgets at the top of each property page show the latest values from the heating system, updated every five minutes.</p>
+
+        <dl>
+            <div class="help-term">
+                <dt>Room Temperature</dt>
+                <dd>The current indoor temperature measured by the heating system's sensor. This is the main comfort indicator. Green means within the normal range (21-24 °C).</dd>
+            </div>
+            <div class="help-term">
+                <dt>Target</dt>
+                <dd>The temperature setpoint configured in the heating system. The system works to keep the room temperature close to this value.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Outdoor</dt>
+                <dd>Outside air temperature as reported by the heating system's outdoor sensor. This drives the heat curve — colder outside means higher supply temperature.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Supply</dt>
+                <dd>Temperature of the water flowing from the district heating exchanger into the building's radiator circuit. Higher supply temperature means more heat is being delivered.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Return</dt>
+                <dd>Temperature of the water returning from the radiators back to the exchanger. The difference between supply and return (called "delta-T") indicates how much heat the building is absorbing.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Hot Water</dt>
+                <dd>Temperature of the domestic hot water. Should normally be 50-60 °C. A drop may indicate high usage or a system issue.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Pressure</dt>
+                <dd>System pressure in the radiator circuit (bar). Normal range is 0.5-1.5 bar. Low pressure can indicate a leak or the need to refill.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Away Mode</dt>
+                <dd>When ON, the system lowers the target temperature to save energy while the property is unoccupied.</dd>
+            </div>
+        </dl>
+
+        <div class="help-tip">If the status shows "No real-time data available", the heating system may be offline or the connection interrupted. Data typically resumes automatically.</div>
+    </section>
+
+    <!-- Graphs -->
+    <section id="graphs" class="help-section">
+        <h2>Graphs</h2>
+        <p>The graphs page shows interactive charts of historical data. All graphs are pannable and zoomable.</p>
+        <ul>
+            <li><strong>Pan</strong> — click and drag to move along the time axis</li>
+            <li><strong>Zoom</strong> — use the scroll wheel or pinch to zoom in/out</li>
+            <li><strong>Hover</strong> — point at any data point to see exact values and timestamps</li>
+            <li><strong>Time range</strong> — use the buttons (24h, 7d, 30d, 1y) to jump to common periods</li>
+            <li><strong>Reset</strong> — double-click the chart to reset the zoom</li>
+        </ul>
+
+        <h3>Chart Types</h3>
+        <ul>
+            <li><strong>Temperatures</strong> — room, outdoor, supply, return, and hot water over time</li>
+            <li><strong>Energy consumption</strong> — daily bars showing total energy use in kWh</li>
+            <li><strong>Energy separation</strong> — daily breakdown of heating vs. hot water energy</li>
+            <li><strong>Heat curve</strong> — supply temperature plotted against outdoor temperature, showing the heating system's response characteristic</li>
+        </ul>
+    </section>
+
+    <!-- Energy Data -->
+    <section id="energy" class="help-section">
+        <h2>Energy Data</h2>
+        <p>Energy consumption data comes from your district heating meter. It is imported automatically (via your energy provider) or manually through CSV upload.</p>
+
+        <h3>Energy Separation</h3>
+        <p>The system automatically splits your total energy consumption into two parts:</p>
+        <ul>
+            <li><strong>Heating energy</strong> — energy used to heat the building, which varies with outdoor temperature</li>
+            <li><strong>Hot water energy (DHW)</strong> — energy used for domestic hot water, which stays relatively constant year-round</li>
+        </ul>
+        <p>This separation is key to understanding where your energy goes. In summer, almost all consumption is hot water. In winter, heating dominates. The separation lets you see trends in each independently.</p>
+
+        <h3>Meter IDs</h3>
+        <p>Your district heating meter number needs to be configured under Building Information in the property settings. This enables automatic data import. If you have multiple meters (e.g., separate heating and hot water circuits), add them comma-separated.</p>
+    </section>
+
+    <!-- K-Value -->
+    <section id="kvalue" class="help-section">
+        <h2>K-Value &amp; Thermal Efficiency</h2>
+        <p>The K-value (measured in W/°C) represents your building's heat loss coefficient — how much heating power is needed per degree of temperature difference between inside and outside.</p>
+
+        <dl>
+            <div class="help-term">
+                <dt>Lower K-value</dt>
+                <dd>Better insulation. The building loses less heat to the outside, requiring less energy to stay warm.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Higher K-value</dt>
+                <dd>More heat loss. Could indicate poor insulation, drafts, or a large building surface area.</dd>
+            </div>
+        </dl>
+
+        <p>The K-value is recalibrated periodically using your actual energy consumption and weather data. Tracking it over time shows whether insulation improvements or other changes are having an effect.</p>
+
+        <h3>Thermal Coefficient</h3>
+        <p>The "Learned Parameters" section on the property page shows the thermal coefficient and its confidence level. The system needs at least 6 hours of data (24 samples) to start learning. Confidence increases as more data is collected.</p>
+    </section>
+
+    <!-- Settings -->
+    <section id="settings" class="help-section">
+        <h2>Settings</h2>
+
+        <dl>
+            <div class="help-term">
+                <dt>Target Indoor Temp</dt>
+                <dd>The temperature the optimization algorithm aims for. This does not directly change the heating system setpoint — it guides the system's analysis of comfort.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Acceptable Deviation</dt>
+                <dd>How much the indoor temperature can deviate from the target before the system considers it uncomfortable. A setting of 1.0 °C means ±1 degree is acceptable.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Friendly Name</dt>
+                <dd>A human-readable name for the property (e.g., "Storgatan 5"). Shown in dashboards and graphs.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Building Description</dt>
+                <dd>Free-text description of the building type, construction, or other notes.</dd>
+            </div>
+        </dl>
+    </section>
+
+    <!-- Weather -->
+    <section id="weather" class="help-section">
+        <h2>Weather &amp; Forecasts</h2>
+        <p>The system uses weather data from SMHI (Sweden's meteorological institute) for two purposes:</p>
+        <ul>
+            <li><strong>Current conditions</strong> — the actual outdoor temperature from the nearest weather station, used to validate the heating system's own outdoor sensor</li>
+            <li><strong>Forecasts</strong> — predicted temperatures for the next 24 hours, used for proactive heating adjustments</li>
+        </ul>
+        <p>The forecast card on the property page shows the expected temperature trend (warming, cooling, or stable) and the forecasted min/max range.</p>
+    </section>
+
+    <!-- AI Assistant -->
+    <section id="ai" class="help-section">
+        <h2>AI Assistant</h2>
+        <p>The chat button in the top-right corner opens an AI assistant that can answer questions about your data. Examples:</p>
+        <ul>
+            <li>"What was the average indoor temperature last week?"</li>
+            <li>"How much energy did we use in January?"</li>
+            <li>"Is the K-value getting better or worse?"</li>
+            <li>"Compare heating costs between my properties"</li>
+        </ul>
+        <p>The assistant has access to your property's data and can query historical readings, energy consumption, and weather data. It works best when you're viewing a specific property — the context is automatically included in your questions.</p>
+    </section>
+
+    <!-- Roles -->
+    <section id="roles" class="help-section">
+        <h2>Roles &amp; Access</h2>
+        <dl>
+            <div class="help-term">
+                <dt>Admin</dt>
+                <dd>Full access to all properties, user management, and system configuration.</dd>
+            </div>
+            <div class="help-term">
+                <dt>User</dt>
+                <dd>Can view and modify settings for assigned properties.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Viewer</dt>
+                <dd>Read-only access to assigned properties. Can view data and graphs but cannot change settings.</dd>
+            </div>
+            <div class="help-term">
+                <dt>Pending</dt>
+                <dd>Newly registered accounts awaiting admin approval. Cannot access the system until approved.</dd>
+            </div>
+        </dl>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="help-section">
+        <h2>FAQ</h2>
+
+        <h3>Why does my data show gaps?</h3>
+        <p>Gaps typically occur when the heating system is temporarily offline or the internet connection is interrupted. The system fills small gaps automatically. Longer outages leave visible gaps in the graphs.</p>
+
+        <h3>How often is data updated?</h3>
+        <p>Heating system readings are polled every 5 minutes. Energy consumption data is imported daily. Weather data is updated every 15 minutes.</p>
+
+        <h3>Why does my energy separation show no data?</h3>
+        <p>Energy separation requires both meter data (imported from your energy provider) and configured meter IDs. Check that your meter number is entered correctly under Building Information.</p>
+
+        <h3>What does "Not yet learned" mean for thermal coefficient?</h3>
+        <p>The system needs at least 6 hours of continuous data to calculate the thermal coefficient. For a new property, wait for enough data to accumulate. After a system restart, previously learned values are restored automatically.</p>
+
+        <h3>Can I export my data?</h3>
+        <p>Use the AI assistant to request data summaries. For raw data exports, contact your administrator.</p>
+    </section>
+</div>
+{% endblock %}
