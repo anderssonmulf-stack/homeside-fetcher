@@ -141,6 +141,20 @@ class EnergySeparationConfig:
 
 
 @dataclass
+class HeatCurveControlConfig:
+    """
+    State for heat curve control via control_homeside.py.
+
+    Stores baseline values (Yref curve + adaption settings) captured before
+    entering control mode, so they can be restored on exit.
+    """
+    in_control: bool = False
+    baseline: Dict[str, Any] = field(default_factory=dict)
+    entered_at: Optional[str] = None
+    reason: Optional[str] = None
+
+
+@dataclass
 class CustomerProfile:
     """
     Complete customer profile containing all settings and learned parameters.
@@ -160,6 +174,7 @@ class CustomerProfile:
     heating_system: HeatingSystemConfig = field(default_factory=HeatingSystemConfig)
     learned: LearnedParameters = field(default_factory=LearnedParameters)
     energy_separation: EnergySeparationConfig = field(default_factory=EnergySeparationConfig)
+    heat_curve_control: HeatCurveControlConfig = field(default_factory=HeatCurveControlConfig)
     variable_overrides: Dict[str, str] = field(default_factory=dict)
 
     _profiles_dir: str = field(default="profiles", repr=False)
@@ -243,6 +258,7 @@ class CustomerProfile:
             heating_system=HeatingSystemConfig(**data.get("heating_system", {})),
             learned=learned,
             energy_separation=EnergySeparationConfig(**data.get("energy_separation", {})),
+            heat_curve_control=HeatCurveControlConfig(**data.get("heat_curve_control", {})),
             variable_overrides=data.get("variable_overrides", {})
         )
 
@@ -260,6 +276,7 @@ class CustomerProfile:
             "heating_system": asdict(self.heating_system),
             "learned": asdict(self.learned),
             "energy_separation": asdict(self.energy_separation),
+            "heat_curve_control": asdict(self.heat_curve_control),
             "variable_overrides": self.variable_overrides
         }
 
@@ -280,6 +297,7 @@ class CustomerProfile:
             "heating_system": asdict(self.heating_system),
             "learned": asdict(self.learned),
             "energy_separation": asdict(self.energy_separation),
+            "heat_curve_control": asdict(self.heat_curve_control),
             "variable_overrides": self.variable_overrides
         }
 
