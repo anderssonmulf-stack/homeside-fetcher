@@ -62,14 +62,19 @@ def browse_tree(api, path, depth=0, max_depth=2):
     try:
         result = api.get_objects([path], levels=1, include_hidden=False)
         res = result.get('GetObjectsRes', result)
-        objects = res.get('objects', []) if isinstance(res, dict) else []
-        for obj in objects:
+        items = res.get('results', []) if isinstance(res, dict) else []
+        for obj in items:
             name = obj.get('name', '?')
-            obj_type = obj.get('type', '')
+            obj_type = obj.get('objectType', obj.get('type', ''))
             obj_path = obj.get('path', '')
+            # The child's full path is parent_path/name
+            child_path = f"{obj_path}/{name}" if obj_path else name
+            # Skip the parent itself (returned as first result)
+            if child_path == path or (depth == 0 and name == path.split('/')[-1]):
+                continue
             print(f"{indent}{name}  ({obj_type})")
-            if depth < max_depth and obj_path:
-                browse_tree(api, obj_path, depth + 1, max_depth)
+            if depth < max_depth:
+                browse_tree(api, child_path, depth + 1, max_depth)
     except Exception as e:
         print(f"{indent}(error: {e})")
 
@@ -78,10 +83,29 @@ def discover_signals(api, site_path, verbose=False):
     """
     Walk the EBO object tree under site_path to find analog signals.
 
-    Looks for objects with a /Value property that have numeric values.
+    Looks for objects with Value properties that have numeric values.
     Returns a dict of signal_name -> {path, value, unit, ...}
     """
+    import struct
     signals = {}
+
+    POINT_TYPES = {
+        'server.point.AV', 'server.point.AI', 'server.point.AO',
+        'server.point.BV', 'server.point.BI', 'server.point.BO',
+        'io.point.TemperatureInput', 'io.point.VoltageInput',
+        'io.point.VoltageOutput', 'io.point.DigitalOutput',
+        'io.point.DigitalInputNoLED',
+    }
+
+    def hex_to_double(hexval):
+        if isinstance(hexval, str) and hexval.startswith('0x'):
+            try:
+                return struct.unpack('d', struct.pack('Q', int(hexval, 16)))[0]
+            except (ValueError, struct.error):
+                return None
+        if isinstance(hexval, (int, float)):
+            return float(hexval)
+        return None
 
     def walk(path, depth=0):
         if depth > 5:  # safety limit
@@ -89,44 +113,42 @@ def discover_signals(api, site_path, verbose=False):
         try:
             result = api.get_objects([path], levels=1, include_hidden=False)
             res = result.get('GetObjectsRes', result)
-            objects = res.get('objects', []) if isinstance(res, dict) else []
+            items = res.get('results', []) if isinstance(res, dict) else []
         except Exception as e:
             if verbose:
                 print(f"    (walk error at {path}: {e})")
             return
 
-        for obj in objects:
+        for obj in items:
             name = obj.get('name', '')
             obj_path = obj.get('path', '')
-            obj_type = obj.get('type', '')
+            obj_type = obj.get('objectType', '')
+            child_path = f"{obj_path}/{name}" if obj_path else name
 
-            # Check if this object has a Value property (analog signal)
-            value_path = f"{obj_path}/Value" if obj_path else None
-            if value_path and obj_type in ('', 'AnalogValue', 'AnalogInput',
-                                            'AnalogOutput', 'AV', 'AI', 'AO'):
-                try:
-                    props = api.get_multi_property([value_path])
-                    prop_res = props.get('GetMultiPropertyRes', [])
-                    if prop_res:
-                        prop = prop_res[0] if isinstance(prop_res, list) else prop_res
-                        raw_val = prop.get('value') if isinstance(prop, dict) else None
-                        if raw_val is not None:
-                            value = EboApi.decode_value(raw_val) if isinstance(raw_val, str) and raw_val.startswith('0x') else raw_val
-                            unit = prop.get('unitDisplayName', '') if isinstance(prop, dict) else ''
-                            signals[name] = {
-                                'path': value_path,
-                                'value': value,
-                                'unit': unit,
-                                'object_type': obj_type,
-                            }
-                            if verbose:
-                                print(f"    Found: {name} = {value} {unit}")
-                except Exception:
-                    pass
+            # Skip parent entry
+            if child_path == path:
+                continue
 
-            # Recurse into children
-            if obj_path:
-                walk(obj_path, depth + 1)
+            # Check if this is a point object with a Value property
+            if obj_type in POINT_TYPES:
+                props = obj.get('properties', {})
+                value_prop = props.get('Value', {})
+                raw_val = value_prop.get('value')
+                unit = value_prop.get('unitDisplayName', '')
+                decoded = hex_to_double(raw_val) if raw_val is not None else raw_val
+                if decoded is not None:
+                    signals[name] = {
+                        'path': f"{child_path}/Value",
+                        'value': decoded,
+                        'unit': unit,
+                        'object_type': obj_type,
+                    }
+                    if verbose:
+                        print(f"    Found: {name} = {decoded} {unit}")
+
+            # Recurse into children (folders and containers)
+            if obj_type.endswith('Folder') or 'base.Folder' in obj_type or obj_type.endswith('IOBus') or 'IO' in obj_type:
+                walk(child_path, depth + 1)
 
     print(f"  Walking object tree from {site_path}...")
     walk(site_path)
@@ -253,8 +275,8 @@ def main():
     print("  ADD NEW EBO BUILDING")
     print("=" * 60)
 
-    # Gather info
-    if args.non_interactive:
+    # Gather info — --browse implies non-interactive if base_url is given
+    if args.non_interactive or (args.browse and args.base_url):
         base_url = args.base_url
         credential_ref = args.credential_ref
         domain = args.domain

@@ -20,16 +20,17 @@ Complete guide for onboarding new entities (buildings and houses) into BVPro, fr
 
 BVPro supports two entity types:
 
-| Aspect | House (Villa) | Building (Commercial) |
-|---|---|---|
-| Config location | `profiles/HEM_FJV_Villa_*.json` | `buildings/*.json` |
-| Data fetcher | `HSF_Fetcher.py` (HomeSide API) | `building_fetcher.py` (Arrigo BMS) |
-| Env prefix | `HOUSE_*` | `BUILDING_*` |
-| InfluxDB tag | `house_id` | `building_id` |
-| InfluxDB measurement | `heating_system` | `building_system` |
-| Signals | ~10 heating variables | 100-250+ BMS signals |
-| Meter IDs | Single meter per house | Can have multiple meters |
-| Auth method | HomeSide username/password | Arrigo direct username/password |
+| Aspect | House (Villa) | Building (Arrigo) | Building (EBO) |
+|---|---|---|---|
+| Config location | `profiles/HEM_FJV_Villa_*.json` | `buildings/*.json` | `buildings/*.json` |
+| Data fetcher | `HSF_Fetcher.py` (HomeSide API) | `building_fetcher.py` (Arrigo) | `building_fetcher.py` (EBO) |
+| Env prefix | `HOUSE_*` | `BUILDING_*` | Shared `credential_ref` |
+| InfluxDB tag | `house_id` | `building_id` | `building_id` |
+| InfluxDB measurement | `heating_system` | `building_system` | `building_system` |
+| Signals | ~10 heating variables | 100-250+ BMS signals | 20-50+ BMS signals |
+| Meter IDs | Single meter per house | Can have multiple meters | Can have multiple meters |
+| Auth method | HomeSide username/password | Arrigo direct username/password | EBO SxWDigest (shared credential_ref) |
+| Onboard script | `add_customer.py` | `add_building.py` | `add_ebo_building.py` |
 
 ---
 
@@ -109,6 +110,139 @@ influx query 'from(bucket: "heating")
   |> filter(fn: (r) => r.building_id == "TE236_HEM_Kontor")
   |> limit(n: 5)'
 ```
+
+---
+
+## EBO Building Onboarding
+
+EBO (Schneider Electric) buildings use a different BMS API (SxWDigest) and a shared credential model. Multiple buildings can share one credential set via `credential_ref`.
+
+### Step 1: Add Shared Credentials to `.env`
+
+EBO uses named credential references. Add once per EBO server, then reference from multiple building configs:
+
+```bash
+# EBO credentials (shared across buildings on the same server)
+EBO_HK_CRED1_USERNAME=username
+EBO_HK_CRED1_PASSWORD=password
+EBO_HK_CRED1_DOMAIN=        # Often empty for EBO
+```
+
+### Step 2: Browse the EBO Object Tree
+
+Explore the EBO server to find your building's AS controller:
+
+```bash
+# Browse root level to find Enterprise Controllers
+/srv/BVPro/webgui/venv/bin/python add_ebo_building.py \
+    --base-url https://ebo.example.com \
+    --credential-ref EBO_HK_CRED1 \
+    --browse --site-path "/EC1"
+
+# Browse deeper to find AS controllers
+/srv/BVPro/webgui/venv/bin/python add_ebo_building.py \
+    --base-url https://ebo.example.com \
+    --credential-ref EBO_HK_CRED1 \
+    --browse --site-path "/BuildingName AS3"
+```
+
+**EBO tree structure:**
+- `/EC1` — Enterprise Controller (root)
+  - `/ES1`, `/ES2` — Enterprise Servers
+    - `Fastigheter med flera AS-x` — Buildings folder
+- `/BuildingName AS3` — AS controllers are also at root level
+
+### Step 3: Discover Signals and Create Config
+
+Run discovery on the building's AS controller path:
+
+```bash
+/srv/BVPro/webgui/venv/bin/python add_ebo_building.py \
+    --non-interactive \
+    --base-url https://ebo.example.com \
+    --credential-ref EBO_HK_CRED1 \
+    --site-path "/BuildingName 20942 AS3" \
+    --name "BuildingName" \
+    --building-id HK_Building_20942 \
+    --lat 56.67 --lon 12.86
+```
+
+This creates `buildings/HK_Building_20942.json` with discovered signals. The script also generates a `_signals.json` reference file containing all available signals and trend logs for future use.
+
+### Step 4: Edit Configuration
+
+After discovery, review and edit the config:
+
+1. **Set `field_name`** for each signal you want to fetch (maps to InfluxDB field name)
+2. **Set `fetch: true`** for signals to poll
+3. **Add `trend_log` paths** for signals that need historical bootstrap (from `_signals.json`)
+4. **Add heat curve signals** with `write_on_change: true` flag
+
+```json
+{
+  "connection": {
+    "system": "ebo",
+    "base_url": "https://ebo.example.com",
+    "credential_ref": "EBO_HK_CRED1"
+  },
+  "analog_signals": {
+    "/Building AS3/VS1/IO Bus/VS1-GT1/Value": {
+      "field_name": "vs1_supply_temp",
+      "fetch": true,
+      "trend_log": "/Building AS3/VS1/Trendloggar/VS1-GT1-Tillopp"
+    },
+    "/Building AS3/VS1/Variabler/GT1_X1/Value": {
+      "field_name": "vs1_hc_x1",
+      "fetch": true,
+      "write_on_change": true
+    }
+  }
+}
+```
+
+**EBO signal path formats:**
+- **IO Bus:** `/Site/Subsystem/IO Bus/PointName/Value` — physical sensors (temperatures, pressures, valve positions)
+- **Variabler:** `/Site/Subsystem/Variabler/Name/Value` — setpoints, heat curve breakpoints
+- **Variabler Externa:** `/Site/Subsystem/Variabler Externa/Name/Value` — external references
+
+### Step 5: Test Data Fetch
+
+```bash
+# Dry run -- verify signals can be read
+/srv/BVPro/webgui/venv/bin/python building_fetcher.py \
+    --building HK_Building_20942 --once --dry-run
+
+# Real fetch -- write to InfluxDB
+INFLUXDB_URL=http://localhost:8086 /srv/BVPro/webgui/venv/bin/python building_fetcher.py \
+    --building HK_Building_20942 --once
+```
+
+### Step 6: Bootstrap Historical Data
+
+```bash
+INFLUXDB_URL=http://localhost:8086 /srv/BVPro/webgui/venv/bin/python gap_filler.py \
+    --bootstrap --house-id HK_Building_20942 --days 90 --yes
+```
+
+The `--yes` flag skips the interactive sanity check prompt (expected warnings: heat curve signals and some setpoints have no trend logs).
+
+### Step 7: Orchestrator Auto-Discovery (automatic)
+
+The orchestrator picks up new EBO buildings the same as Arrigo:
+1. Finds `buildings/<id>.json` with `connection.system: "ebo"`
+2. Resolves credentials via `credential_ref`
+3. Spawns `building_fetcher.py` which auto-detects EBO mode
+
+**No restart needed.**
+
+### EBO-Specific Notes
+
+- **Shared credentials:** Use `credential_ref` in building config instead of per-building env vars. One credential set can serve all buildings on the same EBO server.
+- **IO Bus batching:** The adapter reads IO Bus points by browsing the parent folder (not individual point paths). This is a single API call per subsystem.
+- **Hex-encoded doubles:** EBO returns values as IEEE 754 hex strings. The adapter decodes these automatically.
+- **Heat curves:** VS subsystems have breakpoint tables (X=outdoor temp, Y=supply temp). VS1 typically has 7 points, VS2 has 3 points. Always fetch these with `write_on_change: true`.
+- **Signal reference file:** `buildings/<id>_signals.json` stores all discovered signals and trend logs so you don't need to re-browse the EBO tree when adding signals later.
+- **venv required:** Admin scripts must run with `/srv/BVPro/webgui/venv/bin/python` since system Python is externally-managed.
 
 ---
 
@@ -349,11 +483,15 @@ python3 energy_importer.py --dry-run
 
 | Problem | Cause | Fix |
 |---|---|---|
-| Orchestrator skips building | Missing `BUILDING_*_USERNAME` in `.env` | Add credentials and restart orchestrator |
-| No signals discovered | Wrong Arrigo host or account | Verify `connection.host` and `connection.account` |
+| Orchestrator skips building | Missing credentials in `.env` | Add `BUILDING_*` or `credential_ref` credentials |
+| No signals discovered (Arrigo) | Wrong Arrigo host or account | Verify `connection.host` and `connection.account` |
+| No signals discovered (EBO) | Wrong site path or IO Bus structure | Browse tree with `--browse` to verify paths |
+| EBO login fails | Wrong credentials or domain | Check `credential_ref` resolves correctly in `.env` |
+| EBO values are `None` | Hex decoding failure or wrong path type | Verify path ends in `/Value`, check IO Bus vs direct |
 | Energy data not imported | Meter ID not in any config | Add `meter_ids` to building/profile JSON |
 | Energy data tagged wrong | Meter ID in both house and building config | Ensure each meter ID is only in one entity |
 | "No customer profile found" (house) | Profile filename doesn't match client ID | Check logs for auto-discovered client ID |
+| Bootstrap fails with EOFError | Running non-interactively without `--yes` | Add `--yes` flag to `gap_filler.py` |
 
 ---
 

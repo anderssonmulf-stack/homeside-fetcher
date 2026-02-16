@@ -31,6 +31,12 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+try:
     from influxdb_client import InfluxDBClient, Point, WritePrecision
     from influxdb_client.client.write_api import SYNCHRONOUS
     INFLUX_AVAILABLE = True
@@ -2143,7 +2149,7 @@ class ArrigoBootstrapper:
         except Exception as e:
             print(f"  Could not load profiles for comparison: {e}")
 
-    def run(self, dry_run=False, no_calibrate=False):
+    def run(self, dry_run=False, no_calibrate=False, yes=False):
         """Execute the full bootstrap pipeline."""
         print("=" * 60)
         print(f"Bootstrap: {self.house_id}")
@@ -2179,11 +2185,14 @@ class ArrigoBootstrapper:
         # Phase 4: Sanity checks
         passed = self._phase4_sanity_check(data_by_time, signal_stats, weather_data, energy_data)
         if not passed and not dry_run:
-            print("\nSanity checks found critical issues.")
-            response = input("Continue anyway? [y/N]: ").strip().lower()
-            if response != 'y':
-                print("Aborted.")
-                return False
+            if yes:
+                print("\nSanity checks found critical issues. Continuing (--yes).")
+            else:
+                print("\nSanity checks found critical issues.")
+                response = input("Continue anyway? [y/N]: ").strip().lower()
+                if response != 'y':
+                    print("Aborted.")
+                    return False
         elif not passed:
             print("\n(Sanity issues found - continuing dry run to show write plan)")
 
@@ -2349,7 +2358,8 @@ def run_bootstrap(args):
     try:
         success = bootstrapper.run(
             dry_run=args.dry_run,
-            no_calibrate=args.no_calibrate
+            no_calibrate=args.no_calibrate,
+            yes=args.yes
         )
         if not success:
             sys.exit(1)
@@ -2446,6 +2456,7 @@ Examples:
     parser.add_argument('--heating-only', action='store_true', help='Only fill heating gaps (skip weather)')
 
     # Options
+    parser.add_argument('--yes', '-y', action='store_true', help='Skip interactive confirmations')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done')
     parser.add_argument('--detect-only', action='store_true', help='Only detect gaps, do not fill')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')

@@ -28,6 +28,12 @@ import logging
 import argparse
 from datetime import datetime, timezone, timedelta
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from arrigo_api import load_building_config, get_fetch_signals
 
 try:
@@ -349,13 +355,30 @@ def main():
     system = connection.get('system', 'arrigo')
     interval_minutes = config.get('poll_interval_minutes', 5)
 
-    # Resolve credentials: BMS_* (generic) > ARRIGO_* (legacy)
-    username = args.username or os.getenv('BMS_USERNAME') or os.getenv('ARRIGO_USERNAME')
-    password = args.password or os.getenv('BMS_PASSWORD') or os.getenv('ARRIGO_PASSWORD')
+    # Resolve credentials: CLI args > BMS_* env > credential_ref > BUILDING_<id>_* > ARRIGO_*
+    username = args.username or os.getenv('BMS_USERNAME')
+    password = args.password or os.getenv('BMS_PASSWORD')
 
     if not username or not password:
-        logger.error("Credentials required. Use --username/--password or "
-                     "BMS_USERNAME/BMS_PASSWORD env vars")
+        # Try credential_ref from config (named shared credentials)
+        credential_ref = connection.get('credential_ref')
+        if credential_ref:
+            username = username or os.getenv(f'{credential_ref}_USERNAME')
+            password = password or os.getenv(f'{credential_ref}_PASSWORD')
+
+    if not username or not password:
+        # Try legacy per-building credentials
+        username = username or os.getenv(f'BUILDING_{building_id}_USERNAME')
+        password = password or os.getenv(f'BUILDING_{building_id}_PASSWORD')
+
+    if not username or not password:
+        # Try legacy ARRIGO_* fallback
+        username = username or os.getenv('ARRIGO_USERNAME')
+        password = password or os.getenv('ARRIGO_PASSWORD')
+
+    if not username or not password:
+        logger.error("Credentials required. Use --username/--password, "
+                     "BMS_USERNAME/BMS_PASSWORD env vars, or credential_ref in config")
         sys.exit(1)
 
     # Get fetch signal map
@@ -382,6 +405,8 @@ def main():
         from ebo_adapter import EboBmsAdapter
         base_url = connection.get('base_url')
         domain = connection.get('domain', '')
+        if not domain and connection.get('credential_ref'):
+            domain = os.getenv(f'{connection["credential_ref"]}_DOMAIN', '')
         if not base_url:
             logger.error("No base_url in building config connection block")
             sys.exit(1)

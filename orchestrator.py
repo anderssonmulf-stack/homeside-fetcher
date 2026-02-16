@@ -198,6 +198,8 @@ def scan_configs() -> dict[str, dict]:
     buildings = Path(BUILDINGS_DIR)
     if buildings.is_dir():
         for p in sorted(buildings.glob("*.json")):
+            if '_signals.json' in p.name:
+                continue
             data = load_json(str(p))
             if not data:
                 continue

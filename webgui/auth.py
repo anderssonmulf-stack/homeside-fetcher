@@ -465,7 +465,7 @@ class UserManager:
 
         if os.path.exists(buildings_dir):
             for filename in os.listdir(buildings_dir):
-                if filename.endswith('.json') and not filename.endswith('.template'):
+                if filename.endswith('.json') and not filename.endswith('.template') and '_signals.json' not in filename:
                     buildings.append(filename[:-5])  # Remove .json
 
         return buildings
