@@ -3,40 +3,34 @@
 HomeSide Heat Curve Control
 
 Takes control of a HomeSide house's heat curve by:
-1. Reading and storing the current baseline (Yref curve + adaption settings)
-2. Disabling adaption and writing a desired curve
+1. Reading and storing the current baseline (Cwl.Advise curve + adaption settings)
+2. Writing a desired curve via Cwl.Advise.A[64-73]
 3. Restoring the original baseline on exit
+
+Architecture note:
+- Cwl.Advise.A[64-73] is an override layer on top of Yref/CurveAdaptation.
+  Writing to it does NOT change Yref values — it's a separate writable layer.
+- Writing to KU_VS1_GT_TILL_1_Yref* directly causes API timeouts.
+- Only Cwl.Advise.A[*] paths work for curve writes.
 
 Separate from heat_curve_controller.py (which handles predictions/ML).
 Each building system type gets its own control script.
 """
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 import logging
 
 
-# Yref index (1-10) maps to outdoor temperature
-YREF_OUTDOOR_TEMPS = {
+# Curve point index (1-10) maps to outdoor temperature
+CURVE_OUTDOOR_TEMPS = {
     1: -30, 2: -25, 3: -20, 4: -15, 5: -10,
     6: -5,  7: 0,   8: 5,   9: 10,  10: 15,
 }
 
-# Cwl.Advise.A write index maps to Yref index
-# A[64] = Yref1 (-30), A[65] = Yref2 (-25), ... A[73] = Yref10 (+15)
-YREF_TO_WRITE_INDEX = {i: 63 + i for i in range(1, 11)}
-WRITE_INDEX_TO_YREF = {v: k for k, v in YREF_TO_WRITE_INDEX.items()}
-
-# Variables to read from HomeSide for baseline
-ADAPTION_VARS = [
-    'KU_VS1_GT_TILL_1_Adaption',
-    'KU_VS1_GT_TILL_1_AdaptTime',
-    'KU_VS1_GT_TILL_1_AdaptDelay',
-]
-
-YREF_VARS = [f'KU_VS1_GT_TILL_1_Yref{i}' for i in range(1, 11)]
-
-CURVE_ADAPTATION_VARS = [f'KU_VS1_GT_TILL_1_CurveAdaptation_Y_{i}' for i in range(1, 11)]
+# Cwl.Advise.A write indices: A[64]=point 1 (-30°C) ... A[73]=point 10 (+15°C)
+POINT_TO_ADVISE_INDEX = {i: 63 + i for i in range(1, 11)}
+ADVISE_INDEX_TO_POINT = {v: k for k, v in POINT_TO_ADVISE_INDEX.items()}
 
 
 class HomeSideControl:
@@ -70,13 +64,34 @@ class HomeSideControl:
         self.logger = logger or logging.getLogger(__name__)
         self.seq_logger = seq_logger
 
+    def _parse_variables(self, raw_data):
+        """Parse get_heating_data() response into lookups by short name and path."""
+        short_lookup = {}
+        path_lookup = {}
+        for var in raw_data.get('variables', []):
+            full_name = var.get('variable', '')
+            path = var.get('path', '')
+            value = var.get('value')
+            short = full_name.split('.')[-1] if '.' in full_name else full_name
+            if value is not None:
+                short_lookup[short] = value
+            if path and value is not None:
+                path_lookup[path] = value
+        return short_lookup, path_lookup
+
     def read_baseline(self) -> Optional[Dict[str, Any]]:
         """
-        Read current Yref curve and adaption settings from HomeSide API.
+        Read current Cwl.Advise curve values and adaption settings from HomeSide API.
+
+        Cwl.Advise.A[64-73] is the writable override layer. Yref is the underlying
+        user curve (read-only via API). We store the Advise values since that's what
+        we can write back.
 
         Returns:
-            Dict with 'yref' (dict of index->value), 'adaption' (bool),
-            'adapt_time', 'adapt_delay', or None on failure.
+            Dict with 'curve' (dict of point index -> supply temp),
+            'yref' (dict of index -> value, for reference),
+            'adaption' (bool), 'adapt_time', 'adapt_delay',
+            or None on failure.
         """
         try:
             raw_data = self.api.get_heating_data()
@@ -84,42 +99,43 @@ class HomeSideControl:
                 self.logger.error("Failed to read heating data for baseline")
                 return None
 
-            # Build lookup by short_name
-            var_lookup = {}
-            for var in raw_data['variables']:
-                path = var.get('path', '')
-                short = path.split('.')[-1] if '.' in path else path
-                var_lookup[short] = var.get('value')
+            short_lookup, path_lookup = self._parse_variables(raw_data)
 
-            # Extract Yref values
+            # Extract Cwl.Advise.A[64-73] values (the writable override layer)
+            curve = {}
+            for point_idx, advise_idx in POINT_TO_ADVISE_INDEX.items():
+                path = f'Cwl.Advise.A[{advise_idx}]'
+                val = path_lookup.get(path)
+                if val is not None:
+                    curve[str(point_idx)] = float(val)
+
+            if len(curve) != 10:
+                self.logger.warning(f"Incomplete Cwl.Advise data: got {len(curve)}/10 points")
+                if not curve:
+                    return None
+
+            # Also read Yref (underlying user curve) for reference
             yref = {}
             for i in range(1, 11):
-                key = f'KU_VS1_GT_TILL_1_Yref{i}'
-                val = var_lookup.get(key)
+                val = short_lookup.get(f'KU_VS1_GT_TILL_1_Yref{i}')
                 if val is not None:
                     yref[str(i)] = float(val)
 
-            if len(yref) != 10:
-                self.logger.warning(f"Incomplete Yref data: got {len(yref)}/10 points")
-                if not yref:
-                    return None
-
             # Extract adaption settings
-            adaption = var_lookup.get('KU_VS1_GT_TILL_1_Adaption')
-            adapt_time = var_lookup.get('KU_VS1_GT_TILL_1_AdaptTime')
-            adapt_delay = var_lookup.get('KU_VS1_GT_TILL_1_AdaptDelay')
+            adaption = short_lookup.get('KU_VS1_GT_TILL_1_Adaption')
 
             baseline = {
+                'curve': curve,
                 'yref': yref,
                 'adaption': bool(adaption) if adaption is not None else None,
-                'adapt_time': adapt_time,
-                'adapt_delay': adapt_delay,
+                'adapt_time': short_lookup.get('KU_VS1_GT_TILL_1_AdaptTime'),
+                'adapt_delay': short_lookup.get('KU_VS1_GT_TILL_1_AdaptDelay'),
             }
 
             self.logger.info(
                 f"Read baseline for {self.profile.customer_id}: "
                 f"adaption={baseline['adaption']}, "
-                f"yref points={len(yref)}"
+                f"curve points={len(curve)}, yref points={len(yref)}"
             )
             return baseline
 
@@ -168,12 +184,11 @@ class HomeSideControl:
         """
         Take control of the heat curve.
 
-        1. Read and store current baseline
-        2. Disable adaption
-        3. Write desired curve values
+        1. Read and store current baseline (Cwl.Advise values)
+        2. Write desired curve values via Cwl.Advise.A[64-73]
 
         Args:
-            desired_curve: Dict mapping Yref index (1-10) to desired supply temp.
+            desired_curve: Dict mapping point index (1-10) to desired supply temp.
                            Only provided points are written; others left unchanged.
             reason: Why we're taking control (for logging)
 
@@ -197,25 +212,20 @@ class HomeSideControl:
 
         self.save_baseline(baseline)
 
-        # 2. Disable adaption (so HomeSide doesn't override our curve)
-        adaption_written = self._write_adaption(False)
-        if not adaption_written:
-            self.logger.warning("Could not disable adaption — continuing with curve write anyway")
-
-        # 3. Write desired curve values
+        # 2. Write desired curve values via Cwl.Advise
         success_count = 0
         fail_count = 0
-        for yref_idx, supply_temp in desired_curve.items():
-            yref_idx = int(yref_idx)
-            if yref_idx not in YREF_TO_WRITE_INDEX:
-                self.logger.warning(f"Invalid Yref index {yref_idx}, skipping")
+        for point_idx, supply_temp in desired_curve.items():
+            point_idx = int(point_idx)
+            if point_idx not in POINT_TO_ADVISE_INDEX:
+                self.logger.warning(f"Invalid point index {point_idx}, skipping")
                 continue
 
-            write_idx = YREF_TO_WRITE_INDEX[yref_idx]
-            path = f"Cwl.Advise.A[{write_idx}]"
+            advise_idx = POINT_TO_ADVISE_INDEX[point_idx]
+            path = f"Cwl.Advise.A[{advise_idx}]"
 
             if self.api.write_value(path, supply_temp):
-                outdoor = YREF_OUTDOOR_TEMPS[yref_idx]
+                outdoor = CURVE_OUTDOOR_TEMPS[point_idx]
                 self.logger.info(f"Wrote {path} = {supply_temp:.1f} (outdoor {outdoor:+d}C)")
                 success_count += 1
             else:
@@ -224,9 +234,6 @@ class HomeSideControl:
 
         if success_count == 0:
             self.logger.error("Failed to write any curve points — aborting control entry")
-            # Try to restore adaption
-            if baseline.get('adaption'):
-                self._write_adaption(True)
             return False
 
         # 4. Update profile state
@@ -275,33 +282,28 @@ class HomeSideControl:
             return True
 
         baseline = ctrl.baseline
-        if not baseline or not baseline.get('yref'):
-            self.logger.error("No baseline stored in profile — cannot restore!")
+        if not baseline or not baseline.get('curve'):
+            self.logger.error("No baseline curve stored in profile — cannot restore!")
             return False
 
-        # 1. Restore Yref curve values
-        yref = baseline['yref']
+        # 1. Restore Cwl.Advise curve values
+        curve = baseline['curve']
         success_count = 0
         fail_count = 0
 
-        for idx_str, supply_temp in yref.items():
-            yref_idx = int(idx_str)
-            if yref_idx not in YREF_TO_WRITE_INDEX:
+        for idx_str, supply_temp in curve.items():
+            point_idx = int(idx_str)
+            if point_idx not in POINT_TO_ADVISE_INDEX:
                 continue
 
-            write_idx = YREF_TO_WRITE_INDEX[yref_idx]
-            path = f"Cwl.Advise.A[{write_idx}]"
+            advise_idx = POINT_TO_ADVISE_INDEX[point_idx]
+            path = f"Cwl.Advise.A[{advise_idx}]"
 
             if self.api.write_value(path, supply_temp):
                 success_count += 1
             else:
                 self.logger.error(f"Failed to restore {path} = {supply_temp}")
                 fail_count += 1
-
-        # 2. Restore adaption setting
-        original_adaption = baseline.get('adaption')
-        if original_adaption is not None:
-            self._write_adaption(original_adaption)
 
         # 3. Update profile state
         ctrl.in_control = False
@@ -343,86 +345,21 @@ class HomeSideControl:
         }
         if ctrl.baseline:
             status['baseline_adaption'] = ctrl.baseline.get('adaption')
-            status['baseline_points'] = len(ctrl.baseline.get('yref', {}))
+            status['baseline_points'] = len(ctrl.baseline.get('curve', {}))
         return status
 
-    def _write_adaption(self, enabled: bool) -> bool:
-        """
-        Write the adaption flag to HomeSide.
-
-        The write path for adaption needs discovery. We try the variable name
-        directly first, which works for many HomeSide variables.
-        """
-        # Try the direct variable name as write path
-        path = 'KU_VS1_GT_TILL_1_Adaption'
-        value = 'true' if enabled else 'false'
-
-        result = self.api.write_value(path, value)
-        if result:
-            self.logger.info(f"Set adaption = {enabled}")
-        else:
-            self.logger.warning(
-                f"Failed to write adaption via '{path}'. "
-                f"The write path may need discovery — run discover_adaption_write_path()."
-            )
-        return result
-
-    def discover_adaption_write_path(self) -> Optional[str]:
-        """
-        Discover the correct write path for the adaption toggle.
-
-        Reads current value, tries writing the opposite via candidate paths,
-        reads again to confirm, then restores the original.
-
-        Returns the working write path, or None if none found.
-        """
-        # Read current adaption state
-        baseline = self.read_baseline()
-        if baseline is None or baseline.get('adaption') is None:
-            self.logger.error("Cannot discover: failed to read current adaption state")
-            return None
-
-        original = baseline['adaption']
-        opposite = not original
-        opposite_str = 'true' if opposite else 'false'
-        original_str = 'true' if original else 'false'
-
-        # Candidate write paths to try
-        candidates = [
-            'KU_VS1_GT_TILL_1_Adaption',
-            f'{self.profile.customer_id}.KU_VS1_GT_TILL_1_Adaption',
-        ]
-
-        for path in candidates:
-            self.logger.info(f"Testing write path: {path} = {opposite_str}")
-
-            if not self.api.write_value(path, opposite_str):
-                self.logger.info(f"  Write failed for {path}")
-                continue
-
-            # Read back to verify
-            import time
-            time.sleep(2)
-            check = self.read_baseline()
-            if check and check.get('adaption') == opposite:
-                self.logger.info(f"  Confirmed: {path} works!")
-                # Restore original
-                self.api.write_value(path, original_str)
-                time.sleep(1)
-                return path
-            else:
-                self.logger.info(f"  Write appeared to succeed but value didn't change")
-
-        self.logger.warning("No working write path found for adaption toggle")
-        return None
+    # NOTE: Writing to KU_VS1_GT_TILL_1_Adaption causes API timeouts.
+    # Only Cwl.Advise.A[*] paths work for writes. The adaption toggle
+    # may need a different mechanism (e.g. HomeSide web UI) or a yet-
+    # undiscovered write path. For now, we control only the curve values.
 
 
-def format_curve(yref: Dict[str, float]) -> str:
-    """Format a Yref curve dict as a readable string."""
+def format_curve(curve: Dict[str, float]) -> str:
+    """Format a curve dict (point index -> supply temp) as a readable string."""
     lines = []
     for i in range(1, 11):
         key = str(i)
-        if key in yref:
-            outdoor = YREF_OUTDOOR_TEMPS[i]
-            lines.append(f"  {outdoor:+3d}C -> {yref[key]:.1f}C")
+        if key in curve:
+            outdoor = CURVE_OUTDOOR_TEMPS[i]
+            lines.append(f"  {outdoor:+3d}C -> {curve[key]:.1f}C")
     return '\n'.join(lines)
