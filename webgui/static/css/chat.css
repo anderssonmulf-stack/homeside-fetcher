@@ -314,7 +314,7 @@ body.chat-open .footer {
         width: 100%;
     }
 
-    /* Don't shift content on small screens -- panel covers full width */
+    /* Don't shift content on small screens — panel covers full width */
     body.chat-open .container,
     body.chat-open .footer {
         margin-right: 0;

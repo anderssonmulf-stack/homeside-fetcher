@@ -446,7 +446,7 @@ def update_building_description(house_id: str, friendly_name: str = None,
 
 
 # =========================================================================
-# Tool registry -- maps tool names to functions and metadata
+# Tool registry — maps tool names to functions and metadata
 # =========================================================================
 
 TOOL_DEFINITIONS = [

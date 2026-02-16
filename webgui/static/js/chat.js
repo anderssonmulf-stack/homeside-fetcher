@@ -81,7 +81,7 @@
         })
         .catch(function(err) {
             hideTyping();
-            appendError(err.message || 'Kunde inte na assistenten.');
+            appendError(err.message || 'Kunde inte nå assistenten.');
         })
         .finally(function() {
             setSending(false);
