@@ -1162,6 +1162,64 @@ class InfluxReader:
             print(f"Failed to query efficiency metrics: {e}")
             return []
 
+    def get_realtime_power(self, house_id: str, hours: int = 168) -> list:
+        """
+        Get real-time power and flow from MBus meter (via heating_system measurement).
+
+        Only available for houses with an MBus-connected energy meter.
+        Returns empty list if no dh_power data exists.
+        """
+        self._ensure_connection()
+        if not self.client:
+            return []
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "heating_system")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> filter(fn: (r) =>
+                    r["_field"] == "dh_power" or
+                    r["_field"] == "dh_flow"
+                )
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            results = []
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+
+                        power = record.values.get('dh_power')
+                        flow = record.values.get('dh_flow')
+
+                        # Skip rows where power is None (field not present for this house)
+                        if power is None:
+                            continue
+
+                        results.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'dh_power': round(power, 2) if power is not None else None,
+                            'dh_flow': round(flow, 0) if flow is not None else None,
+                        })
+
+            return results
+
+        except Exception as e:
+            print(f"Failed to query realtime power: {e}")
+            return []
+
     def get_power_history(self, house_id: str, hours: int = 168) -> dict:
         """
         Get power consumption history from imported energy data (Dropbox).

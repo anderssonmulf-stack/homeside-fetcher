@@ -993,6 +993,23 @@ def api_temperature_history(house_id):
     })
 
 
+@app.route('/api/house/<house_id>/realtime-power')
+@require_login
+def api_realtime_power(house_id):
+    """API endpoint for real-time MBus power and flow data."""
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    data = influx.get_realtime_power(house_id, hours=hours)
+
+    return jsonify({'data': data, 'hours': hours})
+
+
 @app.route('/api/house/<house_id>/supply-return-forecast')
 @require_login
 def api_supply_return_forecast(house_id):

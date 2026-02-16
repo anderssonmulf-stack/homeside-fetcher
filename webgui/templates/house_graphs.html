@@ -202,6 +202,29 @@
         <div id="efficiency-chart" class="chart-container"></div>
         <div id="efficiency-summary" class="metric-summary"></div>
     </div>
+
+    <!-- Real-Time Power & Flow Chart (MBus meter, if available) -->
+    <div class="card" id="realtime-power-card" style="display: none;">
+        <div class="card-header-flex">
+            <h2>Real-Time Power & Flow (MBus)</h2>
+            <div class="chart-controls">
+                <select id="realtime-power-days-select" class="role-select" onchange="updateRealtimePowerChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Instantaneous power and flow from the MBus energy meter, sampled every 5 minutes.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color" style="background: #e74c3c;"></span> Power (kW)</span>
+                <span class="legend-item"><span class="legend-color" style="background: #3498db;"></span> Flow (l/h)</span>
+            </span>
+        </p>
+        <div id="realtime-power-chart" class="chart-container"></div>
+    </div>
     {% endif %}{# end not is_aggregate for per-house charts #}
 
     <!-- Energy Forecast Chart (24h ahead) -->
@@ -1569,6 +1592,109 @@
             });
     }
 
+    // Real-Time Power & Flow Chart (MBus meter)
+    const realtimePowerState = {
+        loadedHours: 0,
+        isLoading: false,
+        data: [],
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function updateRealtimePowerChart(extendHours = null) {
+        const selectEl = document.getElementById('realtime-power-days-select');
+        if (!selectEl) return;  // Not present on aggregate view
+
+        const hours = extendHours || parseInt(selectEl.value);
+        const chartDiv = document.getElementById('realtime-power-chart');
+        const cardDiv = document.getElementById('realtime-power-card');
+
+        if (!extendHours) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading power data...</div>';
+            realtimePowerState.data = [];
+        }
+        realtimePowerState.isLoading = true;
+
+        fetch(`/api/house/${houseId}/realtime-power?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { data: [] })
+            .then(result => {
+                realtimePowerState.isLoading = false;
+                const data = result.data || [];
+
+                // Hide card entirely if no MBus power data exists
+                if (data.length === 0) {
+                    cardDiv.style.display = 'none';
+                    return;
+                }
+
+                // Show the card
+                cardDiv.style.display = '';
+
+                realtimePowerState.loadedHours = hours;
+                realtimePowerState.data = data;
+                if (data.length > 0) {
+                    realtimePowerState.minLoadedTime = new Date(data[0].timestamp);
+                    realtimePowerState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                const timestamps = data.map(d => d.timestamp_display);
+                const traces = [
+                    {
+                        x: timestamps,
+                        y: data.map(d => d.dh_power),
+                        name: 'Power (kW)',
+                        type: 'scatter',
+                        mode: 'lines',
+                        line: { color: '#e74c3c', width: 1.5 },
+                        yaxis: 'y'
+                    },
+                    {
+                        x: timestamps,
+                        y: data.map(d => d.dh_flow),
+                        name: 'Flow (l/h)',
+                        type: 'scatter',
+                        mode: 'lines',
+                        line: { color: '#3498db', width: 1.5 },
+                        yaxis: 'y2'
+                    }
+                ];
+
+                const layout = {
+                    xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Power (kW)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', side: 'left' },
+                    yaxis2: { title: 'Flow (l/h)', overlaying: 'y', side: 'right', showgrid: false },
+                    height: 350,
+                    margin: { l: 60, r: 60, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                if (!extendHours) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendHours ? Plotly.react : Plotly.newPlot;
+                plotFn('realtime-power-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendHours) {
+                            document.getElementById('realtime-power-chart').on('plotly_relayout', (e) => handleChartPan(e, realtimePowerState, 'realtime-power-days-select', updateRealtimePowerChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendHours) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                realtimePowerState.isLoading = false;
+                console.error('Failed to load realtime power:', error);
+            });
+    }
+
     // Cost Estimate Chart with dynamic pan loading
     const costState = {
         loadedDays: 0,
@@ -2867,7 +2993,8 @@
         // Other charts - load with slight delay to not overload
         setTimeout(() => updateTemperatureHistoryChart(), 100);
         setTimeout(() => updateEfficiencyChart(), 200);
-        setTimeout(() => updateEnergyForecastChart(), 250);  // Energy forecast (24h ahead)
+        setTimeout(() => updateRealtimePowerChart(), 250);
+        setTimeout(() => updateEnergyForecastChart(), 300);  // Energy forecast (24h ahead)
         setTimeout(() => updateEnergySeparationChart(), 350);
         setTimeout(() => updateAccuracyChart(), 400);
         setTimeout(() => updateSignatureChart(), 450);
