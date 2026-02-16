@@ -2577,6 +2577,17 @@ def api_assistant_chat():
         'can_edit_fn': lambda hid: user_manager.can_edit_house(username, hid),
     }
 
+    # Pass current page entity context so the assistant knows what the user is viewing
+    viewing_house = data.get('house_id', '')
+    viewing_building = data.get('building_id', '')
+    viewing_name = data.get('entity_name', '')
+    if viewing_house or viewing_building:
+        user_context['viewing_entity'] = {
+            'house_id': viewing_house,
+            'building_id': viewing_building,
+            'name': viewing_name,
+        }
+
     # Load conversation history (keep last 10 messages for context)
     history = load_conversation(username, conversation_id)
     history = history[-10:]
@@ -2602,6 +2613,7 @@ def api_assistant_chat():
                 user_name=user_name,
                 user_email=user_email,
                 summary=ticket.get('summary', ''),
+                details=ticket.get('details', ''),
                 transcript=history,
             )
         except Exception as e:

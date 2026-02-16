@@ -69,6 +69,13 @@
     {% block extra_scripts %}{% endblock %}
 
     {% if ai_enabled and session.user_id %}
+    <script>
+        window.chatEntityContext = {
+            house_id: {{ (house_id | default('')) | tojson }},
+            building_id: {{ (building_id | default('')) | tojson }},
+            entity_name: {{ (current_house_name | default(current_building_name | default(''))) | tojson }}
+        };
+    </script>
     {% include 'partials/chat_panel.html' %}
     <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
     {% endif %}

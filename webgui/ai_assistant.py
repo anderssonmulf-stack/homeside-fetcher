@@ -59,6 +59,18 @@ def _build_system_prompt(user_context: dict) -> str:
 
     today = datetime.now(SWEDISH_TZ).strftime('%Y-%m-%d')
 
+    # Current page context
+    viewing = user_context.get('viewing_entity')
+    if viewing:
+        if viewing.get('house_id'):
+            viewing_line = f"- Currently viewing: House \"{viewing.get('name', viewing['house_id'])}\" (ID: {viewing['house_id']})"
+        elif viewing.get('building_id'):
+            viewing_line = f"- Currently viewing: Building \"{viewing.get('name', viewing['building_id'])}\" (ID: {viewing['building_id']})"
+        else:
+            viewing_line = ''
+    else:
+        viewing_line = '- Currently viewing: Dashboard (no specific entity selected)'
+
     role_instructions = {
         'admin': 'You have full access. You can read all data and change settings for any entity.',
         'user': 'You can view data for your assigned entities and change settings for your own house.',
@@ -78,6 +90,7 @@ def _build_system_prompt(user_context: dict) -> str:
 - Username: {username}
 - Role: {role}
 - {role_instructions.get(role, 'Read-only access.')}
+{viewing_line}
 - Accessible entities:
 {entities}
 

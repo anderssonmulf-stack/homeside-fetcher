@@ -419,7 +419,8 @@ This link will expire in 24 hours.
     # =========================================================================
 
     def send_support_ticket(self, user_name: str, user_email: str,
-                           summary: str, transcript: list):
+                           summary: str, transcript: list,
+                           details: str = ''):
         """Send support ticket email to admins with chat transcript."""
         subject = f"[{self.email_prefix}] Support Ticket: {summary[:60]}"
 
@@ -448,6 +449,7 @@ This link will expire in 24 hours.
                     <td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">Summary:</td>
                     <td style="padding: 10px; border: 1px solid #ddd;">{summary}</td>
                 </tr>
+                {'<tr><td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; vertical-align: top;">Details:</td><td style="padding: 10px; border: 1px solid #ddd; white-space: pre-wrap;">' + details.replace("<", "&lt;").replace(">", "&gt;") + '</td></tr>' if details else ''}
             </table>
 
             <h3>Chat Transcript</h3>
@@ -462,11 +464,12 @@ This link will expire in 24 hours.
         </html>
         """
 
+        details_text = f"\nDetails:\n{details}\n" if details else ""
         text_body = f"""
 Support Ticket from {user_name} ({user_email})
 
 Summary: {summary}
-
+{details_text}
 Chat transcript included in HTML version.
         """
 

@@ -53,13 +53,20 @@
         showTyping();
         setSending(true);
 
+        var payload = {
+            message: message,
+            conversation_id: currentConversationId,
+        };
+        // Include current page entity context if available
+        var ctx = window.chatEntityContext || {};
+        if (ctx.house_id) payload.house_id = ctx.house_id;
+        if (ctx.building_id) payload.building_id = ctx.building_id;
+        if (ctx.entity_name) payload.entity_name = ctx.entity_name;
+
         fetch('/api/assistant/chat', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                message: message,
-                conversation_id: currentConversationId,
-            }),
+            body: JSON.stringify(payload),
         })
         .then(function(r) {
             if (!r.ok) {
