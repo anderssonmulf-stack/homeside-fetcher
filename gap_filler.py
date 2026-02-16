@@ -936,7 +936,7 @@ class ArrigoBootstrapper:
         self.signal_map = {}
         for name, info in analog_fetch.items():
             sig_config = config.get('analog_signals', {}).get(name, {})
-            self.signal_map[info['signal_id']] = {
+            entry = {
                 'field_name': info['field_name'],
                 'arrigo_name': name,
                 'unit': info.get('unit', ''),
@@ -944,6 +944,9 @@ class ArrigoBootstrapper:
                 'trend_log': sig_config.get('trend_log', ''),
                 'trend_unit_id': sig_config.get('trend_unit_id', 0),
             }
+            if 'min_value' in sig_config:
+                entry['min_value'] = sig_config['min_value']
+            self.signal_map[info['signal_id']] = entry
 
         print(f"  EBO: {base_url} ({len(self.signal_map)} signals)")
         return True
@@ -1140,16 +1143,22 @@ class ArrigoBootstrapper:
                     end_time_utc=end_us,
                 )
 
+                min_val = info.get('min_value')
                 points_added = 0
+                points_filtered = 0
                 for record in records:
                     ts = record.timestamp_utc
                     if start_time <= ts <= end_time:
+                        if min_val is not None and isinstance(record.value, (int, float)) and record.value < min_val:
+                            points_filtered += 1
+                            continue
                         if ts not in data_by_time:
                             data_by_time[ts] = {}
                         data_by_time[ts][field_name] = record.value
                         points_added += 1
 
-                print(f"{points_added} points")
+                filtered_msg = f" ({points_filtered} filtered < {min_val})" if points_filtered else ""
+                print(f"{points_added} points{filtered_msg}")
                 signal_stats[field_name] = points_added
 
             except Exception as e:

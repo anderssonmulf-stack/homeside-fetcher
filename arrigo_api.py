@@ -900,12 +900,15 @@ def get_fetch_signals(config: dict) -> Tuple[dict, dict]:
     analog_fetch = {}
     for name, sig in config.get('analog_signals', {}).items():
         if sig.get('fetch'):
-            analog_fetch[name] = {
+            entry = {
                 'signal_id': sig['signal_id'],
                 'field_name': sig.get('field_name') or name,
                 'unit': sig.get('unit', ''),
                 'category': sig.get('category', 'other'),
             }
+            if 'min_value' in sig:
+                entry['min_value'] = sig['min_value']
+            analog_fetch[name] = entry
 
     digital_fetch = {}
     for name, sig in config.get('digital_signals', {}).items():

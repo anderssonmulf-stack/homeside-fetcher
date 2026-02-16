@@ -10,15 +10,18 @@ Duck-type interface required by building_fetcher.py:
     client.signal_map: dict[signal_id -> {current_value, name, unit}]
     client.get_alarms(first=100) -> list
 
-Signal paths use two formats in building configs:
+Signal paths use three strategies:
     - Direct: "/Site/Folder/Variable/Value" — read via get_objects on the object path
     - IO Bus: "/Site/IO Bus/PointName/Value" — read via batch browse of IO Bus folder
+    - Trend log fallback: For signals unreachable via API (e.g. LonWorks DUC points),
+      reads the latest trend log record as a near-live value.
 
 The adapter auto-detects IO Bus paths and batches them into a single folder read.
 """
 
 import struct
 import logging
+from datetime import datetime, timezone, timedelta
 from ebo_api import EboApi
 
 
@@ -51,6 +54,8 @@ class EboBmsAdapter:
                           verify_ssl=verify_ssl)
         self.signal_map = {}       # signal_id -> {current_value, name, unit}
         self._signal_paths = []    # configured signal paths (with /Value suffix)
+        self._trend_fallbacks = {} # signal_path -> trend_log_path (for unreachable signals)
+        self._history_client = None
 
     def login(self) -> bool:
         """Authenticate and initialize EBO session."""
@@ -70,6 +75,14 @@ class EboBmsAdapter:
             signal_paths: list of EBO property paths ending in /Value
         """
         self._signal_paths = list(signal_paths)
+
+    def configure_trend_fallbacks(self, fallbacks: dict):
+        """Set trend log fallback paths for signals unreachable via get_objects.
+
+        Args:
+            fallbacks: dict of signal_path -> trend_log_path
+        """
+        self._trend_fallbacks = dict(fallbacks)
 
     def discover_signals(self) -> bool:
         """Read current values via get_objects, populate self.signal_map.
@@ -174,6 +187,14 @@ class EboBmsAdapter:
                 except Exception as e:
                     self.logger.warning(f"EBO: Failed to read server variables: {e}")
 
+            # Strategy 3: Trend log fallback for signals not yet read
+            if self._trend_fallbacks:
+                missing = [sp for sp in self._signal_paths
+                           if sp not in self.signal_map and sp in self._trend_fallbacks]
+                if missing:
+                    trend_count = self._read_trend_fallbacks(missing)
+                    read_count += trend_count
+
             self.logger.info(f"EBO: Read {read_count}/{len(self._signal_paths)} signals")
 
             return read_count > 0
@@ -181,6 +202,61 @@ class EboBmsAdapter:
         except Exception as e:
             self.logger.error(f"EBO discover_signals failed: {e}")
             return False
+
+    def _read_trend_fallbacks(self, missing_paths: list) -> int:
+        """Read latest trend log records for signals not reachable via get_objects."""
+        if not self._history_client:
+            try:
+                from ebo_history import EboHistoryClient
+                self._history_client = EboHistoryClient(
+                    base_url=self.base_url,
+                    csrf_token=self.ebo.session_token,
+                    session=self.ebo.session,
+                )
+            except Exception as e:
+                self.logger.warning(f"EBO: Failed to create history client: {e}")
+                return 0
+
+        # Update history client session after re-login
+        self._history_client.csrf_token = self.ebo.session_token
+        self._history_client.session = self.ebo.session
+
+        count = 0
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(minutes=30)
+        start_us = str(int(start.timestamp() * 1_000_000))
+        end_us = str(int(now.timestamp() * 1_000_000))
+
+        from ebo_history import UNIT_NONE
+
+        for signal_path in missing_paths:
+            trend_log = self._trend_fallbacks[signal_path]
+            try:
+                records = self._history_client.read_trend_log(
+                    log_path=trend_log,
+                    log_unit_id=UNIT_NONE,
+                    display_unit_id=UNIT_NONE,
+                    max_records=5,
+                    page_size=5,
+                    start_time_utc=start_us,
+                    end_time_utc=end_us,
+                )
+                if records:
+                    latest = records[-1]
+                    self.signal_map[signal_path] = {
+                        'current_value': latest.value,
+                        'name': trend_log.split('/')[-1],
+                        'unit': '',
+                    }
+                    count += 1
+                    self.logger.debug(
+                        f"EBO trend fallback: {trend_log.split('/')[-1]} = {latest.value:.2f}")
+            except Exception as e:
+                self.logger.warning(f"EBO: Trend fallback failed for {trend_log}: {e}")
+
+        if count:
+            self.logger.debug(f"EBO: Trend fallback read {count}/{len(missing_paths)} signals")
+        return count
 
     def get_alarms(self, first=100):
         """EBO alarm fetch — not implemented initially."""

@@ -547,6 +547,7 @@
                         y: history.map(d => d.supply_temp),
                         type: 'scatter',
                         mode: 'lines',
+                        connectgaps: true,
                         name: 'Supply',
                         line: { color: '#e74c3c', width: 2 },
                         hovertemplate: '%{x}<br>Supply: %{y}°C<extra></extra>'
@@ -557,6 +558,7 @@
                         y: history.map(d => d.return_temp),
                         type: 'scatter',
                         mode: 'lines',
+                        connectgaps: true,
                         name: 'Return',
                         line: { color: '#3498db', width: 2 },
                         hovertemplate: '%{x}<br>Return: %{y}°C<extra></extra>'
@@ -567,6 +569,7 @@
                         y: history.map(d => d.supply_setpoint),
                         type: 'scatter',
                         mode: 'lines',
+                        connectgaps: true,
                         name: 'Setpoint',
                         line: { color: '#27ae60', width: 2, dash: 'dash' },
                         hovertemplate: '%{x}<br>Setpoint: %{y}°C<extra></extra>'
@@ -577,6 +580,7 @@
                         y: history.map(d => d.outdoor_temp),
                         type: 'scatter',
                         mode: 'lines',
+                        connectgaps: true,
                         name: 'Outdoor',
                         line: { color: '#95a5a6', width: 1, dash: 'dash' },
                         yaxis: 'y2',
@@ -725,6 +729,7 @@
                 y: data.map(d => d.dh_supply_temp),
                 type: 'scatter',
                 mode: 'lines',
+                connectgaps: true,
                 name: 'DH Supply',
                 line: { color: '#e74c3c', width: 2 },
                 hovertemplate: '%{x}<br>DH Supply: %{y}°C<extra></extra>'
@@ -734,6 +739,7 @@
                 y: data.map(d => d.dh_return_temp),
                 type: 'scatter',
                 mode: 'lines',
+                connectgaps: true,
                 name: 'DH Return',
                 line: { color: '#c0392b', width: 2, dash: 'dot' },
                 hovertemplate: '%{x}<br>DH Return: %{y}°C<extra></extra>'
@@ -744,6 +750,7 @@
                 y: data.map(d => d.supply_temp),
                 type: 'scatter',
                 mode: 'lines',
+                connectgaps: true,
                 name: 'Bld Supply',
                 line: { color: '#3498db', width: 2 },
                 hovertemplate: '%{x}<br>Bld Supply: %{y}°C<extra></extra>'
@@ -753,6 +760,7 @@
                 y: data.map(d => d.return_temp),
                 type: 'scatter',
                 mode: 'lines',
+                connectgaps: true,
                 name: 'Bld Return',
                 line: { color: '#2980b9', width: 2, dash: 'dot' },
                 hovertemplate: '%{x}<br>Bld Return: %{y}°C<extra></extra>'
@@ -763,6 +771,7 @@
                 y: data.map(d => d.outdoor_temperature),
                 type: 'scatter',
                 mode: 'lines',
+                connectgaps: true,
                 name: 'Outdoor',
                 line: { color: '#95a5a6', width: 1, dash: 'dash' },
                 hovertemplate: '%{x}<br>Outdoor: %{y}°C<extra></extra>'
@@ -932,6 +941,7 @@
                 y: data.map(d => d.dh_delta_t),
                 type: 'scatter',
                 mode: 'lines',
+                connectgaps: true,
                 name: 'DH Delta T',
                 fill: 'tozeroy',
                 line: { color: '#e74c3c', width: 2 },
@@ -943,6 +953,7 @@
                 y: data.map(d => d.house_delta_t),
                 type: 'scatter',
                 mode: 'lines',
+                connectgaps: true,
                 name: 'Building Delta T',
                 fill: 'tozeroy',
                 line: { color: '#3498db', width: 2 },
@@ -1111,6 +1122,7 @@
                         y: [summary.daily_avg_cost, summary.daily_avg_cost],
                         type: 'scatter',
                         mode: 'lines',
+                        connectgaps: true,
                         name: 'Daily Avg',
                         line: { color: '#f39c12', width: 2, dash: 'dash' },
                         hovertemplate: 'Average: %{y} SEK<extra></extra>'
@@ -1275,6 +1287,7 @@
                         y: data.map(d => d.predicted_kwh),
                         type: 'scatter',
                         mode: 'lines+markers',
+                        connectgaps: true,
                         name: 'Predicted Heating',
                         line: { color: '#9b59b6', width: 2, dash: 'dash' },
                         marker: { color: '#9b59b6', size: 6 },
@@ -1436,6 +1449,7 @@
                         y: accuracies,
                         type: 'scatter',
                         mode: 'lines+markers',
+                        connectgaps: true,
                         name: 'Accuracy',
                         line: { color: '#3498db', width: 2 },
                         marker: { color: colors, size: 9, line: { color: '#fff', width: 1 } },
@@ -1569,6 +1583,7 @@
                     y: outdoorTemp,
                     type: 'scatter',
                     mode: 'lines+markers',
+                    connectgaps: true,
                     name: 'Outdoor Temp (°C)',
                     yaxis: 'y2',
                     line: { color: '#4ECDC4', width: 2 },
@@ -1703,6 +1718,7 @@
                         y: kValues,
                         type: 'scatter',
                         mode: 'lines+markers',
+                        connectgaps: true,
                         name: 'k (15th pct)',
                         line: { color: '#e74c3c', width: 3 },
                         marker: {
@@ -1717,6 +1733,7 @@
                         y: kMedians,
                         type: 'scatter',
                         mode: 'lines',
+                        connectgaps: true,
                         name: 'k (median)',
                         line: { color: '#3498db', width: 2, dash: 'dash' },
                         hovertemplate: '%{x}<br>Median: %{y:.4f} kW/°C<extra></extra>'

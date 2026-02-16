@@ -256,7 +256,11 @@ def fetch_and_write(client, analog_fetch: dict,
         if signal_id in client.signal_map:
             raw_value = client.signal_map[signal_id].get('current_value')
             if raw_value is not None:
-                values[field_name] = raw_value
+                min_val = fetch_info.get('min_value')
+                if min_val is not None and isinstance(raw_value, (int, float)) and raw_value < min_val:
+                    logger.debug(f"Filtered {field_name}={raw_value} (below min_value={min_val})")
+                else:
+                    values[field_name] = raw_value
             else:
                 missing.append(field_name)
         else:
@@ -421,6 +425,16 @@ def main():
         # Configure subscription paths from signal IDs (which are EBO paths)
         signal_paths = [info['signal_id'] for info in analog_fetch.values()]
         client.configure_signals(signal_paths)
+        # Configure trend log fallbacks for signals not readable via get_objects
+        trend_fallbacks = {}
+        for name, info in analog_fetch.items():
+            sig_config = config.get('analog_signals', {}).get(name, {})
+            trend_log = sig_config.get('trend_log')
+            if trend_log and sig_config.get('live_source') == 'trend_log':
+                trend_fallbacks[info['signal_id']] = trend_log
+        if trend_fallbacks:
+            client.configure_trend_fallbacks(trend_fallbacks)
+            logger.info(f"EBO: {len(trend_fallbacks)} signal(s) using trend log fallback")
         bms_label = base_url
     else:
         from arrigo_api import ArrigoAPI
