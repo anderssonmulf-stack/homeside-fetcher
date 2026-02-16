@@ -964,7 +964,8 @@ def monitor_heating_system(config):
     failure_error_threshold = settings.get('data_collection', {}).get('failure_error_threshold_minutes', 120)
 
     # Track k-value recalibration timing (every 72h by default)
-    last_recalibration_time = None
+    # Initialize to now so we don't fire immediately on container start
+    last_recalibration_time = datetime.now(timezone.utc)
     calibration_settings = settings.get('calibration', {})
     recalibration_hours = calibration_settings.get('k_recalibration_hours', 72)
     recalibration_days = calibration_settings.get('k_calibration_days', 30)

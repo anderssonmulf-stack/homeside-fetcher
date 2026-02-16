@@ -1901,14 +1901,18 @@ class InfluxReader:
 
             tables = query_api.query(query, org=self.org)
 
-            results = []
+            # Collect all points, then deduplicate: keep only the latest
+            # point per day. Multiple recalibration triggers (startup,
+            # Dropbox import, daily pipeline) and different method tags
+            # can produce duplicate points for the same day.
+            by_day = {}
             for table in tables:
                 for record in table.records:
                     ts = record.get_time()
-                    # Convert to Swedish time for display
                     ts_swedish = ts.astimezone(ZoneInfo('Europe/Stockholm'))
+                    day_key = ts_swedish.strftime('%Y-%m-%d')
 
-                    results.append({
+                    entry = {
                         'timestamp': ts.isoformat(),
                         'timestamp_display': ts_swedish.strftime('%Y-%m-%d %H:%M'),
                         'k_value': record.values.get('k_value'),
@@ -1917,7 +1921,13 @@ class InfluxReader:
                         'confidence': record.values.get('confidence'),
                         'days_used': record.values.get('days_used'),
                         'avg_outdoor_temp': record.values.get('avg_outdoor_temp'),
-                    })
+                    }
+
+                    # Keep the latest point for each day
+                    if day_key not in by_day or ts > by_day[day_key][0]:
+                        by_day[day_key] = (ts, entry)
+
+            results = [v[1] for v in sorted(by_day.values(), key=lambda x: x[0])]
 
             # Get current k from profile if available
             current_k = None

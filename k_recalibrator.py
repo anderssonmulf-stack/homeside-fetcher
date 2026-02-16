@@ -267,7 +267,12 @@ class KRecalibrator:
         )
 
     def write_k_history(self, result: CalibrationResult) -> bool:
-        """Write k-value to history for tracking convergence."""
+        """Write k-value to history for tracking convergence.
+
+        Deletes any existing points for the same entity on the same day
+        before writing, preventing duplicate points from multiple
+        recalibration triggers (startup, Dropbox import, daily pipeline).
+        """
         if self.dry_run:
             logger.info(f"[DRY RUN] Would write k={result.k_value:.4f} to history")
             return True
@@ -278,6 +283,22 @@ class KRecalibrator:
             return True
 
         try:
+            # Delete any existing k-history points for this entity today
+            # to prevent duplicate points from multiple recalibration triggers
+            day_start = result.timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            predicate = f'_measurement="k_calibration_history" AND {self.entity_tag}="{result.house_id}"'
+            try:
+                self.client.delete_api().delete(
+                    start=day_start,
+                    stop=day_end,
+                    predicate=predicate,
+                    bucket=self.influx_bucket,
+                    org=self.influx_org,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to delete old k-history for today (continuing): {e}")
+
             point = Point("k_calibration_history") \
                 .tag(self.entity_tag, result.house_id) \
                 .tag("method", result.method) \
