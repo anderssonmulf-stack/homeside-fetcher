@@ -30,11 +30,10 @@ from io import StringIO
 
 import dropbox
 from dropbox.files import FileMetadata
-from influxdb_client import InfluxDBClient, Point, WritePrecision
-from influxdb_client.client.write_api import SYNCHRONOUS
 
 from customer_profile import build_meter_mapping
 from dropbox_client import DropboxClient, create_client_from_env
+from influx_writer import EnergyWriter
 from seq_logger import SeqLogger
 
 
@@ -144,19 +143,17 @@ class EnergyImporter:
         self.influx_org = influx_org
         self.influx_bucket = influx_bucket
 
-        # Initialize InfluxDB client
+        # Initialize EnergyWriter for dedup + write
         if not dry_run:
-            self.influx_client = InfluxDBClient(
+            self.energy_writer = EnergyWriter(
                 url=influx_url,
                 token=influx_token,
                 org=influx_org,
-                timeout=5_000
+                bucket=influx_bucket
             )
-            self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
             self._log(f"Connected to InfluxDB: {influx_url}")
         else:
-            self.influx_client = None
-            self.write_api = None
+            self.energy_writer = None
             self._log("Dry run mode - no data will be written")
 
     def _log(self, message: str, level: str = None, properties: dict = None):
@@ -306,13 +303,11 @@ class EnergyImporter:
 
         Uses meter_mapping to translate meter_id -> entity info (house or building).
         Records with unknown meter_ids are rejected.
-        Duplicates (records with timestamps that already exist) are skipped.
+        Duplicates (records with identical values) are skipped via EnergyWriter.
 
         Returns:
             Tuple of (records_written, errors)
         """
-        errors = []
-
         # Look up entity info for this meter
         entity = self.meter_mapping.get(str(meter_id).strip())
 
@@ -325,145 +320,46 @@ class EnergyImporter:
         entity_type = entity['type']  # "house" or "building"
         tag_name = "building_id" if entity_type == "building" else "house_id"
 
-        # Get existing data to detect duplicates
-        existing_data = self._get_existing_data(entity_id, records, tag_name=tag_name)
+        if self.dry_run:
+            self._log(
+                f"[DRY RUN] Would write {len(records)} records for meter {meter_id} -> {entity_type} {entity_id}",
+                properties={'MeterId': meter_id, tag_name: entity_id, 'EntityType': entity_type}
+            )
+            return len(records), []
 
-        # Filter: skip only if timestamp exists AND values are identical
-        records_to_write = []
-        skipped = 0
-        updated = 0
+        new_count, skipped, updated = self.energy_writer.write_energy_records(
+            records=records,
+            entity_id=entity_id,
+            tag_name=tag_name,
+            measurement="energy_meter",
+            extra_tags={'meter_id': meter_id}
+        )
 
-        for record in records:
-            ts = record['timestamp']
-            if ts in existing_data:
-                if self._records_match(record, existing_data[ts]):
-                    # Identical data - skip
-                    skipped += 1
-                else:
-                    # Different values - will overwrite
-                    records_to_write.append(record)
-                    updated += 1
-            else:
-                # New timestamp
-                records_to_write.append(record)
-
-        new_count = len(records_to_write) - updated
+        written = new_count + updated
 
         if skipped > 0:
             self._log(f"Skipping {skipped} identical records for meter {meter_id}", properties={'MeterId': meter_id, 'Skipped': skipped})
         if updated > 0:
             self._log(f"Updating {updated} records for meter {meter_id}", properties={'MeterId': meter_id, 'Updated': updated})
 
-        if not records_to_write:
-            self._log(f"No records to write for meter {meter_id} -> {entity_type} {entity_id} (all {len(records)} identical)")
-            return 0, []
-
-        if self.dry_run:
-            self._log(f"[DRY RUN] Would write {len(records_to_write)} records for meter {meter_id} -> {entity_type} {entity_id}",
-                     properties={'MeterId': meter_id, tag_name: entity_id, 'EntityType': entity_type, 'New': new_count, 'Updated': updated, 'Skipped': skipped})
-            return len(records_to_write), []
-
-        points = []
-        for record in records_to_write:
-            point = Point("energy_meter") \
-                .tag(tag_name, entity_id) \
-                .tag("meter_id", meter_id) \
-                .time(record['timestamp'], WritePrecision.S)
-
-            # Add all numeric fields
-            for field, value in record.items():
-                if field not in ('timestamp', 'meter_id') and isinstance(value, (int, float)):
-                    point = point.field(field, value)
-
-            points.append(point)
-
-        if points:
-            self.write_api.write(bucket=self.influx_bucket, org=self.influx_org, record=points)
+        if written > 0:
             self._log(
-                f"Wrote {len(points)} records for meter {meter_id} -> {entity_type} {entity_id}",
-                level='Information',  # Always log actual writes as Information
+                f"Wrote {written} records for meter {meter_id} -> {entity_type} {entity_id}",
+                level='Information',
                 properties={
                     tag_name: entity_id,
                     'EntityType': entity_type,
                     'MeterId': meter_id,
-                    'RecordsWritten': len(points),
+                    'RecordsWritten': written,
                     'NewRecords': new_count,
                     'UpdatedRecords': updated,
                     'SkippedRecords': skipped
                 }
             )
+        elif skipped > 0:
+            self._log(f"No records to write for meter {meter_id} -> {entity_type} {entity_id} (all {len(records)} identical)")
 
-        return len(points), []
-
-    def _get_existing_data(self, entity_id: str, records: List[Dict], tag_name: str = "house_id") -> dict:
-        """
-        Query InfluxDB for existing data to detect duplicates.
-
-        Returns dict mapping timestamp -> {field: value, ...}
-        Only queries the time range covered by the records to be imported.
-        """
-        if not records:
-            return {}
-
-        # Get time range from records
-        timestamps = [r['timestamp'] for r in records]
-        min_time = min(timestamps)
-        max_time = max(timestamps)
-
-        # Add buffer to ensure we catch edge cases
-        from datetime import timedelta
-        start_time = (min_time - timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
-        stop_time = (max_time + timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
-
-        query = f'''
-from(bucket: "{self.influx_bucket}")
-  |> range(start: {start_time}, stop: {stop_time})
-  |> filter(fn: (r) => r._measurement == "energy_meter")
-  |> filter(fn: (r) => r.{tag_name} == "{entity_id}")
-  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-'''
-
-        existing = {}
-        try:
-            query_api = self.influx_client.query_api()
-            result = query_api.query(query)
-            for table in result:
-                for record in table.records:
-                    ts = record.get_time()
-                    existing[ts] = {
-                        'consumption': record.values.get('consumption'),
-                        'meter_reading': record.values.get('meter_reading'),
-                        'volume': record.values.get('volume'),
-                        'primary_temp_in': record.values.get('primary_temp_in'),
-                        'primary_temp_out': record.values.get('primary_temp_out'),
-                    }
-        except Exception as e:
-            self._log_warning(f"Failed to query existing data: {e}")
-            # Continue without dedup if query fails
-
-        return existing
-
-    def _records_match(self, new_record: Dict, existing: Dict) -> bool:
-        """Check if new record values match existing data (within tolerance for floats)."""
-        fields_to_check = ['consumption', 'meter_reading', 'volume', 'primary_temp_in', 'primary_temp_out']
-
-        for field in fields_to_check:
-            new_val = new_record.get(field)
-            old_val = existing.get(field)
-
-            # Both None or missing - match
-            if new_val is None and old_val is None:
-                continue
-
-            # One is None, other isn't - no match
-            if new_val is None or old_val is None:
-                return False
-
-            # Compare with small tolerance for floats
-            if abs(float(new_val) - float(old_val)) > 0.001:
-                return False
-
-        return True
+        return written, []
 
     def archive_file(self, path: str):
         """Move file to /data/processed/ after successful import (kept 7 days)."""
@@ -605,8 +501,8 @@ from(bucket: "{self.influx_bucket}")
 
     def close(self):
         """Close connections."""
-        if self.influx_client:
-            self.influx_client.close()
+        if self.energy_writer:
+            self.energy_writer.close()
 
 
 def main():

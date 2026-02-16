@@ -154,11 +154,11 @@ class SeqLogger:
         if properties:
             props.update(properties)
 
-        # Build Seq event
+        # Build Seq event — prefix all messages with "BVPro" for easy filtering
         event = {
             'Timestamp': datetime.now(timezone.utc).isoformat(),
             'Level': level,
-            'MessageTemplate': message,
+            'MessageTemplate': f"BVPro {message}",
             'Properties': props
         }
 

@@ -31,6 +31,19 @@ from ebo_api import EboApi
 from arrigo_api import save_building_config
 
 
+def trigger_dropbox_sync() -> bool:
+    """Trigger Dropbox meter sync so work server picks up new meter."""
+    try:
+        from dropbox_sync import sync_meters
+        return sync_meters()
+    except ImportError:
+        print("  dropbox_sync not available - skipping")
+        return False
+    except Exception as e:
+        print(f"  Dropbox sync failed (non-fatal): {e}")
+        return False
+
+
 def add_credential_ref_to_env(credential_ref: str, username: str, password: str,
                                domain: str = "", friendly_name: str = "",
                                env_file: str = ".env") -> bool:
@@ -176,7 +189,7 @@ def build_config(building_id, friendly_name, base_url, credential_ref, domain,
         "building_type": "commercial",
         "meter_ids": meter_ids or [],
         "energy_separation": {
-            "enabled": False,
+            "enabled": bool(meter_ids),
             "method": "k_calibration",
             "heat_loss_k": None,
             "k_percentile": 15,
@@ -403,9 +416,19 @@ def main():
         print(f"\n4. No credential_ref specified — skipping .env update")
         print(f"  Tip: Add credentials manually or use --credential-ref")
 
-    # Step 5: Bootstrap historical data
+    # Step 5: Sync Dropbox meters (if meter IDs provided)
+    if meter_ids:
+        print(f"\n5. Syncing Dropbox meters...")
+        if trigger_dropbox_sync():
+            print("  Dropbox meter sync complete")
+        else:
+            print("  Dropbox sync skipped or failed (non-fatal)")
+    else:
+        print(f"\n5. No meter IDs - skipping Dropbox sync")
+
+    # Step 6: Bootstrap historical data
     if do_bootstrap:
-        print(f"\n5. Bootstrapping {args.bootstrap_days} days of historical data...")
+        print(f"\n6. Bootstrapping {args.bootstrap_days} days of historical data...")
         cmd = [
             sys.executable, 'gap_filler.py',
             '--bootstrap',
@@ -427,7 +450,7 @@ def main():
         else:
             print("  Bootstrap failed (non-fatal)")
     else:
-        print(f"\n5. Skipping historical data bootstrap")
+        print(f"\n6. Skipping historical data bootstrap")
 
     # Summary
     print(f"\n{'=' * 60}")
@@ -442,13 +465,15 @@ def main():
         print(f"  Credential ref: {credential_ref}")
     if meter_ids:
         print(f"  Meter IDs: {', '.join(meter_ids)}")
+        print(f"  Energy separation: enabled")
     if latitude and longitude:
         print(f"  Location: {latitude}, {longitude}")
     print(f"\n  NEXT STEPS:")
     print(f"  1. Edit {saved_path} to set field_name, fetch=true, and trend_log paths")
     print(f"  2. The orchestrator will auto-detect within 60 seconds")
     if not meter_ids:
-        print(f"  3. Add meter_ids when available for energy separation")
+        print(f"  3. Add meter_ids to the config when available")
+        print(f"  4. Run: python3 dropbox_sync.py  (to sync meters)")
 
 
 if __name__ == '__main__':

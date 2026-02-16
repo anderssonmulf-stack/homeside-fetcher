@@ -55,7 +55,7 @@ class MeterRequestManager:
         profiles_dir: str = 'profiles',
         influx_url: Optional[str] = None,
         influx_token: Optional[str] = None,
-        influx_org: str = 'homeside',
+        influx_org: Optional[str] = None,
         influx_bucket: str = 'heating'
     ):
         """
@@ -205,6 +205,14 @@ class MeterRequestManager:
             List of meter request dicts
         """
         profiles = self.load_all_profiles()
+
+        # Read existing CSV dates as fallback (preserve dates when InfluxDB is unavailable)
+        csv_dates = {}
+        existing = self.read_current_requests()
+        if existing:
+            for req in existing:
+                csv_dates[req['meter_id']] = req['from_datetime']
+
         requests = []
 
         for profile in profiles:
@@ -223,6 +231,9 @@ class MeterRequestManager:
                 elif profile.get('energy_data_start_date'):
                     # Use profile-specified start date for new meters
                     from_datetime = f"{profile['energy_data_start_date']} 00:00"
+                elif meter_id in csv_dates:
+                    # Preserve existing CSV date (InfluxDB may be unavailable)
+                    from_datetime = csv_dates[meter_id]
                 else:
                     # New meter - request DEFAULT_LOOKBACK_DAYS of historical data
                     start = datetime.now(timezone.utc) - timedelta(days=DEFAULT_LOOKBACK_DAYS)

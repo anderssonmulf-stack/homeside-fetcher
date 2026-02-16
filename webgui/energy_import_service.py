@@ -15,11 +15,13 @@ Example:
 import csv
 import io
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
-from influxdb_client import InfluxDBClient, Point, WritePrecision
-from influxdb_client.client.write_api import SYNCHRONOUS
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from influx_writer import EnergyWriter
 
 SWEDISH_TZ = ZoneInfo('Europe/Stockholm')
 
@@ -28,24 +30,15 @@ class EnergyImporter:
     """Imports energy consumption data from CSV files to InfluxDB"""
 
     def __init__(self):
-        self.url = os.environ.get('INFLUXDB_URL', 'http://influxdb:8086')
-        self.token = os.environ.get('INFLUXDB_TOKEN', '')
-        self.org = os.environ.get('INFLUXDB_ORG', 'homeside')
+        url = os.environ.get('INFLUXDB_URL', 'http://influxdb:8086')
+        token = os.environ.get('INFLUXDB_TOKEN', '')
+        org = os.environ.get('INFLUXDB_ORG', 'homeside')
         self.bucket = os.environ.get('INFLUXDB_BUCKET', 'heating')
-        self.client = None
-        self._connect()
-
-    def _connect(self):
-        """Connect to InfluxDB"""
+        self.energy_writer = None
         try:
-            self.client = InfluxDBClient(url=self.url, token=self.token, org=self.org)
-            health = self.client.health()
-            if health.status != "pass":
-                print(f"InfluxDB health check failed: {health.status}")
-                self.client = None
+            self.energy_writer = EnergyWriter(url=url, token=token, org=org, bucket=self.bucket)
         except Exception as e:
             print(f"Failed to connect to InfluxDB: {e}")
-            self.client = None
 
     def _parse_swedish_timestamp(self, timestamp_str: str) -> datetime:
         """
@@ -157,61 +150,6 @@ class EnergyImporter:
 
         return parsed_rows, errors
 
-    def check_duplicates(self, house_id: str, timestamps: List[datetime],
-                         energy_type: str) -> List[datetime]:
-        """
-        Check which timestamps already exist in InfluxDB.
-
-        Returns list of timestamps that would be duplicates.
-        """
-        if not self.client or not timestamps:
-            return []
-
-        try:
-            query_api = self.client.query_api()
-
-            min_time = min(timestamps)
-            max_time = max(timestamps)
-
-            # Format timestamps for Flux query (ISO format with Z suffix)
-            start_time = min_time.strftime('%Y-%m-%dT%H:%M:%SZ')
-            # Add 1 hour buffer to end time to include the last timestamp
-            end_time = (max_time + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-            query = f'''
-                from(bucket: "{self.bucket}")
-                |> range(start: {start_time}, stop: {end_time})
-                |> filter(fn: (r) => r["_measurement"] == "energy_consumption")
-                |> filter(fn: (r) => r["house_id"] == "{house_id}")
-                |> filter(fn: (r) => r["energy_type"] == "{energy_type}")
-                |> keep(columns: ["_time"])
-                |> distinct(column: "_time")
-            '''
-
-            tables = query_api.query(query, org=self.org)
-
-            existing = set()
-            for table in tables:
-                for record in table.records:
-                    ts = record.get_time()
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
-                    existing.add(ts)
-
-            # Find which of our timestamps are duplicates
-            duplicates = []
-            for ts in timestamps:
-                # Normalize to compare
-                ts_utc = ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-                if ts_utc in existing:
-                    duplicates.append(ts)
-
-            return duplicates
-
-        except Exception as e:
-            print(f"Failed to check duplicates: {e}")
-            return []
-
     def dry_run(self, house_id: str, file_content: bytes,
                 energy_type: str = 'fjv_total') -> Dict:
         """
@@ -276,21 +214,36 @@ class EnergyImporter:
             'end': parsed_rows[-1]['timestamp'].astimezone(SWEDISH_TZ).strftime('%Y-%m-%d %H:%M')
         }
 
-        # Check for duplicates
-        timestamps = [row['timestamp'] for row in parsed_rows]
-        duplicates = self.check_duplicates(house_id, timestamps, energy_type)
-        duplicate_set = set(duplicates)
-
-        result['duplicate_count'] = len(duplicates)
+        # Check for duplicates (value-aware via EnergyWriter)
+        existing = {}
+        if self.energy_writer and parsed_rows:
+            timestamps = [row['timestamp'] for row in parsed_rows]
+            min_time = min(timestamps)
+            max_time = max(timestamps)
+            start = (min_time - timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
+            stop = (max_time + timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
+            existing = self.energy_writer.get_existing_data(
+                tag_filters={'house_id': house_id, 'energy_type': energy_type},
+                measurement='energy_consumption',
+                start=start, stop=stop
+            )
 
         # Mark duplicates and calculate new rows
+        duplicate_count = 0
         new_rows = []
         for row in parsed_rows:
-            is_dup = row['timestamp'] in duplicate_set
+            is_dup = False
+            ts = row['timestamp']
+            if ts in existing:
+                if EnergyWriter.records_match({'value': row['value']}, existing[ts]):
+                    is_dup = True
+                    duplicate_count += 1
             row['is_duplicate'] = is_dup
             row['timestamp_display'] = row['timestamp'].astimezone(SWEDISH_TZ).strftime('%Y-%m-%d %H:%M')
             if not is_dup:
                 new_rows.append(row)
+
+        result['duplicate_count'] = duplicate_count
 
         result['new_rows'] = len(new_rows)
         result['new_kwh'] = sum(row['value'] for row in new_rows)
@@ -360,39 +313,30 @@ class EnergyImporter:
                 'error': str (if failed)
             }
         """
-        if not self.client:
+        if not self.energy_writer:
             return {'success': False, 'rows_written': 0, 'error': 'Not connected to InfluxDB'}
 
         if not parsed_data:
             return {'success': True, 'rows_written': 0, 'error': None}
 
         try:
-            write_api = self.client.write_api(write_options=SYNCHRONOUS)
-
-            points = []
-            for row in parsed_data:
-                point = Point("energy_consumption") \
-                    .tag("house_id", house_id) \
-                    .tag("energy_type", row['energy_type']) \
-                    .field("value", float(row['value'])) \
-                    .time(row['timestamp'], WritePrecision.S)
-                points.append(point)
-
-            # Write in batches of 1000
-            batch_size = 1000
-            for i in range(0, len(points), batch_size):
-                batch = points[i:i + batch_size]
-                write_api.write(bucket=self.bucket, org=self.org, record=batch)
-
-            return {'success': True, 'rows_written': len(points), 'error': None}
+            energy_type = parsed_data[0].get('energy_type', 'fjv_total')
+            new_count, skipped, updated = self.energy_writer.write_energy_records(
+                records=parsed_data,
+                entity_id=house_id,
+                tag_name='house_id',
+                measurement='energy_consumption',
+                extra_tags={'energy_type': energy_type}
+            )
+            return {'success': True, 'rows_written': new_count + updated, 'error': None}
 
         except Exception as e:
             return {'success': False, 'rows_written': 0, 'error': str(e)}
 
     def close(self):
         """Close the connection"""
-        if self.client:
-            self.client.close()
+        if self.energy_writer:
+            self.energy_writer.close()
 
 
 # Singleton instance

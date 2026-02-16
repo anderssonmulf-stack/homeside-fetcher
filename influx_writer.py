@@ -10,7 +10,7 @@ import time
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.client.delete_api import DeleteApi
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 
 
@@ -1743,5 +1743,142 @@ class InfluxDBWriter:
 
     def close(self):
         """Close InfluxDB client connection"""
+        if self.client:
+            self.client.close()
+
+
+class EnergyWriter:
+    """
+    Centralized energy data writer with value-aware deduplication.
+
+    Entity-agnostic: works with any entity type (house, building) and
+    any measurement (energy_meter, energy_consumption).
+    """
+
+    def __init__(self, url: str, token: str, org: str, bucket: str):
+        self.org = org
+        self.bucket = bucket
+        self.client = InfluxDBClient(url=url, token=token, org=org, timeout=5_000)
+        self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
+
+    def get_existing_data(self, tag_filters: Dict[str, str], measurement: str,
+                          start: str, stop: str) -> Dict[datetime, Dict[str, float]]:
+        """
+        Query existing data for dedup.
+
+        Returns dict mapping timestamp -> {field: numeric_value} for the given
+        measurement and tag filters.
+        """
+        filter_lines = [f'r._measurement == "{measurement}"']
+        for tag, value in tag_filters.items():
+            filter_lines.append(f'r["{tag}"] == "{value}"')
+
+        query = f'''
+from(bucket: "{self.bucket}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => {" and ".join(filter_lines)})
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+'''
+        existing = {}
+        try:
+            query_api = self.client.query_api()
+            for table in query_api.query(query, org=self.org):
+                for record in table.records:
+                    ts = record.get_time()
+                    fields = {
+                        k: v for k, v in record.values.items()
+                        if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    }
+                    existing[ts] = fields
+        except Exception:
+            pass  # Fail gracefully — write everything if dedup query fails
+
+        return existing
+
+    @staticmethod
+    def records_match(new_record: Dict, existing: Dict[str, float],
+                      tolerance: float = 0.001) -> bool:
+        """Check if all numeric fields in new_record match existing values."""
+        for field, new_val in new_record.items():
+            if field == 'timestamp':
+                continue
+            if not isinstance(new_val, (int, float)) or isinstance(new_val, bool):
+                continue
+            old_val = existing.get(field)
+            if old_val is None:
+                return False
+            if abs(float(new_val) - float(old_val)) > tolerance:
+                return False
+        return True
+
+    def write_energy_records(
+        self,
+        records: List[Dict],
+        entity_id: str,
+        tag_name: str,
+        measurement: str = "energy_meter",
+        extra_tags: Optional[Dict[str, str]] = None
+    ) -> Tuple[int, int, int]:
+        """
+        Write energy records with value-aware deduplication.
+
+        Returns:
+            Tuple of (new_count, skipped_count, updated_count)
+        """
+        if not records:
+            return 0, 0, 0
+
+        timestamps = [r['timestamp'] for r in records]
+        min_time = min(timestamps)
+        max_time = max(timestamps)
+        start = (min_time - timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
+        stop = (max_time + timedelta(hours=1)).isoformat().replace('+00:00', 'Z')
+
+        tag_filters = {tag_name: entity_id}
+        if extra_tags:
+            tag_filters.update(extra_tags)
+
+        existing = self.get_existing_data(tag_filters, measurement, start, stop)
+
+        to_write = []
+        skipped = 0
+        updated = 0
+        for record in records:
+            ts = record['timestamp']
+            if ts in existing:
+                if self.records_match(record, existing[ts]):
+                    skipped += 1
+                else:
+                    to_write.append(record)
+                    updated += 1
+            else:
+                to_write.append(record)
+
+        if not to_write:
+            return 0, skipped, 0
+
+        points = []
+        for record in to_write:
+            point = Point(measurement) \
+                .tag(tag_name, entity_id) \
+                .time(record['timestamp'], WritePrecision.S)
+            if extra_tags:
+                for k, v in extra_tags.items():
+                    point = point.tag(k, v)
+            for field, value in record.items():
+                if field == 'timestamp':
+                    continue
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    point = point.field(field, value)
+            points.append(point)
+
+        batch_size = 1000
+        for i in range(0, len(points), batch_size):
+            self.write_api.write(bucket=self.bucket, org=self.org, record=points[i:i + batch_size])
+
+        return len(to_write) - updated, skipped, updated
+
+    def close(self):
+        """Close InfluxDB client connection."""
         if self.client:
             self.client.close()
