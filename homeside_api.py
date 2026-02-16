@@ -247,10 +247,23 @@ class HomeSideAPI:
             response.raise_for_status()
 
             data = response.json()
+
+            # Check for API error response (returns HTTP 200 with {"error": "..."})
+            if 'error' in data and 'token' not in data:
+                error_msg = data.get('error', 'unknown')
+                self.logger.warning(f"BMS token API returned error: {error_msg}")
+                print(f"⚠ BMS token API error: {error_msg}")
+                return False
+
             self.bms_token = data.get('token')
             self.uid = data.get('uid')
             self.extend_uid = data.get('extendUid')
             self.refresh_token = data.get('refreshToken')
+
+            if not self.bms_token:
+                self.logger.warning("BMS token response missing 'token' field")
+                print("⚠ BMS token response missing token")
+                return False
 
             if self.debug_mode:
                 self.logger.info(f"BMS token obtained successfully")
