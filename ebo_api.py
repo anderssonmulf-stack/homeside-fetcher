@@ -411,6 +411,103 @@ class EboApi:
             "path": path,
         })
 
+    def set_property(self, path, value):
+        """Write a value to an EBO property.
+
+        Tries SetMultiProperty (most likely EBO write command) first.
+        If that fails, tries alternative command names.
+
+        Args:
+            path: Full property path (e.g. '/Site/VS1/Variabler/GT1_FS/Value')
+            value: Value to write (float, int, bool, or string)
+
+        Returns:
+            dict with 'success' bool, 'response' dict, and 'command' used
+        """
+        # Try each command variant until one succeeds
+        commands = [
+            ("SetMultiProperty", {
+                "command": "SetMultiProperty",
+                "data": [{"path": path, "value": value}],
+            }),
+            ("SetMultiProperty_hex", {
+                "command": "SetMultiProperty",
+                "data": [{"path": path, "value": self.encode_value(value)}],
+            }),
+            ("SetProperty", {
+                "command": "SetProperty",
+                "path": path,
+                "value": value,
+            }),
+            ("SetProperty_hex", {
+                "command": "SetProperty",
+                "path": path,
+                "value": self.encode_value(value),
+            }),
+            ("ForceProperty", {
+                "command": "ForceProperty",
+                "data": [{"path": path, "value": value}],
+            }),
+            ("WriteProperty", {
+                "command": "WriteProperty",
+                "data": [{"path": path, "value": value}],
+            }),
+        ]
+
+        last_error = None
+        for name, cmd_data in commands:
+            try:
+                resp = self._post_command(cmd_data)
+                # Check for error indicators in the response
+                if isinstance(resp, dict):
+                    err = resp.get('error') or resp.get('Error') or resp.get('ErrMsg')
+                    if err:
+                        last_error = f"{name}: {err}"
+                        continue
+                return {'success': True, 'response': resp, 'command': name}
+            except Exception as e:
+                last_error = f"{name}: {e}"
+                continue
+
+        return {'success': False, 'error': last_error, 'command': None}
+
+    def set_property_direct(self, path, value, command="SetMultiProperty", hex_encode=False):
+        """Write a value using a specific command name (skip auto-detection).
+
+        Args:
+            path: Full property path
+            value: Value to write
+            command: EBO command name to use
+            hex_encode: If True, encode value as IEEE 754 hex string
+
+        Returns:
+            dict: Raw API response
+        """
+        write_value = self.encode_value(value) if hex_encode else value
+        if command == "SetMultiProperty":
+            return self._post_command({
+                "command": command,
+                "data": [{"path": path, "value": write_value}],
+            })
+        else:
+            return self._post_command({
+                "command": command,
+                "path": path,
+                "value": write_value,
+            })
+
+    @staticmethod
+    def encode_value(value):
+        """Encode a numeric value as IEEE 754 hex string (EBO format).
+
+        E.g. 1.0 -> '0x3ff0000000000000'
+        """
+        try:
+            raw = struct.pack('!d', float(value))
+            return '0x' + raw.hex()
+        except (ValueError, TypeError):
+            return value
+
     def client_refresh(self, bookmark=-1):
         """Keep-alive / poll for server-side changes."""
         return self._post_command({

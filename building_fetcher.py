@@ -158,9 +158,15 @@ class BuildingInfluxWriter:
                 .tag("building_id", self.building_id) \
                 .time(timestamp, WritePrecision.S)
 
+            field_count = 0
             for field_name, value in values.items():
                 if value is not None and isinstance(value, (int, float)):
                     point.field(field_name, round(float(value), 4))
+                    field_count += 1
+
+            if field_count == 0:
+                self.logger.warning("No valid field values to write — skipping empty point")
+                return False
 
             self.write_api.write(bucket=self.bucket, org=self.org, record=point)
             self._consecutive_failures = 0

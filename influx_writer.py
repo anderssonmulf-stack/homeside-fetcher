@@ -311,6 +311,11 @@ class InfluxDBWriter:
             if 'away_mode' in data:
                 point.field("away_mode", 1 if data['away_mode'] else 0)
 
+            # Guard: don't write empty points (no fields = invalid line protocol)
+            if not point.to_line_protocol():
+                self.logger.warning("No valid field values to write — skipping empty point")
+                return False
+
             # Write to InfluxDB
             self.write_api.write(bucket=self.bucket, org=self.org, record=point)
             self._log_influx_success()
