@@ -158,6 +158,29 @@ class KRecalibrator:
                         'indoor': indoor,
                         'outdoor': outdoor,
                     }
+
+            # Fallback: supplement sparse outdoor temps with SMHI weather data
+            if self.assumed_indoor_temp is not None and len(results) < days // 2:
+                logger.info(f"Sparse outdoor temps ({len(results)} days), supplementing with SMHI weather")
+                weather_query = f'''
+                    from(bucket: "{self.influx_bucket}")
+                    |> range(start: -{days}d)
+                    |> filter(fn: (r) => r["_measurement"] == "weather_observation")
+                    |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                    |> filter(fn: (r) => r["_field"] == "temperature")
+                    |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
+                '''
+                weather_tables = self.query_api.query(weather_query, org=self.influx_org)
+                for table in weather_tables:
+                    for record in table.records:
+                        date = record.get_time().strftime('%Y-%m-%d')
+                        if date not in results:
+                            results[date] = {
+                                'indoor': self.assumed_indoor_temp,
+                                'outdoor': record.get_value(),
+                            }
+                logger.info(f"After SMHI supplement: {len(results)} days")
+
             return results
         except Exception as e:
             logger.error(f"Failed to fetch temps: {e}")
@@ -214,7 +237,8 @@ class KRecalibrator:
             # k = energy / degree_hours (kWh / °C·h = kW/°C)
             k_implied = heating_kwh / degree_hours
 
-            if k_implied > 0 and k_implied < 1.0:  # Sanity check
+            k_max = 50.0 if self.entity_tag == "building_id" else 1.0
+            if k_implied > 0 and k_implied < k_max:  # Sanity check
                 daily_k_values.append({
                     'date': date,
                     'k': k_implied,
