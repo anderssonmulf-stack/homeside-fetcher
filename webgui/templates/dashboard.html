@@ -50,6 +50,16 @@
         <div class="house-grid">
             {% for building in buildings %}
             <div class="house-card-wrapper">
+                {% if building.is_aggregate %}
+                <a href="{{ url_for('building_graphs', building_id=building.id) }}" class="house-card">
+                    <div class="house-icon">🏗️</div>
+                    <div class="house-name">{{ building.name }}</div>
+                    <div class="house-id">Aggregated view</div>
+                </a>
+                <div class="house-links">
+                    <a href="{{ url_for('building_graphs', building_id=building.id) }}" class="house-link">📈 Graphs</a>
+                </div>
+                {% else %}
                 <a href="{{ url_for('building_graphs', building_id=building.id) }}" class="house-card">
                     <div class="house-icon">🏢</div>
                     <div class="house-name">{{ building.name }}</div>
@@ -59,6 +69,7 @@
                     <a href="{{ url_for('building_graphs', building_id=building.id) }}" class="house-link">📈 Graphs</a>
                     <a href="{{ url_for('building_info', building_id=building.id) }}" class="house-link">🔧 Info</a>
                 </div>
+                {% endif %}
             </div>
             {% endfor %}
         </div>

@@ -397,6 +397,9 @@ def dashboard():
                 buildings.append({'id': building_id, 'name': building_id, 'type': 'commercial'})
         buildings.sort(key=lambda x: x['name'].lower())
 
+        if len(buildings) > 1:
+            buildings.insert(0, {'id': '__all__', 'name': 'All buildings', 'is_aggregate': True, 'type': 'aggregate'})
+
     # Get recent changes for user's houses
     recent_changes = audit_logger.get_recent_changes(house_ids, limit=10)
 
@@ -1235,40 +1238,48 @@ def api_cost_estimate(house_id):
 @require_login
 def building_graphs(building_id):
     """Display data graphs for a building."""
-    if not user_manager.can_access_building(session.get('user_id'), building_id):
+    is_aggregate = (building_id == '__all__')
+
+    if not is_aggregate and not user_manager.can_access_building(session.get('user_id'), building_id):
         flash('Access denied.', 'error')
         return redirect(url_for('dashboard'))
 
-    # Get building info from config
-    import json as _json
-    buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
-    filepath = os.path.join(buildings_dir, f"{building_id}.json")
+    if is_aggregate:
+        friendly_name = 'All buildings'
+        availability = {'categories': []}
+        realtime_data = None
+        signal_map = {}
+    else:
+        # Get building info from config
+        import json as _json
+        buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+        filepath = os.path.join(buildings_dir, f"{building_id}.json")
 
-    try:
-        with open(filepath, 'r') as f:
-            bdata = _json.load(f)
-        friendly_name = bdata.get('friendly_name') or building_id
-    except (FileNotFoundError, _json.JSONDecodeError):
-        friendly_name = building_id
-        bdata = {}
+        try:
+            with open(filepath, 'r') as f:
+                bdata = _json.load(f)
+            friendly_name = bdata.get('friendly_name') or building_id
+        except (FileNotFoundError, _json.JSONDecodeError):
+            friendly_name = building_id
+            bdata = {}
 
-    # Build signal_map for tooltips
-    signal_map = {}
-    for key, sig in bdata.get('analog_signals', {}).items():
-        fn = sig.get('field_name')
-        if fn:
-            signal_map[fn] = {
-                'key': key,
-                'signal_id': sig.get('signal_id', ''),
-                'trend_log': sig.get('trend_log', ''),
-                'category': sig.get('category', ''),
-            }
+        # Build signal_map for tooltips
+        signal_map = {}
+        for key, sig in bdata.get('analog_signals', {}).items():
+            fn = sig.get('field_name')
+            if fn:
+                signal_map[fn] = {
+                    'key': key,
+                    'signal_id': sig.get('signal_id', ''),
+                    'trend_log': sig.get('trend_log', ''),
+                    'category': sig.get('category', ''),
+                }
 
-    # Get data availability and real-time data
-    from influx_reader import get_influx_reader
-    influx = get_influx_reader()
-    availability = influx.get_building_data_availability(building_id, days=30)
-    realtime_data = influx.get_latest_building_data(building_id)
+        # Get data availability and real-time data
+        from influx_reader import get_influx_reader
+        influx = get_influx_reader()
+        availability = influx.get_building_data_availability(building_id, days=30)
+        realtime_data = influx.get_latest_building_data(building_id)
 
     # Build Plotly chart data for availability heatmap
     import plotly.graph_objects as go
@@ -1276,7 +1287,7 @@ def building_graphs(building_id):
 
     fig = go.Figure()
 
-    if availability['categories']:
+    if not is_aggregate and availability['categories']:
         all_dates = set()
         for cat in availability['categories']:
             for d in cat['data']:
@@ -1337,7 +1348,8 @@ def building_graphs(building_id):
         availability=availability,
         realtime=realtime_data,
         signal_map=signal_map,
-        current_building_name=friendly_name
+        current_building_name=friendly_name,
+        is_aggregate=is_aggregate
     )
 
 
@@ -1492,7 +1504,7 @@ def api_building_cost_estimate(building_id):
 @require_login
 def api_building_energy_separated(building_id):
     """API endpoint for building energy separation (heating vs DHW)."""
-    if not user_manager.can_access_building(session.get('user_id'), building_id):
+    if building_id != '__all__' and not user_manager.can_access_building(session.get('user_id'), building_id):
         return jsonify({'error': 'Access denied'}), 403
 
     days = request.args.get('days', 30, type=int)
@@ -1500,7 +1512,10 @@ def api_building_energy_separated(building_id):
 
     from influx_reader import get_influx_reader
     influx = get_influx_reader()
-    result = influx.get_building_energy_separation(building_id, days=days)
+    if building_id == '__all__':
+        result = influx.get_building_energy_separation_all(days=days)
+    else:
+        result = influx.get_building_energy_separation(building_id, days=days)
     return jsonify(result)
 
 
