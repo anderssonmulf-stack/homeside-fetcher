@@ -33,6 +33,7 @@ Shared across both: energy separation (`heating_energy_calibrator.py`), k-value 
 | `homeside_api.py` | HomeSide API client (session token, BMS token, read/write variables) |
 | `thermal_analyzer.py` | Learns building thermal dynamics. Requires 24 data points (6 hours) minimum |
 | `heat_curve_controller.py` | Dynamic heat curve adjustments based on weather forecasts |
+| `control_homeside.py` | Takes/releases control of a HomeSide house's heat curve via Cwl.Advise writes |
 | `smhi_weather.py` | SMHI weather client for observations and forecasts |
 | `influx_writer.py` | InfluxDB write client for all time-series data |
 | `seq_logger.py` | Structured Seq logging with automatic site tagging |
@@ -142,6 +143,15 @@ When writing to InfluxDB, always **delete existing records** for the same entity
 - InfluxDB uses `measurement + tags + timestamp` as unique key
 - Different tag values (e.g. different `method` tags) create **separate series**, causing duplicates for the same logical data
 - Pattern: `client.delete_api().delete(start, stop, predicate, bucket, org)` before `write_api.write()`
+
+### HomeSide Cwl.Advise.A[] Indices
+
+The `Cwl.Advise.A[]` register array layout **differs between HomeSide installations**. The position of heat curve variables (CurveAdaptation_Y, Yref, etc.) depends on the unit's configuration (number of zones, sensors, pumps).
+
+- Example: `CurveAdaptation_Y_1-10` is at A[64-73] on Villa_148 but A[77-86] on Villa_149
+- **Never hardcode Cwl.Advise.A[] indices** — always discover by scanning variable names in the API response
+- Pattern: match `CurveAdaptation_Y_*` in the `variable` field, read the `path` field for the actual Cwl.Advise.A index
+- Both `heat_curve_controller.py` and `control_homeside.py` discover indices dynamically
 
 ### Plotly Charts (webgui)
 
