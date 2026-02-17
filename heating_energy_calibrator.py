@@ -276,13 +276,16 @@ class HeatingEnergyCalibrator:
         return results, duplicates
 
     def fetch_weather_data(self, house_id: str, start_date: str = "2025-12-01") -> Dict[str, Dict]:
-        """Fetch weather observation data."""
-        # Use regex anchors for exact match to avoid matching multiple houses
+        """Fetch weather observation data.
+
+        Weather observations are always tagged with house_id (even for buildings),
+        so we query with house_id regardless of self.entity_tag.
+        """
         query = f'''
             from(bucket: "{self.influx_bucket}")
             |> range(start: {start_date})
             |> filter(fn: (r) => r["_measurement"] == "weather_observation")
-            |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
+            |> filter(fn: (r) => r["house_id"] == "{house_id}")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
         '''
@@ -295,6 +298,7 @@ class HeatingEnergyCalibrator:
                 ts = record.get_time()
                 rounded = ts.replace(minute=(ts.minute // 15) * 15, second=0, microsecond=0)
                 weather_by_time[rounded.isoformat()] = {
+                    'temperature': record.values.get('temperature'),
                     'wind_speed': record.values.get('wind_speed') or 3.0,
                     'humidity': record.values.get('humidity') or 60.0,
                 }
@@ -351,6 +355,29 @@ class HeatingEnergyCalibrator:
             if not quiet:
                 print("No energy data available")
             return [], 0.0
+
+        # For buildings with assumed_indoor_temp, supplement sparse or missing
+        # heating data with SMHI weather observations.  This covers buildings where
+        # the outdoor temp sensor has no trend log (no historical data).
+        if self.assumed_indoor_temp is not None and weather_data:
+            existing_ts = {d['timestamp'].replace(minute=0, second=0, microsecond=0).isoformat()
+                           for d in heating_data}
+            added = 0
+            for ts_key, w in weather_data.items():
+                if w.get('temperature') is not None:
+                    ts = datetime.fromisoformat(ts_key)
+                    hour_key = ts.replace(minute=0, second=0, microsecond=0).isoformat()
+                    if hour_key not in existing_ts:
+                        heating_data.append({
+                            'timestamp': ts,
+                            'room_temperature': self.assumed_indoor_temp,
+                            'outdoor_temperature': w['temperature'],
+                            'hot_water_temp': None,
+                        })
+                        existing_ts.add(hour_key)
+                        added += 1
+            if added > 0 and not quiet:
+                print(f"Supplemented with {added} SMHI weather observations (building outdoor temp gaps)")
 
         if not heating_data:
             if not quiet:
@@ -417,17 +444,21 @@ class HeatingEnergyCalibrator:
                 outdoor = d.get('outdoor_temperature')
                 hw_temp = d.get('hot_water_temp')
 
+                # Look up SMHI weather for this timestamp
+                ts = d['timestamp']
+                weather_round = self._sample_interval_minutes or 15
+                ts_key = ts.replace(minute=(ts.minute // weather_round) * weather_round, second=0, microsecond=0).isoformat()
+                weather = weather_data.get(ts_key, {'wind_speed': 3.0, 'humidity': 60.0})
+
+                # Fall back to SMHI temperature when building sensor has no outdoor temp
+                if outdoor is None and weather.get('temperature') is not None:
+                    outdoor = weather['temperature']
+
                 if indoor is None or outdoor is None:
                     continue
 
                 indoor_temps.append(indoor)
                 outdoor_temps.append(outdoor)
-
-                # Get weather for effective temp
-                ts = d['timestamp']
-                weather_round = self._sample_interval_minutes or 15
-                ts_key = ts.replace(minute=(ts.minute // weather_round) * weather_round, second=0, microsecond=0).isoformat()
-                weather = weather_data.get(ts_key, {'wind_speed': 3.0, 'humidity': 60.0})
 
                 eff_temp = self.calculate_effective_temp(
                     timestamp=ts,

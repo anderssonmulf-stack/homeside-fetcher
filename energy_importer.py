@@ -260,10 +260,11 @@ class EnergyImporter:
                             except ValueError:
                                 self._log_warning(f"Line {line_num}: Cannot parse '{value}' as number for {field_name}")
 
-                if 'timestamp' in record:
-                    records.append(record)
-                else:
+                if 'timestamp' not in record:
                     errors.append(f"Line {line_num}: Missing timestamp")
+                elif any(isinstance(v, float) for v in record.values()):
+                    records.append(record)
+                # else: row has timestamp but no numeric data (all dashes) — skip silently
 
             except Exception as e:
                 errors.append(f"Line {line_num}: {str(e)}")
