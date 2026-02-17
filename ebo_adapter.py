@@ -21,8 +21,9 @@ The adapter auto-detects IO Bus paths and batches them into a single folder read
 
 import struct
 import logging
+import time
 from datetime import datetime, timezone, timedelta
-from ebo_api import EboApi
+from ebo_api import EboApi, EboApiError
 
 
 def _hex_to_double(hexval):
@@ -58,15 +59,30 @@ class EboBmsAdapter:
         self._history_client = None
 
     def login(self) -> bool:
-        """Authenticate and initialize EBO session."""
-        try:
-            self.ebo.login()
-            self.ebo.web_entry()
-            self.logger.info(f"EBO: Logged in to {self.base_url}")
-            return True
-        except Exception as e:
-            self.logger.error(f"EBO login failed: {e}")
-            return False
+        """Authenticate and initialize EBO session.
+
+        Retries on 'already logged on' (code 131094) with a short delay,
+        since multiple fetchers sharing the same credentials may collide
+        during startup.
+        """
+        for attempt in range(3):
+            try:
+                self.ebo.login()
+                self.ebo.web_entry()
+                self.logger.info(f"EBO: Logged in to {self.base_url}")
+                return True
+            except EboApiError as e:
+                if e.code == 131094 and attempt < 2:
+                    delay = 5 * (attempt + 1)
+                    self.logger.info(f"EBO: Session conflict, retrying in {delay}s (attempt {attempt + 1}/3)")
+                    time.sleep(delay)
+                    continue
+                self.logger.error(f"EBO login failed: {e}")
+                return False
+            except Exception as e:
+                self.logger.error(f"EBO login failed: {e}")
+                return False
+        return False
 
     def configure_signals(self, signal_paths: list):
         """Set which signal paths to read (call before first discover_signals).
@@ -84,6 +100,27 @@ class EboBmsAdapter:
         """
         self._trend_fallbacks = dict(fallbacks)
 
+    def _relogin(self) -> bool:
+        """Re-authenticate to EBO. Returns True on success.
+
+        If 'already logged on' (131094) and we already have a session token,
+        the existing session is still valid — treat as success.
+        """
+        try:
+            self.ebo.login()
+            self.ebo.web_entry()
+            self.logger.info(f"EBO: Re-authenticated to {self.base_url}")
+            return True
+        except EboApiError as e:
+            if e.code == 131094 and self.ebo.session_token:
+                self.logger.info("EBO: Session still active (already logged on), continuing")
+                return True
+            self.logger.warning(f"EBO: Re-login failed: {e}")
+            return False
+        except Exception as e:
+            self.logger.warning(f"EBO: Re-login failed: {e}")
+            return False
+
     def discover_signals(self) -> bool:
         """Read current values via get_objects, populate self.signal_map.
 
@@ -91,19 +128,17 @@ class EboBmsAdapter:
         1. IO Bus paths: batch-read via get_objects on the IO Bus folder
         2. Other paths: batch-read via get_objects on individual object paths
 
-        Re-authenticates before each read to avoid stale sessions.
+        Only re-authenticates when a read fails, to avoid invalidating
+        sessions shared across fetchers using the same credentials.
         """
-        # Re-login to ensure fresh session (EBO sessions go stale between polls)
-        try:
-            self.ebo.login()
-            self.ebo.web_entry()
-        except Exception:
-            pass  # "already logged on" is expected; existing session still works
-
         if not self._signal_paths:
             self.logger.warning("EBO: No signal paths configured")
             return False
 
+        return self._do_discover(retry_on_fail=True)
+
+    def _do_discover(self, retry_on_fail=True) -> bool:
+        """Internal discover implementation with optional auth-retry."""
         try:
             # Classify paths: IO Bus vs server variables
             io_bus_paths = {}  # io_bus_folder -> {point_name -> original_signal_path}
@@ -197,10 +232,20 @@ class EboBmsAdapter:
 
             self.logger.info(f"EBO: Read {read_count}/{len(self._signal_paths)} signals")
 
+            # If we got zero signals and haven't retried yet, re-authenticate and try once more
+            if read_count == 0 and retry_on_fail:
+                self.logger.info("EBO: Got 0 signals, re-authenticating and retrying...")
+                if self._relogin():
+                    return self._do_discover(retry_on_fail=False)
+
             return read_count > 0
 
         except Exception as e:
             self.logger.error(f"EBO discover_signals failed: {e}")
+            if retry_on_fail:
+                self.logger.info("EBO: Retrying after re-authentication...")
+                if self._relogin():
+                    return self._do_discover(retry_on_fail=False)
             return False
 
     def _read_trend_fallbacks(self, missing_paths: list) -> int:

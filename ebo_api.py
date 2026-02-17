@@ -171,6 +171,10 @@ class EboApi:
             status = data.get('Status', 'true')
             if status == 'false' or (err_code and str(err_code) != '0'):
                 code = int(err_code) if err_code else None
+                # 131094 = "already logged on" — our previous session is still valid,
+                # keep using existing session_token + csrf_token instead of failing
+                if code == 131094 and self.session_token:
+                    return self.session_token
                 raise EboApiError(f"Login failed: {err_msg or data}", code=code)
 
         # Extract session token
