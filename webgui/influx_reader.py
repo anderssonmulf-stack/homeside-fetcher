@@ -1569,6 +1569,153 @@ class InfluxReader:
         """Get energy separation data for a building."""
         return self.get_energy_separation(building_id, days=days, entity_tag="building_id")
 
+    def get_building_energy_separation_all(self, days: int = 30) -> dict:
+        """
+        Get aggregated energy separation across ALL buildings.
+        Sums actual, heating, and DHW energy by date.
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'data': [], 'totals': {}, 'k_value': None}
+
+        try:
+            query_api = self.client.query_api()
+
+            # Only select energy_separated records tagged with building_id
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "energy_separated")
+                |> filter(fn: (r) => exists r["building_id"])
+                |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            # Aggregate by date across all buildings
+            today_swedish = datetime.now(SWEDISH_TZ).strftime('%Y-%m-%d')
+            day_data = {}  # date_str -> {actual, heating, dhw, no_breakdown_count, building_count}
+
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if not timestamp:
+                        continue
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=timezone.utc)
+                    swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                    date_str = swedish_time.strftime('%Y-%m-%d')
+
+                    if date_str >= today_swedish:
+                        continue
+
+                    actual = record.values.get('total_energy_kwh') or record.values.get('actual_energy_kwh') or 0
+                    heating = record.values.get('heating_energy_kwh') or 0
+                    dhw = record.values.get('dhw_energy_kwh') or 0
+                    no_breakdown = bool(record.values.get('no_breakdown', 0))
+                    data_coverage = record.values.get('data_coverage', 1.0)
+
+                    if data_coverage < 0.8 and not no_breakdown:
+                        continue
+
+                    if date_str not in day_data:
+                        day_data[date_str] = {
+                            'actual': 0, 'heating': 0, 'dhw': 0,
+                            'no_breakdown_count': 0, 'building_count': 0,
+                            'timestamp': timestamp
+                        }
+
+                    day_data[date_str]['actual'] += actual
+                    day_data[date_str]['building_count'] += 1
+                    if no_breakdown:
+                        day_data[date_str]['no_breakdown_count'] += 1
+                    else:
+                        day_data[date_str]['heating'] += heating
+                        day_data[date_str]['dhw'] += dhw
+
+            # Build results
+            results = []
+            totals = {'actual': 0, 'heating': 0, 'dhw': 0}
+
+            for date_str in sorted(day_data.keys()):
+                d = day_data[date_str]
+                all_no_breakdown = d['no_breakdown_count'] == d['building_count']
+
+                results.append({
+                    'timestamp': d['timestamp'].isoformat(),
+                    'timestamp_display': date_str,
+                    'actual_kwh': round(d['actual'], 1),
+                    'heating_kwh': round(d['heating'], 1),
+                    'dhw_kwh': round(d['dhw'], 1),
+                    'no_breakdown': all_no_breakdown,
+                    'predicted_kwh': None,
+                    'avg_outdoor': None,
+                    'building_count': d['building_count'],
+                })
+
+                totals['actual'] += d['actual']
+                totals['heating'] += d['heating']
+                totals['dhw'] += d['dhw']
+
+            # Query outdoor temps from building_system measurement
+            if results:
+                date_to_idx = {}
+                for i, r in enumerate(results):
+                    date_to_idx[r['timestamp_display']] = i
+
+                outdoor_query = f'''
+                    import "timezone"
+                    option location = timezone.location(name: "Europe/Stockholm")
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -{days}d)
+                    |> filter(fn: (r) => r["_measurement"] == "building_system")
+                    |> filter(fn: (r) => r["_field"] == "outdoor_temp_fvc")
+                    |> aggregateWindow(every: 1d, fn: mean)
+                '''
+
+                outdoor_tables = query_api.query(outdoor_query, org=self.org)
+                outdoor_by_day = {}
+                for table in outdoor_tables:
+                    for record in table.records:
+                        timestamp = record.get_time()
+                        outdoor = record.get_value()
+                        if timestamp and outdoor is not None:
+                            swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                            date_str = swedish_time.strftime('%Y-%m-%d')
+                            if date_str not in outdoor_by_day:
+                                outdoor_by_day[date_str] = {'sum': 0, 'count': 0}
+                            outdoor_by_day[date_str]['sum'] += outdoor
+                            outdoor_by_day[date_str]['count'] += 1
+
+                for date_str, idx in date_to_idx.items():
+                    outdoor_data = outdoor_by_day.get(date_str)
+                    if outdoor_data:
+                        avg_outdoor = outdoor_data['sum'] / outdoor_data['count']
+                        results[idx]['avg_outdoor'] = round(avg_outdoor, 1)
+
+            totals = {k: round(v, 1) for k, v in totals.items()}
+            if totals['actual'] > 0:
+                totals['heating_pct'] = round(100 * totals['heating'] / totals['actual'], 1)
+                totals['dhw_pct'] = round(100 * totals['dhw'] / totals['actual'], 1)
+            else:
+                totals['heating_pct'] = 0
+                totals['dhw_pct'] = 0
+
+            totals['prediction_accuracy'] = None
+            totals['days_with_predictions'] = 0
+
+            return {
+                'data': results,
+                'totals': totals,
+                'k_value': None,
+                'days': days
+            }
+
+        except Exception as e:
+            print(f"Failed to query aggregated building energy separation: {e}")
+            return {'data': [], 'totals': {}, 'k_value': None}
+
     def get_energy_separation_all(self, days: int = 30) -> dict:
         """
         Get aggregated energy separation across ALL houses.

@@ -5,10 +5,16 @@
 <div class="house-detail">
     <div class="page-header">
         <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to Dashboard</a>
+        {% if is_aggregate %}
+        <h1 class="friendly-name">All Buildings</h1>
+        <p class="subtitle">Aggregated view across all buildings</p>
+        {% else %}
         <h1 class="friendly-name">Data Overview</h1>
         <p class="subtitle">{{ friendly_name }}</p>
+        {% endif %}
     </div>
 
+    {% if not is_aggregate %}
     <!-- Current Status Widgets -->
     <div class="status-widgets">
         {% if realtime %}
@@ -61,7 +67,9 @@
         {% if realtime.age_minutes %}({{ realtime.age_minutes|int }} min ago){% endif %}
     </p>
     {% endif %}
+    {% endif %}{# not is_aggregate #}
 
+    {% if not is_aggregate %}
     <!-- Supply & Return Temperatures Chart -->
     <div class="card">
         <div class="card-header-flex">
@@ -203,6 +211,7 @@
         <div id="cost-chart" class="chart-container"></div>
         <div id="cost-summary" class="cost-summary-box"></div>
     </div>
+    {% endif %}{# not is_aggregate #}
 
     <!-- Energy Breakdown (Heating vs Hot Water) -->
     <div class="card">
@@ -443,6 +452,7 @@
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <script>
     const buildingId = "{{ building_id }}";
+    const isAggregate = {{ 'true' if is_aggregate else 'false' }};
     let currentChart = null;
 
     // Initial chart data from server
@@ -1408,20 +1418,25 @@
 
     // Initialize charts on page load
     document.addEventListener('DOMContentLoaded', function() {
-        // Supply & Return chart (top priority)
-        updateSupplyReturnChart();
+        if (isAggregate) {
+            // Aggregate view: only load energy separation chart
+            updateEnergySeparationChart();
+        } else {
+            // Supply & Return chart (top priority)
+            updateSupplyReturnChart();
 
-        // Data availability heatmap
-        if (document.getElementById('availability-chart')) {
-            renderChart(initialData);
+            // Data availability heatmap
+            if (document.getElementById('availability-chart')) {
+                renderChart(initialData);
+            }
+
+            // Other charts - stagger loading
+            setTimeout(() => updateTemperatureHistoryChart(), 100);
+            setTimeout(() => updateEfficiencyChart(), 200);
+            setTimeout(() => updateEnergyChart(), 300);
+            setTimeout(() => updateCostChart(), 400);
+            setTimeout(() => updateEnergySeparationChart(), 500);
         }
-
-        // Other charts - stagger loading
-        setTimeout(() => updateTemperatureHistoryChart(), 100);
-        setTimeout(() => updateEfficiencyChart(), 200);
-        setTimeout(() => updateEnergyChart(), 300);
-        setTimeout(() => updateCostChart(), 400);
-        setTimeout(() => updateEnergySeparationChart(), 500);
     });
 </script>
 {% endblock %}
