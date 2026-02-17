@@ -12,41 +12,78 @@
     <!-- Current Status Widgets -->
     <div class="status-widgets">
         {% if realtime %}
-        <div class="stat-widget">
+        {% set sm = signal_map or {} %}
+        <div class="stat-widget" title="{{ sm.get('outdoor_temp_fvc', {}).get('signal_id', '') }}">
             <div class="stat-value {% if realtime.outdoor_temp_fvc and realtime.outdoor_temp_fvc >= 5 %}mild{% elif realtime.outdoor_temp_fvc and realtime.outdoor_temp_fvc >= 0 %}cool{% else %}cold{% endif %}">
                 {{ "%.1f"|format(realtime.outdoor_temp_fvc) if realtime.outdoor_temp_fvc else '--' }}°C
             </div>
             <div class="stat-label">Outdoor</div>
+            {% if sm.get('outdoor_temp_fvc') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['outdoor_temp_fvc'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['outdoor_temp_fvc'].signal_id }}</span>
+            </div>
+            {% endif %}
         </div>
-        <div class="stat-widget">
+        <div class="stat-widget" title="{{ sm.get('vs1_supply_temp', {}).get('signal_id', '') }}">
             <div class="stat-value {% if realtime.vs1_supply_temp and realtime.vs1_supply_temp >= 25 and realtime.vs1_supply_temp <= 50 %}good{% elif realtime.vs1_supply_temp and realtime.vs1_supply_temp > 50 %}warm{% else %}neutral{% endif %}">
                 {{ "%.1f"|format(realtime.vs1_supply_temp) if realtime.vs1_supply_temp else '--' }}°C
             </div>
             <div class="stat-label">Supply</div>
+            {% if sm.get('vs1_supply_temp') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['vs1_supply_temp'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['vs1_supply_temp'].signal_id }}</span>
+            </div>
+            {% endif %}
         </div>
-        <div class="stat-widget">
+        <div class="stat-widget" title="{{ sm.get('vs1_return_temp', {}).get('signal_id', '') }}">
             <div class="stat-value neutral">
                 {{ "%.1f"|format(realtime.vs1_return_temp) if realtime.vs1_return_temp else '--' }}°C
             </div>
             <div class="stat-label">Return</div>
+            {% if sm.get('vs1_return_temp') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['vs1_return_temp'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['vs1_return_temp'].signal_id }}</span>
+            </div>
+            {% endif %}
         </div>
-        <div class="stat-widget">
+        <div class="stat-widget" title="{{ sm.get('vv1_hot_water_temp', {}).get('signal_id', '') }}">
             <div class="stat-value {% if realtime.vv1_hot_water_temp and realtime.vv1_hot_water_temp >= 50 %}good{% elif realtime.vv1_hot_water_temp and realtime.vv1_hot_water_temp >= 40 %}warm{% else %}cold{% endif %}">
                 {{ "%.1f"|format(realtime.vv1_hot_water_temp) if realtime.vv1_hot_water_temp else '--' }}°C
             </div>
             <div class="stat-label">Hot Water</div>
+            {% if sm.get('vv1_hot_water_temp') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['vv1_hot_water_temp'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['vv1_hot_water_temp'].signal_id }}</span>
+            </div>
+            {% endif %}
         </div>
-        <div class="stat-widget">
+        <div class="stat-widget" title="{{ sm.get('dh_power_total', {}).get('signal_id', '') }}">
             <div class="stat-value neutral">
                 {{ "%.1f"|format(realtime.dh_power_total) if realtime.dh_power_total else '--' }} kW
             </div>
             <div class="stat-label">DH Power</div>
+            {% if sm.get('dh_power_total') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['dh_power_total'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['dh_power_total'].signal_id }}</span>
+            </div>
+            {% endif %}
         </div>
-        <div class="stat-widget">
+        <div class="stat-widget" title="{{ sm.get('system_pressure', {}).get('signal_id', '') }}">
             <div class="stat-value {% if realtime.system_pressure and realtime.system_pressure >= 100 and realtime.system_pressure <= 200 %}good{% elif realtime.system_pressure and realtime.system_pressure < 80 %}cold{% else %}neutral{% endif %}">
                 {{ "%.0f"|format(realtime.system_pressure) if realtime.system_pressure else '--' }} kPa
             </div>
             <div class="stat-label">Pressure</div>
+            {% if sm.get('system_pressure') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['system_pressure'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['system_pressure'].signal_id }}</span>
+            </div>
+            {% endif %}
         </div>
         {% else %}
         <div class="stat-widget wide">
@@ -292,6 +329,42 @@
     flex: 1;
     text-align: center;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    position: relative;
+}
+/* Signal source tooltip */
+.stat-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e2d3d;
+    color: #e0e0e0;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.75em;
+    white-space: nowrap;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    pointer-events: none;
+    text-align: left;
+}
+.stat-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #1e2d3d;
+}
+.stat-widget:hover .stat-tooltip {
+    display: block;
+}
+.tooltip-path {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.9em;
+    color: #90caf9;
 }
 .stat-widget.wide {
     flex: 2;

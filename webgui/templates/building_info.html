@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+{% block title %}Info - {{ friendly_name }}{% endblock %}
+
+{% block content %}
+<div class="house-detail">
+    <div class="page-header">
+        <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to Dashboard</a>
+        <h1 class="friendly-name">Technician Info</h1>
+        <p class="subtitle">{{ friendly_name }}
+            <a href="{{ url_for('building_graphs', building_id=building_id) }}" class="info-nav-link">View Graphs &rarr;</a>
+        </p>
+    </div>
+
+    <!-- Card 1: Connection & Onboarding -->
+    <div class="card">
+        <h2>Connection &amp; Onboarding</h2>
+        <div class="info-grid">
+            <table class="info-table">
+                <tbody>
+                    <tr><td class="info-label">Building ID</td><td>{{ building_id }}</td></tr>
+                    <tr><td class="info-label">System</td><td>{{ connection.get('system', 'arrigo') | upper }}</td></tr>
+                    {% if connection.get('base_url') %}
+                    <tr><td class="info-label">Base URL</td><td><code>{{ connection.base_url }}</code></td></tr>
+                    {% elif connection.get('host') %}
+                    <tr><td class="info-label">Host</td><td><code>{{ connection.host }}</code></td></tr>
+                    {% endif %}
+                    {% if connection.get('credential_ref') %}
+                    <tr><td class="info-label">Credential Ref</td><td><code>{{ connection.credential_ref }}</code></td></tr>
+                    {% endif %}
+                    <tr><td class="info-label">Architecture</td><td>{% if has_io_bus %}IO Bus + Server Vars{% else %}LonWorks DUC (no IO Bus){% endif %}</td></tr>
+                    <tr><td class="info-label">Poll Interval</td><td>{{ bdata.get('poll_interval_minutes', 5) }} min</td></tr>
+                    <tr><td class="info-label">Location</td><td>{{ location.get('latitude', '-') }}, {{ location.get('longitude', '-') }}</td></tr>
+                    {% if bdata.get('discovered_at') %}
+                    <tr><td class="info-label">Discovered</td><td>{{ bdata.discovered_at }}</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+            <table class="info-table">
+                <tbody>
+                    <tr><td class="info-label">K-Value</td><td>{{ energy_sep.get('heat_loss_k', 'N/A') }} kW/&deg;C</td></tr>
+                    {% if energy_sep.get('calibration_date') %}
+                    <tr><td class="info-label">Calibration Date</td><td>{{ energy_sep.calibration_date }}</td></tr>
+                    {% endif %}
+                    {% if energy_sep.get('calibration_method') %}
+                    <tr><td class="info-label">Method</td><td>{{ energy_sep.calibration_method }}</td></tr>
+                    {% endif %}
+                    <tr><td class="info-label">Assumed Indoor</td><td>{{ energy_sep.get('assumed_indoor_temp', 21.0) }}&deg;C</td></tr>
+                    {% if energy_sep.get('meter_ids') %}
+                    <tr><td class="info-label">Meter IDs</td><td>
+                        {% for mid in energy_sep.meter_ids %}
+                        <code>{{ mid }}</code>{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </td></tr>
+                    {% endif %}
+                    <tr><td class="info-label">Signal Count</td><td>{{ signals | length }} analog</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Card 2: Signal Mapping Table -->
+    <div class="card">
+        <h2>Signal Mapping</h2>
+        <div class="table-responsive">
+            <table class="signal-table">
+                <thead>
+                    <tr>
+                        <th>Signal Key</th>
+                        <th>Field Name</th>
+                        <th>BMS Path</th>
+                        <th>Unit</th>
+                        <th>Category</th>
+                        <th>Source</th>
+                        <th>Writable</th>
+                        <th>Last Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sig in signals %}
+                    <tr class="signal-row category-{{ sig.category or 'other' }}">
+                        <td class="signal-key">{{ sig.key }}</td>
+                        <td><code>{{ sig.field_name }}</code></td>
+                        <td class="bms-path" title="{{ sig.signal_id }}">{{ sig.signal_id.split('/')[-3:] | join('/') if '/' in sig.signal_id else sig.signal_id }}</td>
+                        <td>{{ sig.unit }}</td>
+                        <td><span class="category-badge cat-{{ sig.category or 'other' }}">{{ sig.category or 'other' }}</span></td>
+                        <td>{% if sig.live_source == 'trend_log' %}<span class="source-badge trend">trend_log</span>{% else %}<span class="source-badge live">live</span>{% endif %}</td>
+                        <td class="text-center">{% if sig.writable %}&#10003;{% endif %}</td>
+                        <td class="last-value">
+                            {% if realtime and realtime[sig.field_name] is defined and realtime[sig.field_name] is not none %}
+                                {{ "%.2f"|format(realtime[sig.field_name]) }} {{ sig.unit }}
+                            {% else %}
+                                <span class="muted">--</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Card 3: Operational Events -->
+    <div class="card">
+        <h2>Operational Events <span class="event-period">(last 30 days)</span></h2>
+        {% if events %}
+        <div class="event-timeline">
+            {% for event in events %}
+            <div class="event-item event-{{ event.event_type }}">
+                <span class="event-icon">
+                    {% if event.event_type == 'fetch_recovered' %}&#x1F7E2;{% elif event.event_type == 'fetch_failed' %}&#x1F534;{% elif event.event_type == 'fetcher_started' %}&#x1F535;{% elif event.event_type == 'calibration' %}&#x1F4CA;{% elif event.event_type == 'energy_separation' %}&#x26A1;{% else %}&#x2139;{% endif %}
+                </span>
+                <span class="event-time">{{ event.timestamp_display }}</span>
+                <span class="event-message">{{ event.message }}</span>
+                {% if event.detail %}
+                <span class="event-detail">{{ event.detail }}</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="muted">No events recorded yet.</p>
+        {% endif %}
+    </div>
+
+    <!-- Card 4: Cross-Building Mapping Reference (collapsed) -->
+    <div class="card">
+        <details>
+            <summary class="card-collapse-header"><h2 style="display:inline">Cross-Building Mapping Reference</h2></summary>
+            <div class="cross-ref-content">
+                {% for ref in cross_ref %}
+                <div class="cross-ref-building {% if ref.id == building_id %}current{% endif %}">
+                    <div class="cross-ref-header">
+                        <strong>{{ ref.name }}</strong>
+                        <span class="cross-ref-meta">{{ ref.system | upper }} &middot; {{ ref.signal_count }} signals</span>
+                    </div>
+                    <div class="cross-ref-fields">
+                        {% for fn in ref.field_names %}
+                        <code class="field-chip">{{ fn }}</code>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+    </div>
+</div>
+
+<style>
+.info-nav-link {
+    font-size: 0.85em;
+    margin-left: 15px;
+    color: var(--primary, #044680);
+}
+.info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+@media (max-width: 768px) {
+    .info-grid { grid-template-columns: 1fr; }
+}
+.info-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.info-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border, #eee);
+    font-size: 0.9em;
+}
+.info-label {
+    color: var(--muted, #7f8c8d);
+    font-weight: 500;
+    width: 140px;
+    white-space: nowrap;
+}
+.info-table code {
+    font-size: 0.85em;
+    background: var(--card-bg, #f8f9fa);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+/* Signal table */
+.table-responsive {
+    overflow-x: auto;
+}
+.signal-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
+}
+.signal-table th {
+    background: var(--card-bg, #f8f9fa);
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--border, #ddd);
+    white-space: nowrap;
+}
+.signal-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border, #eee);
+    vertical-align: middle;
+}
+.signal-key {
+    font-weight: 600;
+}
+.bms-path {
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-size: 0.9em;
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted, #7f8c8d);
+}
+.signal-table code {
+    font-size: 0.9em;
+    background: var(--card-bg, #f8f9fa);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.text-center { text-align: center; }
+.last-value { white-space: nowrap; }
+
+/* Category badges */
+.category-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8em;
+    font-weight: 500;
+}
+.cat-heating { background: #e3f2fd; color: #1565c0; }
+.cat-hot_water { background: #fff3e0; color: #e65100; }
+.cat-climate { background: #e8f5e9; color: #2e7d32; }
+.cat-energy { background: #fce4ec; color: #c62828; }
+.cat-pressure { background: #f3e5f5; color: #6a1b9a; }
+.cat-other { background: #eceff1; color: #546e7a; }
+
+/* Source badges */
+.source-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.8em;
+    font-weight: 500;
+}
+.source-badge.live { background: #e8f5e9; color: #2e7d32; }
+.source-badge.trend { background: #e3f2fd; color: #1565c0; }
+
+/* Color-code rows by category */
+.signal-row.category-heating td:first-child { border-left: 3px solid #1565c0; }
+.signal-row.category-hot_water td:first-child { border-left: 3px solid #e65100; }
+.signal-row.category-climate td:first-child { border-left: 3px solid #2e7d32; }
+.signal-row.category-energy td:first-child { border-left: 3px solid #c62828; }
+.signal-row.category-pressure td:first-child { border-left: 3px solid #6a1b9a; }
+.signal-row.category-other td:first-child { border-left: 3px solid #546e7a; }
+
+/* Event timeline */
+.event-period {
+    font-size: 0.7em;
+    font-weight: normal;
+    color: var(--muted, #7f8c8d);
+}
+.event-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.event-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--card-bg, #f8f9fa);
+    font-size: 0.9em;
+}
+.event-icon { font-size: 1em; flex-shrink: 0; }
+.event-time {
+    color: var(--muted, #7f8c8d);
+    font-size: 0.85em;
+    white-space: nowrap;
+    min-width: 120px;
+}
+.event-message { flex: 1; }
+.event-detail {
+    color: var(--muted, #7f8c8d);
+    font-size: 0.85em;
+    font-style: italic;
+}
+
+/* Cross-building reference */
+.card-collapse-header {
+    cursor: pointer;
+    padding: 5px 0;
+}
+.card-collapse-header h2 { margin: 0; }
+.cross-ref-content {
+    margin-top: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.cross-ref-building {
+    padding: 12px;
+    border-radius: 6px;
+    background: var(--card-bg, #f8f9fa);
+    border-left: 3px solid var(--border, #ddd);
+}
+.cross-ref-building.current {
+    border-left-color: var(--primary, #044680);
+    background: #e3f2fd;
+}
+.cross-ref-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.cross-ref-meta {
+    font-size: 0.85em;
+    color: var(--muted, #7f8c8d);
+}
+.cross-ref-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.field-chip {
+    font-size: 0.75em;
+    background: white;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border, #ddd);
+}
+.cross-ref-building.current .field-chip {
+    background: white;
+    border-color: #90caf9;
+}
+</style>
+{% endblock %}

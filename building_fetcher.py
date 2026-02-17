@@ -223,6 +223,21 @@ class BuildingInfluxWriter:
             self.logger.error(f"InfluxDB alarm write failed: {e}")
             return False
 
+    def write_event(self, event_type, message, detail=""):
+        """Write an operational event to InfluxDB for technician visibility."""
+        if not self._should_write():
+            return
+        try:
+            point = Point("building_events") \
+                .tag("building_id", self.building_id) \
+                .tag("event_type", event_type) \
+                .field("message", message) \
+                .field("detail", detail) \
+                .time(datetime.now(timezone.utc), WritePrecision.S)
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+        except Exception:
+            pass  # Don't let event logging break the fetch loop
+
     def close(self):
         if self.client:
             self.client.close()
@@ -516,6 +531,12 @@ def main():
             }
         )
 
+    # Log fetcher_started event to InfluxDB
+    if influx:
+        influx.write_event("fetcher_started",
+            f"Fetcher started ({len(analog_fetch)} signals configured)",
+            detail=f"system={system} host={bms_label} interval={interval_minutes}min")
+
     # Stagger startup so processes don't all hit InfluxDB at the same time
     poll_offset = int(os.getenv('POLL_OFFSET_SECONDS', '0'))
     if poll_offset > 0:
@@ -542,6 +563,10 @@ def main():
                                          config, logger)
 
                 if values:
+                    if consecutive_failures > 0 and influx:
+                        influx.write_event("fetch_recovered",
+                            f"Data collection resumed ({len(values)}/{len(analog_fetch)} signals)",
+                            detail=f"after {consecutive_failures} consecutive failures")
                     consecutive_failures = 0
                     first_failure_time = None
 
@@ -584,6 +609,10 @@ def main():
                     consecutive_failures += 1
                     if first_failure_time is None:
                         first_failure_time = now
+
+                    if consecutive_failures == 1 and influx:
+                        influx.write_event("fetch_failed",
+                            f"Data collection failed (0/{len(analog_fetch)} signals)")
 
                     # Try re-authenticating on failure
                     if consecutive_failures >= 2:
@@ -636,6 +665,8 @@ def main():
                     influx_org=args.influx_org, influx_bucket=args.influx_bucket,
                     config=config, logger=logger, seq=seq,
                 )
+                if influx:
+                    influx.write_event("energy_separation", "Energy separation completed")
 
             # Every 72 hours: run k-value recalibration
             if last_recalibration_time is None:
@@ -652,6 +683,10 @@ def main():
                 )
                 if result:
                     logger.info(f"K recalibration: k={result.k_value:.4f} ({result.days_used} days, {result.confidence:.0%})")
+                    if influx:
+                        influx.write_event("calibration",
+                            f"K-value recalibrated: k={result.k_value:.4f}",
+                            detail=f"days={result.days_used} confidence={result.confidence:.0%}")
                     if seq:
                         seq.log(
                             f"[{building_id}] K recalibrated: k={result.k_value:.4f}",

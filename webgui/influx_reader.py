@@ -2770,6 +2770,53 @@ class InfluxReader:
             print(f"Failed to query building efficiency metrics: {e}")
             return []
 
+    def get_building_events(self, building_id: str, days: int = 30) -> dict:
+        """
+        Get operational events for a building (fetch failures, recoveries, calibrations, etc.).
+
+        Returns dict with 'events' list sorted newest first (limit 100).
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'events': [], 'error': 'No connection'}
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "building_events")
+                |> filter(fn: (r) => r["building_id"] == "{building_id}")
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> sort(columns: ["_time"], desc: true)
+                |> limit(n: 100)
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            events = []
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    if timestamp:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                        events.append({
+                            'timestamp': timestamp.isoformat(),
+                            'timestamp_display': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'event_type': record.values.get('event_type', ''),
+                            'message': record.values.get('message', ''),
+                            'detail': record.values.get('detail', ''),
+                        })
+
+            return {'events': events}
+
+        except Exception as e:
+            print(f"Failed to query building events: {e}")
+            return {'events': [], 'error': str(e)}
+
     def close(self):
         """Close the connection"""
         if self.client:

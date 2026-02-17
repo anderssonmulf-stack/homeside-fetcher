@@ -57,6 +57,7 @@
                 </a>
                 <div class="house-links">
                     <a href="{{ url_for('building_graphs', building_id=building.id) }}" class="house-link">📈 Graphs</a>
+                    <a href="{{ url_for('building_info', building_id=building.id) }}" class="house-link">🔧 Info</a>
                 </div>
             </div>
             {% endfor %}

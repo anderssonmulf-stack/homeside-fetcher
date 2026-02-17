@@ -1250,6 +1250,19 @@ def building_graphs(building_id):
         friendly_name = bdata.get('friendly_name') or building_id
     except (FileNotFoundError, _json.JSONDecodeError):
         friendly_name = building_id
+        bdata = {}
+
+    # Build signal_map for tooltips
+    signal_map = {}
+    for key, sig in bdata.get('analog_signals', {}).items():
+        fn = sig.get('field_name')
+        if fn:
+            signal_map[fn] = {
+                'key': key,
+                'signal_id': sig.get('signal_id', ''),
+                'trend_log': sig.get('trend_log', ''),
+                'category': sig.get('category', ''),
+            }
 
     # Get data availability and real-time data
     from influx_reader import get_influx_reader
@@ -1323,6 +1336,7 @@ def building_graphs(building_id):
         config_json=config_json,
         availability=availability,
         realtime=realtime_data,
+        signal_map=signal_map,
         current_building_name=friendly_name
     )
 
@@ -1542,6 +1556,113 @@ def api_building_energy_forecast(building_id):
         k_value=k_value, assumed_indoor_temp=assumed_indoor,
         latitude=lat, longitude=lon
     )
+    return jsonify(result)
+
+
+@app.route('/building/<building_id>/info')
+@require_login
+def building_info(building_id):
+    """Technician info page for a building — signal mapping, events, config."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        flash('Access denied.', 'error')
+        return redirect(url_for('dashboard'))
+
+    import json as _json
+    buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+    filepath = os.path.join(buildings_dir, f"{building_id}.json")
+
+    try:
+        with open(filepath, 'r') as f:
+            bdata = _json.load(f)
+        friendly_name = bdata.get('friendly_name') or building_id
+    except (FileNotFoundError, _json.JSONDecodeError):
+        flash('Building config not found.', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Build signal table data
+    signals = []
+    for key, sig in bdata.get('analog_signals', {}).items():
+        signals.append({
+            'key': key,
+            'field_name': sig.get('field_name', ''),
+            'signal_id': sig.get('signal_id', ''),
+            'unit': sig.get('unit', ''),
+            'category': sig.get('category', ''),
+            'live_source': sig.get('live_source', 'live'),
+            'trend_log': sig.get('trend_log', ''),
+            'writable': sig.get('write_on_change', False),
+        })
+    signals.sort(key=lambda s: (s['category'], s['key']))
+
+    # Get realtime data for "last value" column
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    realtime_data = influx.get_latest_building_data(building_id)
+
+    # Get events
+    events_result = influx.get_building_events(building_id, days=30)
+
+    # Connection info
+    connection = bdata.get('connection', {})
+    energy_sep = bdata.get('energy_separation', {})
+    location = bdata.get('location', {})
+
+    # Detect architecture from signal paths
+    has_io_bus = any('/IO Bus/' in sig.get('signal_id', '') for sig in bdata.get('analog_signals', {}).values())
+
+    # Cross-building reference: load all building configs
+    cross_ref = []
+    if os.path.isdir(buildings_dir):
+        for fname in sorted(os.listdir(buildings_dir)):
+            if not fname.endswith('.json'):
+                continue
+            bid = fname[:-5]
+            try:
+                with open(os.path.join(buildings_dir, fname), 'r') as f:
+                    other = _json.load(f)
+                other_signals = other.get('analog_signals', {})
+                field_names = sorted(set(
+                    s.get('field_name', '') for s in other_signals.values() if s.get('field_name')
+                ))
+                cross_ref.append({
+                    'id': bid,
+                    'name': other.get('friendly_name') or bid,
+                    'system': other.get('connection', {}).get('system', 'arrigo'),
+                    'signal_count': len(other_signals),
+                    'field_names': field_names,
+                })
+            except Exception:
+                pass
+
+    return render_template('building_info.html',
+        building_id=building_id,
+        friendly_name=friendly_name,
+        bdata=bdata,
+        signals=signals,
+        realtime=realtime_data,
+        events=events_result.get('events', []),
+        connection=connection,
+        energy_sep=energy_sep,
+        location=location,
+        has_io_bus=has_io_bus,
+        cross_ref=cross_ref,
+        current_building_name=friendly_name
+    )
+
+
+@app.route('/api/building/<building_id>/events')
+@require_login
+def api_building_events(building_id):
+    """API endpoint for building operational events."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 1), 365)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_building_events(building_id, days=days)
     return jsonify(result)
 
 
