@@ -9,6 +9,7 @@ from smhi_weather import SMHIWeather
 from influx_writer import InfluxDBWriter
 from thermal_analyzer import ThermalAnalyzer
 from heat_curve_controller import HeatCurveController
+from control_homeside import HomeSideControl
 from seq_logger import SeqLogger
 from customer_profile import CustomerProfile, find_profile_for_client_id
 from temperature_forecaster import TemperatureForecaster
@@ -946,6 +947,30 @@ def monitor_heating_system(config):
     else:
         print("⚠ Heat curve controller disabled (requires InfluxDB)")
 
+    # Curve control mode mapping for InfluxDB (0=manual, 1=adaptive, 2=intelligent)
+    CURVE_MODE_MAP = {"manual": 0, "adaptive": 1, "intelligent": 2}
+
+    # Initialize ML curve control (writes weather-adjusted curve to HomeSide)
+    ml_curve_control = None
+    prev_curve_mode = None
+    if customer_profile:
+        prev_curve_mode = customer_profile.heat_curve_control.curve_control_mode
+        if prev_curve_mode == "intelligent":
+            ml_curve_control = HomeSideControl(
+                api=api,
+                profile=customer_profile,
+                logger=logger,
+                seq_logger=seq_logger
+            )
+            print(f"✓ ML curve control enabled (interval: {customer_profile.heat_curve_control.ml_update_interval_minutes}min)")
+
+            # If we were in control before a restart, resume by re-reading indices
+            if customer_profile.heat_curve_control.in_control:
+                print("  Resuming ML curve control from previous session...")
+                ml_curve_control.read_baseline()  # Re-discover Cwl.Advise indices
+        else:
+            print(f"ℹ Curve control mode: {prev_curve_mode}")
+
     interval_minutes = settings.get('data_collection', {}).get('heating_data_interval_minutes', 5)
     print(f"Starting monitoring loop (interval: {interval_minutes} minutes, offset: {poll_offset}s, live-reloaded from settings.json)")
     print("Press Ctrl+C to stop\n")
@@ -970,6 +995,9 @@ def monitor_heating_system(config):
     recalibration_hours = calibration_settings.get('k_recalibration_hours', 72)
     recalibration_days = calibration_settings.get('k_calibration_days', 30)
     recalibration_enabled = calibration_settings.get('enabled', True)
+
+    # Track ML curve control timing
+    last_ml_curve_update = None
 
     # Track periodic Dropbox import check (every hour)
     last_dropbox_check_time = None
@@ -1165,6 +1193,75 @@ def monitor_heating_system(config):
                         _, current_supply = heat_curve.get_supply_temps_for_outdoor(effective_temp)
                         if current_supply is not None:
                             extracted_data['supply_temp_heat_curve_ml'] = round(current_supply, 2)
+
+                        # =====================================================
+                        # CURVE CONTROL MODE: Detect transitions & ML control
+                        # =====================================================
+                        if customer_profile:
+                            # Re-read mode from profile (GUI may have changed it)
+                            try:
+                                profiles_dir = customer_profile._profiles_dir
+                                fresh_profile = CustomerProfile.load(customer_profile.customer_id, profiles_dir)
+                                current_mode = fresh_profile.heat_curve_control.curve_control_mode
+                            except Exception:
+                                current_mode = customer_profile.heat_curve_control.curve_control_mode
+
+                            # Detect mode transition
+                            if current_mode != prev_curve_mode:
+                                logger.info(f"Curve control mode changed: {prev_curve_mode} -> {current_mode}")
+                                print(f"\n🔄 Curve control mode: {prev_curve_mode} -> {current_mode}")
+
+                                # Exiting intelligent mode: restore baseline
+                                if prev_curve_mode == "intelligent" and ml_curve_control and customer_profile.heat_curve_control.in_control:
+                                    ml_curve_control.exit_ml_control(reason=f"mode changed to {current_mode}")
+
+                                # Sync the mode to our in-memory profile
+                                customer_profile.heat_curve_control.curve_control_mode = current_mode
+                                customer_profile.heat_curve_control.ml_enabled = (current_mode == "intelligent")
+
+                                # Entering intelligent mode: create controller
+                                if current_mode == "intelligent":
+                                    ml_curve_control = HomeSideControl(
+                                        api=api,
+                                        profile=customer_profile,
+                                        logger=logger,
+                                        seq_logger=seq_logger
+                                    )
+                                    logger.info("ML curve control initialized for intelligent mode")
+
+                                prev_curve_mode = current_mode
+
+                            # ML curve control logic (only in intelligent mode)
+                            if current_mode == "intelligent" and ml_curve_control:
+                                ctrl = customer_profile.heat_curve_control
+                                # Enter ML control on first iteration if not already in control
+                                if not ctrl.in_control:
+                                    if ml_curve_control.enter_ml_control(weather_model, conditions):
+                                        last_ml_curve_update = now
+
+                                # Periodic ML curve update
+                                if ctrl.in_control:
+                                    interval = ctrl.ml_update_interval_minutes
+                                    should_update = (
+                                        last_ml_curve_update is None or
+                                        (now - last_ml_curve_update).total_seconds() >= interval * 60
+                                    )
+
+                                    # Reactive update: rewrite early if offset shifted significantly
+                                    current_offset = effective_temp - outdoor_temp
+                                    if ctrl.ml_last_offset is not None:
+                                        offset_change = abs(current_offset - ctrl.ml_last_offset)
+                                        if offset_change >= ctrl.ml_reactive_threshold:
+                                            should_update = True
+
+                                    if should_update:
+                                        if ml_curve_control.update_ml_curve(weather_model, conditions):
+                                            last_ml_curve_update = now
+
+                    # Record curve control mode in extracted_data for InfluxDB
+                    if customer_profile:
+                        mode = customer_profile.heat_curve_control.curve_control_mode
+                        extracted_data['curve_control_mode'] = CURVE_MODE_MAP.get(mode, 1)
 
                     # Add data to thermal analyzer for learning
                     thermal.add_data_point(extracted_data)
@@ -1713,6 +1810,11 @@ def monitor_heating_system(config):
         logger.error(f"Unexpected error ({type(e).__name__}): {str(e)}")
         print(f"Unexpected error: {e}")
     finally:
+        # Exit ML curve control gracefully (restore original Yref)
+        if ml_curve_control and customer_profile and customer_profile.heat_curve_control.in_control:
+            print("Restoring original Yref before shutdown...")
+            ml_curve_control.exit_ml_control(reason="shutdown")
+
         # Cleanup resources
         api.cleanup()
 

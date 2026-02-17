@@ -311,6 +311,10 @@ class InfluxDBWriter:
             if 'away_mode' in data:
                 point.field("away_mode", 1 if data['away_mode'] else 0)
 
+            # Curve control mode (0=manual, 1=adaptive, 2=intelligent)
+            if 'curve_control_mode' in data:
+                point.field("curve_control_mode", int(data['curve_control_mode']))
+
             # Write to InfluxDB
             self.write_api.write(bucket=self.bucket, org=self.org, record=point)
             self._log_influx_success()

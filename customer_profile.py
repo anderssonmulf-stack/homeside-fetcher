@@ -152,6 +152,19 @@ class HeatCurveControlConfig:
     baseline: Dict[str, Any] = field(default_factory=dict)
     entered_at: Optional[str] = None
     reason: Optional[str] = None
+    # Curve control mode: "intelligent" (ML), "adaptive" (HomeSide), "manual" (static)
+    curve_control_mode: str = "adaptive"
+    # ML curve control: writes weather-adjusted curve to HomeSide
+    ml_enabled: bool = False  # Kept for backward compat; derived from curve_control_mode
+    ml_update_interval_minutes: int = 30
+    ml_last_offset: Optional[float] = None
+    ml_reactive_threshold: float = 1.0
+
+    def __post_init__(self):
+        # Backward compat: if ml_enabled was set in JSON but no curve_control_mode,
+        # upgrade to "intelligent" so existing profiles keep working
+        if self.ml_enabled and self.curve_control_mode == "adaptive":
+            self.curve_control_mode = "intelligent"
 
 
 @dataclass

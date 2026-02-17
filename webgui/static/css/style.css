@@ -1352,3 +1352,71 @@ a:hover {
     border-color: var(--primary);
     background: rgba(52, 152, 219, 0.05);
 }
+
+/* =============================================================================
+   Curve Control Mode Selector
+   ============================================================================= */
+
+.mode-selector {
+    display: flex;
+    gap: 8px;
+}
+
+.mode-option {
+    flex: 1;
+    cursor: pointer;
+}
+
+.mode-option input[type="radio"] {
+    display: none;
+}
+
+.mode-option .mode-label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 8px;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    text-align: center;
+    transition: all 0.2s;
+}
+
+.mode-option .mode-label strong {
+    font-size: 0.95rem;
+}
+
+.mode-option .mode-label small {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 2px;
+}
+
+.mode-option input[type="radio"]:checked + .mode-label {
+    border-color: var(--primary);
+    background: rgba(52, 152, 219, 0.08);
+    color: var(--primary);
+}
+
+.mode-option input[type="radio"]:checked + .mode-label small {
+    color: var(--primary-dark);
+}
+
+.mode-option:hover .mode-label {
+    border-color: var(--primary);
+}
+
+.mode-status {
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: rgba(39, 174, 96, 0.1);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: var(--success);
+}
+
+@media (max-width: 480px) {
+    .mode-selector {
+        flex-direction: column;
+    }
+}

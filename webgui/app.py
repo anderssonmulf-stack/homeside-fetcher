@@ -1630,6 +1630,49 @@ def update_house_settings(house_id):
     return redirect(url_for('house_detail', house_id=house_id))
 
 
+@app.route('/house/<house_id>/curve-control-mode', methods=['POST'])
+@require_login
+def update_curve_control_mode(house_id):
+    """Update the curve control mode for a house (admin only)"""
+    if not user_manager.can_edit_house(session.get('user_id'), house_id):
+        flash('You do not have permission to edit this house.', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    try:
+        profile = CustomerProfile.load(house_id, profiles_dir)
+    except FileNotFoundError:
+        flash('House profile not found.', 'error')
+        return redirect(url_for('dashboard'))
+
+    new_mode = request.form.get('curve_control_mode', '').strip()
+    valid_modes = ('intelligent', 'adaptive', 'manual')
+    if new_mode not in valid_modes:
+        flash(f'Invalid mode: {new_mode}', 'error')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    old_mode = profile.heat_curve_control.curve_control_mode
+    if new_mode == old_mode:
+        flash(f'Mode already set to {new_mode}.', 'info')
+        return redirect(url_for('house_detail', house_id=house_id))
+
+    profile.heat_curve_control.curve_control_mode = new_mode
+    profile.heat_curve_control.ml_enabled = (new_mode == "intelligent")
+    profile.save()
+
+    audit_logger.log('SettingChanged', session.get('user_id'), {
+        'house_id': house_id,
+        'setting': 'curve_control_mode',
+        'old_value': old_mode,
+        'new_value': new_mode,
+        'source': 'gui'
+    })
+
+    flash(f'Curve control mode changed to {new_mode}.', 'success')
+    return redirect(url_for('house_detail', house_id=house_id))
+
+
 # =============================================================================
 # Energy Import Routes
 # =============================================================================

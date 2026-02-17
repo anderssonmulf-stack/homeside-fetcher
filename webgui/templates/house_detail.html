@@ -114,6 +114,54 @@
             </form>
         </div>
 
+        {% if can_edit %}
+        <!-- Curve Control Mode Card (admin only) -->
+        <div class="card">
+            <h2>Curve Control Mode</h2>
+            <p class="card-description">Controls how the heating curve is managed.</p>
+
+            <form method="POST" action="{{ url_for('update_curve_control_mode', house_id=house_id) }}">
+                <div class="mode-selector">
+                    <label class="mode-option">
+                        <input type="radio" name="curve_control_mode" value="intelligent"
+                               {% if profile.heat_curve_control.curve_control_mode == 'intelligent' %}checked{% endif %}>
+                        <span class="mode-label">
+                            <strong>Intelligent</strong>
+                            <small>ML weather-adjusted Yref</small>
+                        </span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="curve_control_mode" value="adaptive"
+                               {% if profile.heat_curve_control.curve_control_mode == 'adaptive' %}checked{% endif %}>
+                        <span class="mode-label">
+                            <strong>Adaptive</strong>
+                            <small>HomeSide built-in</small>
+                        </span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="curve_control_mode" value="manual"
+                               {% if profile.heat_curve_control.curve_control_mode == 'manual' %}checked{% endif %}>
+                        <span class="mode-label">
+                            <strong>Manual</strong>
+                            <small>Static curve</small>
+                        </span>
+                    </label>
+                </div>
+
+                {% if profile.heat_curve_control.in_control %}
+                <div class="mode-status">
+                    ML control active since {{ profile.heat_curve_control.entered_at[:16] if profile.heat_curve_control.entered_at else 'unknown' }}
+                    {% if profile.heat_curve_control.ml_last_offset is not none %}
+                    — offset: {{ "%.1f"|format(profile.heat_curve_control.ml_last_offset) }}°C
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <button type="submit" class="btn btn-primary btn-small" style="margin-top: 12px;">Apply</button>
+            </form>
+        </div>
+        {% endif %}
+
         <!-- Building Info Card (only shown for own house) -->
         <div class="card">
             <h2>Building Information</h2>

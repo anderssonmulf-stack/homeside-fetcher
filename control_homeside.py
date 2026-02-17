@@ -366,6 +366,355 @@ class HomeSideControl:
 
         return fail_count == 0
 
+    def _interpolate_yref(self, outdoor_temp: float) -> Optional[float]:
+        """
+        Interpolate supply temp from stored Yref baseline at a given outdoor temp.
+
+        Uses linear interpolation between the 10 curve points (-30 to +15°C).
+        """
+        ctrl = self.profile.heat_curve_control
+        yref = ctrl.baseline.get('yref', {})
+        if not yref:
+            return None
+
+        # Build sorted (outdoor_temp, supply_temp) points
+        points = []
+        for point_str, supply_temp in yref.items():
+            point_num = int(point_str)
+            if point_num in CURVE_OUTDOOR_TEMPS:
+                points.append((CURVE_OUTDOOR_TEMPS[point_num], float(supply_temp)))
+
+        if not points:
+            return None
+
+        points.sort(key=lambda x: x[0])
+
+        # Clamp to range
+        if outdoor_temp <= points[0][0]:
+            return points[0][1]
+        if outdoor_temp >= points[-1][0]:
+            return points[-1][1]
+
+        # Linear interpolation
+        for i in range(len(points) - 1):
+            x1, y1 = points[i]
+            x2, y2 = points[i + 1]
+            if x1 <= outdoor_temp <= x2:
+                if x2 == x1:
+                    return y1
+                ratio = (outdoor_temp - x1) / (x2 - x1)
+                return y1 + ratio * (y2 - y1)
+
+        return None
+
+    def compute_ml_curve(self, weather_model, conditions) -> Optional[tuple]:
+        """
+        Compute ML-adjusted curve values based on effective temperature offset.
+
+        For each curve point (outdoor temp -30 to +15°C), compute the effective
+        temp at that outdoor temp, then look up what Yref says for that effective temp.
+        This shifts the curve to account for wind chill and solar gain.
+
+        Args:
+            weather_model: SimpleWeatherModel instance
+            conditions: WeatherConditions for current weather
+
+        Returns:
+            Tuple of (curve_dict {point_num: supply_temp}, offset) or None on failure
+        """
+        ctrl = self.profile.heat_curve_control
+        if not ctrl.baseline or not ctrl.baseline.get('yref'):
+            self.logger.error("No baseline Yref stored — cannot compute ML curve")
+            return None
+
+        # Compute effective temp offset from current conditions
+        eff_result = weather_model.effective_temperature(conditions)
+        offset = eff_result.effective_temp - conditions.temperature
+
+        # Cap offset to ±5°C for safety
+        MAX_OFFSET = 5.0
+        offset = max(-MAX_OFFSET, min(MAX_OFFSET, offset))
+
+        # Get supply temp bounds from Yref
+        yref = ctrl.baseline['yref']
+        yref_values = [float(v) for v in yref.values()]
+        min_supply = min(yref_values)
+        max_supply = max(yref_values)
+
+        # For each curve point, shift outdoor temp by offset and look up Yref
+        ml_curve = {}
+        for point_num in range(1, 11):
+            outdoor = CURVE_OUTDOOR_TEMPS[point_num]
+            effective_outdoor = outdoor + offset
+            supply = self._interpolate_yref(effective_outdoor)
+            if supply is not None:
+                supply = max(min_supply, min(max_supply, round(supply, 1)))
+                ml_curve[point_num] = supply
+
+        if len(ml_curve) != 10:
+            self.logger.warning(f"Incomplete ML curve: {len(ml_curve)}/10 points")
+            if not ml_curve:
+                return None
+
+        return ml_curve, offset
+
+    def enter_ml_control(self, weather_model, conditions) -> bool:
+        """
+        Enter ML curve control mode.
+
+        1. Read and store baseline (both Yref and CurveAdaptation_Y)
+        2. Compute initial ML curve from weather conditions
+        3. Write ML-adjusted values to Yref (the manual reference curve)
+
+        By writing to Yref instead of CurveAdaptation_Y, HomeSide's own
+        adaptation works FROM our ML-adjusted baseline rather than fighting it.
+
+        Returns:
+            True if ML control was entered successfully
+        """
+        ctrl = self.profile.heat_curve_control
+
+        if ctrl.in_control:
+            self.logger.warning(
+                f"Already in control mode since {ctrl.entered_at} "
+                f"(reason: {ctrl.reason}). Call exit_ml_control() first."
+            )
+            return False
+
+        # 1. Read and store baseline
+        baseline = self.read_baseline()
+        if not baseline or not baseline.get('yref'):
+            self.logger.error("Cannot enter ML control: failed to read baseline Yref")
+            return False
+
+        self.save_baseline(baseline)
+
+        # 2. Compute initial ML curve
+        result = self.compute_ml_curve(weather_model, conditions)
+        if result is None:
+            self.logger.error("Cannot enter ML control: failed to compute ML curve")
+            return False
+
+        ml_curve, offset = result
+
+        # 3. Write to Yref indices
+        if not self._yref_advise_indices:
+            self.logger.error("No Yref Cwl.Advise index mapping discovered")
+            return False
+
+        success_count = 0
+        for point_num, supply_temp in ml_curve.items():
+            advise_idx = self._yref_advise_indices.get(point_num)
+            if advise_idx is None:
+                continue
+            path = f"Cwl.Advise.A[{advise_idx}]"
+            if self.api.write_value(path, supply_temp):
+                success_count += 1
+            else:
+                self.logger.error(f"Failed to write Yref {path} = {supply_temp}")
+
+        if success_count == 0:
+            self.logger.error("Failed to write any Yref points — aborting ML control entry")
+            return False
+
+        # 4. Update profile state
+        ctrl.in_control = True
+        ctrl.entered_at = datetime.now(timezone.utc).isoformat()
+        ctrl.reason = "ML curve control"
+        ctrl.ml_last_offset = round(offset, 2)
+        self.profile.save()
+
+        msg = (
+            f"Entered ML control for {self.profile.customer_id}: "
+            f"offset={offset:+.1f}°C, {success_count}/10 Yref points written"
+        )
+        self.logger.info(msg)
+        print(f">> ML Control ON: {self.profile.friendly_name} — {success_count} Yref points set (offset: {offset:+.1f}°C)")
+
+        if self.seq_logger:
+            self.seq_logger.log(
+                "ML curve control entered for {HouseId}: offset={Offset}°C",
+                level='Information',
+                properties={
+                    'EventType': 'MLCurveControlEnter',
+                    'HouseId': self.profile.customer_id,
+                    'Offset': round(offset, 2),
+                    'PointsWritten': success_count,
+                }
+            )
+
+        return True
+
+    def exit_ml_control(self, reason: str = "manual") -> bool:
+        """
+        Exit ML control mode and restore original Yref values.
+
+        Writes the stored baseline Yref back to the Yref Cwl.Advise indices,
+        returning HomeSide to its original manual curve.
+
+        Args:
+            reason: Why we're exiting (for logging)
+
+        Returns:
+            True if original Yref was restored successfully
+        """
+        ctrl = self.profile.heat_curve_control
+
+        if not ctrl.in_control:
+            self.logger.info("Not in ML control mode, nothing to restore")
+            return True
+
+        baseline = ctrl.baseline
+        if not baseline or not baseline.get('yref'):
+            self.logger.error("No baseline Yref stored in profile — cannot restore!")
+            return False
+
+        # Re-discover indices if needed (e.g. after container restart)
+        if not self._yref_advise_indices:
+            self.read_baseline()
+        if not self._yref_advise_indices:
+            self.logger.error("Cannot discover Yref Cwl.Advise indices — cannot restore")
+            return False
+
+        # Restore original Yref values
+        yref = baseline['yref']
+        success_count = 0
+        fail_count = 0
+
+        for idx_str, supply_temp in yref.items():
+            point_idx = int(idx_str)
+            advise_idx = self._yref_advise_indices.get(point_idx)
+            if advise_idx is None:
+                self.logger.warning(f"No Yref Cwl.Advise index for point {point_idx}")
+                continue
+
+            path = f"Cwl.Advise.A[{advise_idx}]"
+            if self.api.write_value(path, supply_temp):
+                success_count += 1
+            else:
+                self.logger.error(f"Failed to restore Yref {path} = {supply_temp}")
+                fail_count += 1
+
+        # Update profile state
+        ctrl.in_control = False
+        ctrl.entered_at = None
+        ctrl.reason = None
+        ctrl.ml_last_offset = None
+        self.profile.save()
+
+        msg = (
+            f"Exited ML control for {self.profile.customer_id}: "
+            f"{success_count} Yref points restored, {fail_count} failed. "
+            f"Reason: {reason}"
+        )
+        self.logger.info(msg)
+        print(f"<< ML Control OFF: {self.profile.friendly_name} — original Yref restored ({reason})")
+
+        if self.seq_logger:
+            self.seq_logger.log(
+                "ML curve control exited for {HouseId}: {Reason}",
+                level='Information',
+                properties={
+                    'EventType': 'MLCurveControlExit',
+                    'HouseId': self.profile.customer_id,
+                    'Reason': reason,
+                    'PointsRestored': success_count,
+                    'PointsFailed': fail_count,
+                }
+            )
+
+        return fail_count == 0
+
+    def update_ml_curve(self, weather_model, conditions) -> bool:
+        """
+        Compute and write ML-adjusted curve to HomeSide Yref.
+
+        Writes to Yref indices so HomeSide's own adaptation works from our
+        ML-adjusted baseline. Skips write if offset hasn't changed
+        significantly (< 0.3°C) to avoid churn.
+
+        Args:
+            weather_model: SimpleWeatherModel instance
+            conditions: WeatherConditions for current weather
+
+        Returns:
+            True if curve was written (or skipped due to small change)
+        """
+        result = self.compute_ml_curve(weather_model, conditions)
+        if result is None:
+            return False
+
+        ml_curve, offset = result
+        ctrl = self.profile.heat_curve_control
+
+        # Check if offset changed enough to justify a write
+        if ctrl.ml_last_offset is not None:
+            if abs(offset - ctrl.ml_last_offset) < 0.3:
+                self.logger.debug(
+                    f"ML curve offset {offset:+.2f}°C unchanged from last "
+                    f"({ctrl.ml_last_offset:+.2f}°C), skipping write"
+                )
+                return True
+
+        # Ensure we have Yref Cwl.Advise indices
+        if not self._yref_advise_indices:
+            self.read_baseline()
+        if not self._yref_advise_indices:
+            self.logger.error("Cannot discover Yref Cwl.Advise indices for ML curve write")
+            return False
+
+        # Write all 10 Yref points
+        success_count = 0
+        for point_num, supply_temp in ml_curve.items():
+            advise_idx = self._yref_advise_indices.get(point_num)
+            if advise_idx is None:
+                continue
+            path = f"Cwl.Advise.A[{advise_idx}]"
+            if self.api.write_value(path, supply_temp):
+                success_count += 1
+            else:
+                self.logger.error(f"Failed to write Yref {path} = {supply_temp}")
+
+        if success_count == 0:
+            self.logger.error("Failed to write any Yref points")
+            return False
+
+        # Update profile with new offset
+        ctrl.ml_last_offset = round(offset, 2)
+        self.profile.save()
+
+        # Log
+        yref = ctrl.baseline.get('yref', {})
+        changes = []
+        for p in range(1, 11):
+            yref_val = float(yref.get(str(p), 0))
+            ml_val = ml_curve.get(p, 0)
+            if abs(ml_val - yref_val) >= 0.1:
+                changes.append(f"P{p}:{yref_val:.0f}->{ml_val:.0f}")
+
+        msg = (
+            f"ML curve updated for {self.profile.customer_id}: "
+            f"offset={offset:+.1f}°C, {success_count}/10 Yref points written"
+        )
+        if changes:
+            msg += f" [{', '.join(changes[:5])}]"
+        self.logger.info(msg)
+
+        if self.seq_logger:
+            self.seq_logger.log(
+                "ML curve update for {HouseId}: offset={Offset}°C, {PointsWritten} Yref points",
+                level='Information',
+                properties={
+                    'EventType': 'MLCurveUpdate',
+                    'HouseId': self.profile.customer_id,
+                    'Offset': round(offset, 2),
+                    'PointsWritten': success_count,
+                    'MLCurve': {str(k): v for k, v in ml_curve.items()},
+                }
+            )
+
+        return True
+
     def get_status(self) -> Dict[str, Any]:
         """Get current control status."""
         ctrl = self.profile.heat_curve_control
@@ -374,6 +723,8 @@ class HomeSideControl:
             'entered_at': ctrl.entered_at,
             'reason': ctrl.reason,
             'has_baseline': bool(ctrl.baseline and ctrl.baseline.get('yref')),
+            'ml_enabled': ctrl.ml_enabled,
+            'ml_last_offset': ctrl.ml_last_offset,
         }
         if ctrl.baseline:
             status['baseline_adaption'] = ctrl.baseline.get('adaption')
