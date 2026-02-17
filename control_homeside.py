@@ -28,9 +28,9 @@ CURVE_OUTDOOR_TEMPS = {
     6: -5,  7: 0,   8: 5,   9: 10,  10: 15,
 }
 
-# Cwl.Advise.A write indices: A[64]=point 1 (-30°C) ... A[73]=point 10 (+15°C)
-POINT_TO_ADVISE_INDEX = {i: 63 + i for i in range(1, 11)}
-ADVISE_INDEX_TO_POINT = {v: k for k, v in POINT_TO_ADVISE_INDEX.items()}
+# NOTE: Cwl.Advise.A[] indices differ between HomeSide installations.
+# They must be discovered dynamically from the API response.
+# Do NOT hardcode index assumptions.
 
 
 class HomeSideControl:
@@ -63,6 +63,9 @@ class HomeSideControl:
         self.profile = profile
         self.logger = logger or logging.getLogger(__name__)
         self.seq_logger = seq_logger
+        # Discovered index mappings (populated by read_baseline or _discover_indices)
+        self._y_advise_indices: Dict[int, int] = {}  # point_num -> Cwl.Advise.A index for Y values
+        self._yref_advise_indices: Dict[int, int] = {}  # point_num -> Cwl.Advise.A index for Yref
 
     def _parse_variables(self, raw_data):
         """Parse get_heating_data() response into lookups by short name and path."""
@@ -81,15 +84,12 @@ class HomeSideControl:
 
     def read_baseline(self) -> Optional[Dict[str, Any]]:
         """
-        Read current Cwl.Advise curve values and adaption settings from HomeSide API.
-
-        Cwl.Advise.A[64-73] is the writable override layer. Yref is the underlying
-        user curve (read-only via API). We store the Advise values since that's what
-        we can write back.
+        Read current CurveAdaptation_Y values and adaption settings from HomeSide API.
+        Discovers Cwl.Advise.A indices dynamically by variable name.
 
         Returns:
-            Dict with 'curve' (dict of point index -> supply temp),
-            'yref' (dict of index -> value, for reference),
+            Dict with 'curve' (dict of point index str -> supply temp),
+            'yref' (dict of point index str -> value, for reference),
             'adaption' (bool), 'adapt_time', 'adapt_delay',
             or None on failure.
         """
@@ -101,25 +101,45 @@ class HomeSideControl:
 
             short_lookup, path_lookup = self._parse_variables(raw_data)
 
-            # Extract Cwl.Advise.A[64-73] values (the writable override layer)
+            # Discover CurveAdaptation_Y and Yref indices dynamically
             curve = {}
-            for point_idx, advise_idx in POINT_TO_ADVISE_INDEX.items():
-                path = f'Cwl.Advise.A[{advise_idx}]'
-                val = path_lookup.get(path)
-                if val is not None:
-                    curve[str(point_idx)] = float(val)
+            yref = {}
+            for var in raw_data.get('variables', []):
+                short_name = var.get('variable', '').split('.')[-1]
+                path = var.get('path', '')
+                value = var.get('value')
+                if value is None:
+                    continue
+
+                # CurveAdaptation_Y_1-10 (the active adapted curve)
+                if 'CurveAdaptation_Y_' in short_name:
+                    try:
+                        point_num = int(short_name.split('CurveAdaptation_Y_')[1])
+                        if 1 <= point_num <= 10:
+                            curve[str(point_num)] = float(value)
+                            if path.startswith('Cwl.Advise.A['):
+                                advise_idx = int(path.replace('Cwl.Advise.A[', '').replace(']', ''))
+                                self._y_advise_indices[point_num] = advise_idx
+                    except (ValueError, TypeError):
+                        pass
+
+                # Yref1-10 (underlying user curve, for reference)
+                elif 'Yref' in short_name and 'GT_TILL' in short_name:
+                    try:
+                        num_str = short_name.split('Yref')[1]
+                        point_num = int(num_str)
+                        if 1 <= point_num <= 10:
+                            yref[str(point_num)] = float(value)
+                            if path.startswith('Cwl.Advise.A['):
+                                advise_idx = int(path.replace('Cwl.Advise.A[', '').replace(']', ''))
+                                self._yref_advise_indices[point_num] = advise_idx
+                    except (ValueError, TypeError):
+                        pass
 
             if len(curve) != 10:
-                self.logger.warning(f"Incomplete Cwl.Advise data: got {len(curve)}/10 points")
+                self.logger.warning(f"Incomplete CurveAdaptation_Y data: got {len(curve)}/10 points")
                 if not curve:
                     return None
-
-            # Also read Yref (underlying user curve) for reference
-            yref = {}
-            for i in range(1, 11):
-                val = short_lookup.get(f'KU_VS1_GT_TILL_1_Yref{i}')
-                if val is not None:
-                    yref[str(i)] = float(val)
 
             # Extract adaption settings
             adaption = short_lookup.get('KU_VS1_GT_TILL_1_Adaption')
@@ -212,16 +232,20 @@ class HomeSideControl:
 
         self.save_baseline(baseline)
 
-        # 2. Write desired curve values via Cwl.Advise
+        # 2. Write desired curve values via discovered Cwl.Advise indices
+        if not self._y_advise_indices:
+            self.logger.error("No Cwl.Advise index mapping discovered — read_baseline() must succeed first")
+            return False
+
         success_count = 0
         fail_count = 0
         for point_idx, supply_temp in desired_curve.items():
             point_idx = int(point_idx)
-            if point_idx not in POINT_TO_ADVISE_INDEX:
-                self.logger.warning(f"Invalid point index {point_idx}, skipping")
+            advise_idx = self._y_advise_indices.get(point_idx)
+            if advise_idx is None:
+                self.logger.warning(f"No Cwl.Advise index for point {point_idx}, skipping")
                 continue
 
-            advise_idx = POINT_TO_ADVISE_INDEX[point_idx]
             path = f"Cwl.Advise.A[{advise_idx}]"
 
             if self.api.write_value(path, supply_temp):
@@ -286,17 +310,25 @@ class HomeSideControl:
             self.logger.error("No baseline curve stored in profile — cannot restore!")
             return False
 
-        # 1. Restore Cwl.Advise curve values
+        # 1. Restore CurveAdaptation_Y curve values
+        # Re-discover indices if needed (e.g. after container restart)
+        if not self._y_advise_indices:
+            self.read_baseline()
+        if not self._y_advise_indices:
+            self.logger.error("Cannot discover Cwl.Advise indices — cannot restore")
+            return False
+
         curve = baseline['curve']
         success_count = 0
         fail_count = 0
 
         for idx_str, supply_temp in curve.items():
             point_idx = int(idx_str)
-            if point_idx not in POINT_TO_ADVISE_INDEX:
+            advise_idx = self._y_advise_indices.get(point_idx)
+            if advise_idx is None:
+                self.logger.warning(f"No Cwl.Advise index for point {point_idx}")
                 continue
 
-            advise_idx = POINT_TO_ADVISE_INDEX[point_idx]
             path = f"Cwl.Advise.A[{advise_idx}]"
 
             if self.api.write_value(path, supply_temp):

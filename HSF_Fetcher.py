@@ -1552,7 +1552,7 @@ def monitor_heating_system(config):
                             mode_label = "ACTIVE" if heat_curve_enabled else "SIMULATION"
                             print(f"\n📉 Heat Curve [{mode_label}]:")
                             print(f"  Recommendation: Reduce by {abs(curve_recommendation['delta']):.1f}°C")
-                            print(f"  Affected points: {curve_recommendation['affected_indices']}")
+                            print(f"  Affected points: {curve_recommendation['affected_points']}")
                             print(f"  Duration: {curve_recommendation['duration_hours']:.0f} hours")
                             print(f"  Reason: {curve_recommendation['reason']}")
                             print(f"  Confidence: {curve_recommendation['confidence']:.0%}")
@@ -1563,7 +1563,7 @@ def monitor_heating_system(config):
                                 if current_curve:
                                     heat_curve.enter_reduction_mode(
                                         current_curve=current_curve,
-                                        affected_indices=curve_recommendation['affected_indices'],
+                                        affected_points=curve_recommendation['affected_points'],
                                         delta=curve_recommendation['delta'],
                                         duration_hours=curve_recommendation['duration_hours'],
                                         reason=curve_recommendation['reason'],

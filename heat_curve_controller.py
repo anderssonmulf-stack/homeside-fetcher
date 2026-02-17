@@ -10,38 +10,14 @@ from typing import Dict, Optional, List, Tuple
 import json
 
 
-# Heat curve X-axis mapping: index -> outdoor temperature (°C)
-# These are READ-ONLY values from HomeSide
-CURVE_X_AXIS = {
-    54: -30,  # X_1
-    55: -25,  # X_2
-    56: -20,  # X_3
-    57: -15,  # X_4
-    58: -10,  # X_5
-    59: -5,   # X_6
-    60: 0,    # X_7
-    61: 5,    # X_8
-    62: 10,   # X_9
-    63: 15,   # X_10
+# Standard outdoor temperatures for curve points 1-10 (same for all HomeSide installations)
+# Point 1 = coldest (-30°C), Point 10 = warmest (+15°C)
+# NOTE: The Cwl.Advise.A[] indices for these points differ between installations,
+# so they must be discovered dynamically from variable names (CurveAdaptation_Y_*).
+CURVE_OUTDOOR_TEMPS = {
+    1: -30, 2: -25, 3: -20, 4: -15, 5: -10,
+    6: -5,  7: 0,   8: 5,   9: 10,  10: 15,
 }
-
-# Heat curve Y-axis mapping: index -> corresponds to X-axis outdoor temp
-# These are the WRITABLE supply temperature values
-CURVE_Y_INDICES = {
-    64: -30,  # Y_1 -> supply temp when outdoor is -30°C
-    65: -25,  # Y_2 -> supply temp when outdoor is -25°C
-    66: -20,  # Y_3 -> supply temp when outdoor is -20°C
-    67: -15,  # Y_4 -> supply temp when outdoor is -15°C
-    68: -10,  # Y_5 -> supply temp when outdoor is -10°C
-    69: -5,   # Y_6 -> supply temp when outdoor is -5°C
-    70: 0,    # Y_7 -> supply temp when outdoor is 0°C
-    71: 5,    # Y_8 -> supply temp when outdoor is +5°C
-    72: 10,   # Y_9 -> supply temp when outdoor is +10°C
-    73: 15,   # Y_10 -> supply temp when outdoor is +15°C
-}
-
-# Reverse mapping: outdoor temp -> Y-axis index
-OUTDOOR_TO_Y_INDEX = {v: k for k, v in CURVE_Y_INDICES.items()}
 
 
 class HeatCurveController:
@@ -70,11 +46,15 @@ class HeatCurveController:
         self.logger = logger
         self.debug_mode = debug_mode
 
+        # Discovered Cwl.Advise.A indices for Y-axis points (point_num -> advise_index)
+        # Populated on first read_current_curve() call
+        self._y_advise_indices: Dict[int, int] = {}
+
         # Adjustment state
         self.adjustment_active = False
         self.adjustment_started_at: Optional[datetime] = None
         self.adjustment_expires_at: Optional[datetime] = None
-        self.adjusted_indices: List[int] = []
+        self.adjusted_points: List[int] = []
         self.adjustment_delta: float = 0.0
 
         # Configuration
@@ -86,9 +66,11 @@ class HeatCurveController:
     def read_current_curve(self) -> Optional[Dict[int, float]]:
         """
         Read current Y-axis values from the HomeSide API.
+        Discovers Cwl.Advise.A indices dynamically by variable name
+        (CurveAdaptation_Y_1 through CurveAdaptation_Y_10).
 
         Returns:
-            Dictionary mapping index (64-73) to current supply temp value
+            Dictionary mapping point number (1-10) to current supply temp value
         """
         try:
             raw_data = self.api.get_heating_data()
@@ -98,15 +80,20 @@ class HeatCurveController:
 
             curve_values = {}
             for var in raw_data['variables']:
+                short_name = var.get('variable', '').split('.')[-1]
                 path = var.get('path', '')
                 value = var.get('value')
 
-                # Check if this is a Y-axis curve point
-                if path.startswith('Cwl.Advise.A[') and value is not None:
+                # Match CurveAdaptation_Y_1 through CurveAdaptation_Y_10
+                if 'CurveAdaptation_Y_' in short_name and value is not None:
                     try:
-                        index = int(path.replace('Cwl.Advise.A[', '').replace(']', ''))
-                        if 64 <= index <= 73:
-                            curve_values[index] = float(value)
+                        point_num = int(short_name.split('CurveAdaptation_Y_')[1])
+                        if 1 <= point_num <= 10:
+                            curve_values[point_num] = float(value)
+                            # Cache Cwl.Advise index for this point (needed for writes)
+                            if path.startswith('Cwl.Advise.A['):
+                                advise_idx = int(path.replace('Cwl.Advise.A[', '').replace(']', ''))
+                                self._y_advise_indices[point_num] = advise_idx
                     except (ValueError, TypeError):
                         continue
 
@@ -133,54 +120,22 @@ class HeatCurveController:
 
         Args:
             outdoor_temp: Current outdoor temperature (°C)
-            curve_values: Optional pre-fetched curve values. If None, reads from API.
+            curve_values: Optional pre-fetched curve values (point_num -> supply_temp).
+                          If None, reads from API.
 
         Returns:
             Interpolated supply temperature (°C), or None if curve unavailable
 
         Example:
             If outdoor temp is +2°C and:
-            - Y_70 (0°C) = 30
-            - Y_71 (+5°C) = 25
+            - Point 7 (0°C) = 30
+            - Point 8 (+5°C) = 25
             Then returns: 30 + (2-0)/(5-0) * (25-30) = 28°C
         """
         if curve_values is None:
             curve_values = self.read_current_curve()
 
-        if not curve_values:
-            return None
-
-        # Build sorted list of (outdoor_temp, supply_temp) points
-        points = []
-        for index, supply_temp in curve_values.items():
-            if index in CURVE_Y_INDICES:
-                curve_outdoor = CURVE_Y_INDICES[index]
-                points.append((curve_outdoor, supply_temp))
-
-        if not points:
-            return None
-
-        points.sort(key=lambda x: x[0])
-
-        # Handle out-of-range temperatures
-        if outdoor_temp <= points[0][0]:
-            return points[0][1]
-        if outdoor_temp >= points[-1][0]:
-            return points[-1][1]
-
-        # Find bracketing points and interpolate
-        for i in range(len(points) - 1):
-            x1, y1 = points[i]
-            x2, y2 = points[i + 1]
-
-            if x1 <= outdoor_temp <= x2:
-                # Linear interpolation
-                if x2 == x1:
-                    return y1
-                ratio = (outdoor_temp - x1) / (x2 - x1)
-                return y1 + ratio * (y2 - y1)
-
-        return None
+        return self._interpolate_curve(outdoor_temp, curve_values)
 
     def get_supply_temps_for_outdoor(
         self,
@@ -225,15 +180,19 @@ class HeatCurveController:
     ) -> Optional[float]:
         """
         Internal helper to interpolate supply temp from curve values.
+
+        Args:
+            outdoor_temp: Outdoor temperature to interpolate for
+            curve_values: Dict mapping point number (1-10) to supply temp
         """
         if not curve_values:
             return None
 
         # Build sorted list of (outdoor_temp, supply_temp) points
         points = []
-        for index, supply_temp in curve_values.items():
-            if index in CURVE_Y_INDICES:
-                curve_outdoor = CURVE_Y_INDICES[index]
+        for point_num, supply_temp in curve_values.items():
+            if point_num in CURVE_OUTDOOR_TEMPS:
+                curve_outdoor = CURVE_OUTDOOR_TEMPS[point_num]
                 points.append((curve_outdoor, supply_temp))
 
         if not points:
@@ -260,13 +219,13 @@ class HeatCurveController:
 
         return None
 
-    def get_affected_indices(
+    def get_affected_points(
         self,
         current_outdoor: float,
         forecast_outdoor: float
     ) -> List[int]:
         """
-        Determine which curve Y-indices should be adjusted based on
+        Determine which curve points should be adjusted based on
         current and forecasted outdoor temperature range.
 
         Args:
@@ -274,7 +233,7 @@ class HeatCurveController:
             forecast_outdoor: Forecasted outdoor temperature (°C)
 
         Returns:
-            List of Y-axis indices (64-73) that fall within the outdoor temp range
+            List of point numbers (1-10) that fall within the outdoor temp range
         """
         # Get the range of outdoor temps we care about
         min_temp = min(current_outdoor, forecast_outdoor)
@@ -286,17 +245,16 @@ class HeatCurveController:
         max_temp += margin
 
         affected = []
-        for index, outdoor_temp in CURVE_Y_INDICES.items():
+        for point_num, outdoor_temp in CURVE_OUTDOOR_TEMPS.items():
             if min_temp <= outdoor_temp <= max_temp:
-                affected.append(index)
+                affected.append(point_num)
 
-        # Sort by index
         affected.sort()
 
         if self.debug_mode:
             self.logger.info(
                 f"Outdoor range {current_outdoor:.1f}°C -> {forecast_outdoor:.1f}°C "
-                f"affects indices: {affected}"
+                f"affects points: {affected}"
             )
 
         return affected
@@ -362,7 +320,7 @@ class HeatCurveController:
                 'reduce': bool,
                 'delta': float (negative for reduction),
                 'duration_hours': float,
-                'affected_indices': List[int],
+                'affected_points': List[int] (point numbers 1-10),
                 'reason': str,
                 'confidence': float
             }
@@ -372,7 +330,7 @@ class HeatCurveController:
                 'reduce': False,
                 'delta': 0.0,
                 'duration_hours': 0,
-                'affected_indices': [],
+                'affected_points': [],
                 'reason': 'No forecast data',
                 'confidence': 0.0
             }
@@ -387,7 +345,7 @@ class HeatCurveController:
                 'reduce': False,
                 'delta': 0.0,
                 'duration_hours': 0,
-                'affected_indices': [],
+                'affected_points': [],
                 'reason': f'Outdoor not rising (trend: {trend})',
                 'confidence': 0.0
             }
@@ -404,21 +362,21 @@ class HeatCurveController:
                 'reduce': False,
                 'delta': 0.0,
                 'duration_hours': 0,
-                'affected_indices': [],
+                'affected_points': [],
                 'reason': reason,
                 'confidence': 0.0
             }
 
         # Determine affected curve points
         forecast_outdoor = current_outdoor + forecast_change
-        affected_indices = self.get_affected_indices(current_outdoor, forecast_outdoor)
+        affected_points = self.get_affected_points(current_outdoor, forecast_outdoor)
 
-        if not affected_indices:
+        if not affected_points:
             return {
                 'reduce': False,
                 'delta': 0.0,
                 'duration_hours': 0,
-                'affected_indices': [],
+                'affected_points': [],
                 'reason': 'No curve points in forecast range',
                 'confidence': 0.0
             }
@@ -433,7 +391,7 @@ class HeatCurveController:
             'reduce': True,
             'delta': delta,
             'duration_hours': duration_hours,
-            'affected_indices': affected_indices,
+            'affected_points': affected_points,
             'reason': reason,
             'confidence': confidence
         }
@@ -441,7 +399,7 @@ class HeatCurveController:
     def enter_reduction_mode(
         self,
         current_curve: Dict[int, float],
-        affected_indices: List[int],
+        affected_points: List[int],
         delta: float,
         duration_hours: float,
         reason: str,
@@ -455,8 +413,8 @@ class HeatCurveController:
         3. Log the adjustment
 
         Args:
-            current_curve: Current Y-values from HomeSide
-            affected_indices: Which indices to adjust
+            current_curve: Current Y-values {point_num: supply_temp}
+            affected_points: Which point numbers (1-10) to adjust
             delta: Adjustment delta (negative for reduction)
             duration_hours: How long to maintain reduction
             reason: Human-readable reason
@@ -467,6 +425,10 @@ class HeatCurveController:
         """
         if self.adjustment_active:
             self.logger.warning("Already in reduction mode, skipping")
+            return False
+
+        if not self._y_advise_indices:
+            self.logger.error("No Cwl.Advise index mapping discovered yet, call read_current_curve() first")
             return False
 
         try:
@@ -480,20 +442,24 @@ class HeatCurveController:
 
             # Calculate new values for affected points
             adjusted_values = {}
-            for index in affected_indices:
-                if index in current_curve:
-                    current_val = current_curve[index]
+            for point_num in affected_points:
+                if point_num in current_curve:
+                    current_val = current_curve[point_num]
                     new_val = max(self.min_supply_temp, current_val + delta)
-                    adjusted_values[index] = new_val
+                    adjusted_values[point_num] = new_val
 
-            # Apply adjustments via API
+            # Apply adjustments via API using discovered Cwl.Advise indices
             success_count = 0
-            for index, new_value in adjusted_values.items():
-                path = f"Cwl.Advise.A[{index}]"
+            for point_num, new_value in adjusted_values.items():
+                advise_idx = self._y_advise_indices.get(point_num)
+                if advise_idx is None:
+                    self.logger.error(f"No Cwl.Advise index for point {point_num}")
+                    continue
+                path = f"Cwl.Advise.A[{advise_idx}]"
                 if self.api.write_value(path, new_value):
                     success_count += 1
                     if self.debug_mode:
-                        old_val = current_curve.get(index, 0)
+                        old_val = current_curve.get(point_num, 0)
                         self.logger.info(f"Adjusted {path}: {old_val:.1f} -> {new_value:.1f}")
                 else:
                     self.logger.error(f"Failed to write {path}")
@@ -516,7 +482,7 @@ class HeatCurveController:
             self.adjustment_active = True
             self.adjustment_started_at = datetime.now(timezone.utc)
             self.adjustment_expires_at = self.adjustment_started_at + timedelta(hours=duration_hours)
-            self.adjusted_indices = affected_indices
+            self.adjusted_points = affected_points
             self.adjustment_delta = delta
 
             self.logger.info(
@@ -551,17 +517,21 @@ class HeatCurveController:
                 self.logger.error("No baseline found in database, cannot restore")
                 return False
 
-            # Restore baseline values for adjusted indices
+            # Restore baseline values for adjusted points
             restored_values = {}
             success_count = 0
 
-            for index in self.adjusted_indices:
-                if index in baseline:
-                    path = f"Cwl.Advise.A[{index}]"
-                    baseline_val = baseline[index]
+            for point_num in self.adjusted_points:
+                if point_num in baseline:
+                    advise_idx = self._y_advise_indices.get(point_num)
+                    if advise_idx is None:
+                        self.logger.error(f"No Cwl.Advise index for point {point_num}")
+                        continue
+                    path = f"Cwl.Advise.A[{advise_idx}]"
+                    baseline_val = baseline[point_num]
 
                     if self.api.write_value(path, baseline_val):
-                        restored_values[index] = baseline_val
+                        restored_values[point_num] = baseline_val
                         success_count += 1
                         if self.debug_mode:
                             self.logger.info(f"Restored {path} to {baseline_val:.1f}")
@@ -582,7 +552,7 @@ class HeatCurveController:
             self.adjustment_active = False
             self.adjustment_started_at = None
             self.adjustment_expires_at = None
-            self.adjusted_indices = []
+            self.adjusted_points = []
             self.adjustment_delta = 0.0
 
             self.logger.info(f"Exited reduction mode: {success_count} points restored ({reason})")
@@ -619,7 +589,7 @@ class HeatCurveController:
         """
         status = {
             'adjustment_active': self.adjustment_active,
-            'adjusted_indices': self.adjusted_indices,
+            'adjusted_points': self.adjusted_points,
             'adjustment_delta': self.adjustment_delta,
         }
 

@@ -265,7 +265,7 @@ class SeqLogger:
             props['CurveDuration'] = round(float(curve_recommendation.get('duration_hours', 0)), 1)
             props['CurveConfidence'] = round(float(curve_recommendation.get('confidence', 0)), 2)
             props['CurveReason'] = curve_recommendation.get('reason')
-            props['CurveAffectedPoints'] = ','.join(map(str, curve_recommendation.get('affected_indices', [])))
+            props['CurveAffectedPoints'] = ','.join(map(str, curve_recommendation.get('affected_points', [])))
             props['CurveModeActive'] = heat_curve_enabled
             props['CurveAdjustmentActive'] = curve_adjustment_active
 

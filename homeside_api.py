@@ -514,17 +514,16 @@ class HomeSideAPI:
         Write a value to the HomeSide API using the save endpoint.
 
         Args:
-            path: Variable path (e.g., "Cwl.Advise.A[70]" for heat curve at 0°C outdoor)
+            path: Variable path (e.g., "Cwl.Advise.A[83]")
             value: Value to set (will be converted to string)
             retry_on_auth_error: Whether to retry after refreshing token on 401
 
         Returns:
             bool: True if write was successful, False otherwise
 
-        Heat curve indices (Cwl.Advise.A[64] through Cwl.Advise.A[73]):
-            64-69: Heat curve points at various outdoor temperatures
-            70: Target supply temperature at 0°C outdoor
-            71-73: Heat curve points at higher outdoor temperatures
+        Note: Cwl.Advise.A[] indices for heat curve Y-axis points differ between
+        installations. Use HeatCurveController or HomeSideControl to discover
+        the correct indices dynamically via variable names.
         """
         if not self.bms_token:
             self.logger.error("BMS token not available, call get_bms_token first")
@@ -580,20 +579,20 @@ class HomeSideAPI:
             print(f"✗ Write failed (network): {e}")
             return False
 
-    def write_heat_curve_point(self, index: int, temperature: float):
+    def write_heat_curve_point(self, advise_index: int, temperature: float):
         """
-        Convenience method to write a heat curve point.
+        Convenience method to write a heat curve Y-axis point via Cwl.Advise.
+
+        NOTE: The correct Cwl.Advise.A index for CurveAdaptation_Y values differs
+        between installations. Use HeatCurveController or HomeSideControl to
+        discover indices dynamically.
 
         Args:
-            index: Heat curve index (64-73)
+            advise_index: Cwl.Advise.A index for the Y-axis point
             temperature: Target supply temperature in °C
 
         Returns:
             bool: True if write was successful
         """
-        if not 64 <= index <= 73:
-            self.logger.error(f"Heat curve index must be 64-73, got {index}")
-            return False
-
-        path = f"Cwl.Advise.A[{index}]"
+        path = f"Cwl.Advise.A[{advise_index}]"
         return self.write_value(path, temperature)

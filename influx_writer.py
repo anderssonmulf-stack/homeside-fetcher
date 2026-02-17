@@ -615,8 +615,8 @@ class InfluxDBWriter:
         Called before entering reduction mode to save current HomeSide values.
 
         Args:
-            curve_values: Dictionary mapping index (64-73) to Y-value (supply temp)
-                {64: 40.0, 65: 38.0, ..., 73: 23.34}
+            curve_values: Dictionary mapping point number (1-10) to supply temp
+                {1: 40.0, 2: 38.0, ..., 10: 23.34}
 
         Returns:
             True if write succeeded, False otherwise
@@ -646,7 +646,7 @@ class InfluxDBWriter:
         Read the most recent heat curve baseline from InfluxDB.
 
         Returns:
-            Dictionary mapping index (64-73) to Y-value, or None if not found
+            Dictionary mapping point number (1-10) to supply temp, or None if not found
         """
         if not self.enabled:
             return None
