@@ -506,6 +506,10 @@ class HeatingEnergyCalibrator:
                 a.estimated_heating_kwh = round(calibrated_k * a.degree_hours, 1)
                 a.excess_energy_kwh = round(a.actual_energy_kwh - a.estimated_heating_kwh, 1)
 
+        # Default to 0.0 when k could not be determined (insufficient data coverage)
+        if calibrated_k is None:
+            calibrated_k = 0.0
+
         return analyses, calibrated_k
 
     def print_results(self, analyses: List[DailyEnergyAnalysis], calibrated_k: float, k_percentile: int = K_PERCENTILE_HEATING_ONLY):
@@ -759,6 +763,10 @@ def run_energy_separation(
                 logger.info(f"Energy separation for {entity_id}: no data to analyze")
             calibrator.close()
             return None
+
+        if k == 0.0 and calibrated_k is None:
+            if logger:
+                logger.info(f"Energy separation for {entity_id}: {len(analyses)} days but insufficient data to calibrate k (writing raw data only)")
 
         written = calibrator.write_to_influx(entity_id, analyses, k)
         calibrator.close()

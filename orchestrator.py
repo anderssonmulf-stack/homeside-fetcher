@@ -25,12 +25,15 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+SWEDISH_TZ = ZoneInfo("Europe/Stockholm")
 
 # ---------------------------------------------------------------------------
 #  Constants
 # ---------------------------------------------------------------------------
 SCAN_INTERVAL = 60          # seconds between directory rescans
+ENERGY_IMPORT_HOUR = 8     # Run energy import at 08:00 Swedish time
 PROFILES_DIR = "profiles"
 BUILDINGS_DIR = "buildings"
 OFFBOARDED_FILE = "offboarded.json"
@@ -290,6 +293,59 @@ def check_crashed(children: dict[str, Child]) -> None:
 
 
 # ---------------------------------------------------------------------------
+#  Daily energy import from Dropbox
+# ---------------------------------------------------------------------------
+def run_energy_import() -> None:
+    """Run Dropbox energy import + meter sync as subprocesses.
+
+    1. energy_importer.py  — downloads .txt files from Dropbox, writes to InfluxDB
+    2. dropbox_sync.py     — updates the meter request CSV so the energy company
+                             knows what meters to export next
+    """
+    log("Running daily energy import from Dropbox...")
+
+    # Step 1: Import energy files
+    try:
+        result = subprocess.run(
+            [sys.executable, "-u", "energy_importer.py"],
+            capture_output=True, text=True, timeout=300,
+            env=os.environ.copy(),
+        )
+        for line in result.stdout.strip().splitlines():
+            log(f"  [energy_importer] {line}")
+        if result.returncode != 0:
+            log(f"energy_importer.py exited with rc={result.returncode}")
+            for line in result.stderr.strip().splitlines():
+                log(f"  [energy_importer stderr] {line}")
+        else:
+            log("Energy import completed successfully")
+    except subprocess.TimeoutExpired:
+        log("energy_importer.py timed out (300s)")
+    except Exception as e:
+        log(f"Failed to run energy_importer.py: {e}")
+
+    # Step 2: Sync meter request file (always, even if no new files were imported)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-u", "dropbox_sync.py"],
+            capture_output=True, text=True, timeout=120,
+            env=os.environ.copy(),
+        )
+        for line in result.stdout.strip().splitlines():
+            log(f"  [dropbox_sync] {line}")
+        if result.returncode != 0:
+            log(f"dropbox_sync.py exited with rc={result.returncode}")
+            for line in result.stderr.strip().splitlines():
+                log(f"  [dropbox_sync stderr] {line}")
+        else:
+            log("Meter sync completed successfully")
+    except subprocess.TimeoutExpired:
+        log("dropbox_sync.py timed out (120s)")
+    except Exception as e:
+        log(f"Failed to run dropbox_sync.py: {e}")
+
+
+# ---------------------------------------------------------------------------
 #  Scheduled purge of offboarded entities
 # ---------------------------------------------------------------------------
 def check_purge_schedule() -> None:
@@ -400,6 +456,9 @@ def main() -> None:
     last_purge_date = datetime.now(timezone.utc).date()
     check_purge_schedule()
 
+    # Track daily energy import (08:00 Swedish time)
+    last_energy_import_date: str = ""
+
     # Main loop
     try:
         while not shutdown:
@@ -419,6 +478,14 @@ def main() -> None:
             if today != last_purge_date:
                 check_purge_schedule()
                 last_purge_date = today
+
+            # Daily energy import at 08:00 Swedish time
+            now_swedish = datetime.now(SWEDISH_TZ)
+            today_swedish = now_swedish.strftime("%Y-%m-%d")
+            if (now_swedish.hour >= ENERGY_IMPORT_HOUR
+                    and last_energy_import_date != today_swedish):
+                last_energy_import_date = today_swedish
+                run_energy_import()
 
     except KeyboardInterrupt:
         shutdown = True
