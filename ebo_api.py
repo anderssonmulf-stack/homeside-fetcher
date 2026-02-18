@@ -519,6 +519,118 @@ class EboApi:
             "bookmark": bookmark,
         })
 
+    def get_bookmark(self):
+        """Get current bookmark from server (initial or refresh).
+
+        Returns:
+            int: Current bookmark value
+        """
+        result = self.client_refresh(bookmark=0)
+        return result.get('ClientRefreshRes', result).get('bookmark', 0)
+
+    def force_value(self, path, object_id, value, server_path, duration_seconds=3600,
+                    bookmark=None, signatures=None):
+        """Force a variable to a value with timed auto-release.
+
+        Uses CommitOperations with 3 atomic sub-operations:
+        1. Write the value
+        2. Activate force (forced=true)
+        3. Set auto-release timer (forcedUntil in milliseconds)
+
+        Args:
+            path: Full EBO object path (e.g. "/Server/VS1/Variabler/GT1_FS")
+            object_id: Object GUID from EBO (e.g. "OzytXgOpT66fU0TxymXwQQ")
+            value: Value to force (will be converted to string)
+            server_path: Automation server path (e.g. "/Kattegattgymnasiet 20942 AS3")
+            duration_seconds: Hold duration in seconds (default 3600 = 1 hour)
+            bookmark: Session bookmark from ClientRefresh (auto-fetched if None)
+            signatures: Electronic signature data if required, else None
+
+        Returns:
+            dict: API response (empty CommitOperationsRes on success)
+        """
+        if bookmark is None:
+            bookmark = self.get_bookmark()
+
+        value_str = str(value)
+        duration_ms = int(duration_seconds * 1000)
+
+        payload = {
+            "command": "CommitOperations",
+            "operations": [
+                {
+                    "kind": "SetProperty",
+                    "id": object_id,
+                    "name": "Value",
+                    "value": value_str,
+                    "isNull": False,
+                    "path": path,
+                },
+                {
+                    "kind": "SetProperty",
+                    "id": object_id,
+                    "name": "Value",
+                    "forced": True,
+                    "trueValue": value_str,
+                    "value": value_str,
+                    "path": path,
+                },
+                {
+                    "kind": "SetProperty",
+                    "id": object_id,
+                    "name": "Value",
+                    "forcedUntil": duration_ms,
+                    "trueValue": value_str,
+                    "value": value_str,
+                    "path": path,
+                },
+            ],
+            "bookmark": bookmark,
+            "serverPath": server_path,
+            "signatures": signatures,
+        }
+
+        return self._post_command(payload)
+
+    def unforce_value(self, path, object_id, current_value, server_path,
+                      bookmark=None, signatures=None):
+        """UnForce (release) a variable, returning it to automatic control.
+
+        Must be called before forcing a new value if a force is already active.
+
+        Args:
+            path: Full EBO object path
+            object_id: Object GUID from EBO
+            current_value: Current value of the variable (float, will be hex-encoded)
+            server_path: Automation server path
+            bookmark: Session bookmark (auto-fetched if None)
+            signatures: Electronic signature data if required, else None
+
+        Returns:
+            dict: API response (empty CommitOperationsRes on success)
+        """
+        if bookmark is None:
+            bookmark = self.get_bookmark()
+
+        payload = {
+            "command": "CommitOperations",
+            "operations": [
+                {
+                    "kind": "SetProperty",
+                    "id": object_id,
+                    "name": "Value",
+                    "forced": False,
+                    "value": self.encode_value(float(current_value)),
+                    "path": path,
+                },
+            ],
+            "bookmark": bookmark,
+            "serverPath": server_path,
+            "signatures": signatures,
+        }
+
+        return self._post_command(payload)
+
 
 def main():
     """Test login against an EBO server."""
