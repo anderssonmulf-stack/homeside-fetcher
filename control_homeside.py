@@ -701,8 +701,19 @@ class HomeSideControl:
         self.logger.info(msg)
 
         if self.seq_logger:
+            # Build per-point change details
+            point_deltas = {}
+            for p in range(1, 11):
+                yref_val = float(yref.get(str(p), 0))
+                ml_val = ml_curve.get(p, 0)
+                point_deltas[f"P{p}_{CURVE_OUTDOOR_TEMPS[p]:+d}C"] = {
+                    'baseline': yref_val,
+                    'new': ml_val,
+                    'delta': round(ml_val - yref_val, 1),
+                }
+
             self.seq_logger.log(
-                "ML curve update for {HouseId}: offset={Offset}°C, {PointsWritten} Yref points",
+                "ML curve update for {HouseId}: offset={Offset}°C, {PointsWritten} Yref points. {ChangeSummary}",
                 level='Information',
                 properties={
                     'EventType': 'MLCurveUpdate',
@@ -710,6 +721,9 @@ class HomeSideControl:
                     'Offset': round(offset, 2),
                     'PointsWritten': success_count,
                     'MLCurve': {str(k): v for k, v in ml_curve.items()},
+                    'BaselineYref': {str(k): float(v) for k, v in yref.items()},
+                    'PointDeltas': point_deltas,
+                    'ChangeSummary': ', '.join(changes) if changes else 'no changes',
                 }
             )
 
