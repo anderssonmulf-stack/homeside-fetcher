@@ -152,7 +152,7 @@
                 <div class="mode-status">
                     ML control active since {{ profile.heat_curve_control.entered_at[:16] if profile.heat_curve_control.entered_at else 'unknown' }}
                     {% if profile.heat_curve_control.ml_last_offset is not none %}
-                    — offset: {{ "%.1f"|format(profile.heat_curve_control.ml_last_offset) }}°C
+                    — shift: {{ "%+.1f"|format(profile.heat_curve_control.ml_last_offset) }}°C
                     {% endif %}
                 </div>
                 {% endif %}

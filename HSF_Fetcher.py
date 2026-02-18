@@ -1247,11 +1247,13 @@ def monitor_heating_system(config):
                                         (now - last_ml_curve_update).total_seconds() >= interval * 60
                                     )
 
-                                    # Reactive update: rewrite early if offset shifted significantly
-                                    current_offset = effective_temp - outdoor_temp
+                                    # Reactive update: rewrite early if estimated supply shift changed significantly
+                                    # ml_last_offset stores parallel supply shift; estimate current from outdoor offset
+                                    current_outdoor_offset = effective_temp - outdoor_temp
+                                    estimated_shift = -0.7 * current_outdoor_offset  # approx curve slope
                                     if ctrl.ml_last_offset is not None:
-                                        offset_change = abs(current_offset - ctrl.ml_last_offset)
-                                        if offset_change >= ctrl.ml_reactive_threshold:
+                                        shift_change = abs(estimated_shift - ctrl.ml_last_offset)
+                                        if shift_change >= ctrl.ml_reactive_threshold:
                                             should_update = True
 
                                     if should_update:

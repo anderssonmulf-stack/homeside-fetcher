@@ -409,18 +409,18 @@ class HomeSideControl:
 
     def compute_ml_curve(self, weather_model, conditions) -> Optional[tuple]:
         """
-        Compute ML-adjusted curve values based on effective temperature offset.
+        Compute ML-adjusted curve as a parallel shift of the baseline Yref.
 
-        For each curve point (outdoor temp -30 to +15°C), compute the effective
-        temp at that outdoor temp, then look up what Yref says for that effective temp.
-        This shifts the curve to account for wind chill and solar gain.
+        Uses the effective temperature model to determine how much warmer/colder
+        it "feels" than actual outdoor temp, then shifts the entire Yref curve
+        up or down by a uniform supply temp delta.
 
         Args:
             weather_model: SimpleWeatherModel instance
             conditions: WeatherConditions for current weather
 
         Returns:
-            Tuple of (curve_dict {point_num: supply_temp}, offset) or None on failure
+            Tuple of (curve_dict {point_num: supply_temp}, parallel_shift) or None
         """
         ctrl = self.profile.heat_curve_control
         if not ctrl.baseline or not ctrl.baseline.get('yref'):
@@ -429,34 +429,31 @@ class HomeSideControl:
 
         # Compute effective temp offset from current conditions
         eff_result = weather_model.effective_temperature(conditions)
-        offset = eff_result.effective_temp - conditions.temperature
+        outdoor_offset = eff_result.effective_temp - conditions.temperature
 
         # Cap offset to ±5°C for safety
         MAX_OFFSET = 5.0
-        offset = max(-MAX_OFFSET, min(MAX_OFFSET, offset))
+        outdoor_offset = max(-MAX_OFFSET, min(MAX_OFFSET, outdoor_offset))
 
-        # Get supply temp bounds from Yref
+        # Compute parallel shift: use curve slope at 0°C reference point
+        # to convert outdoor offset to supply temp delta
+        reference_supply = self._interpolate_yref(0.0)
+        shifted_supply = self._interpolate_yref(0.0 + outdoor_offset)
+
+        if reference_supply is None or shifted_supply is None:
+            self.logger.error("Cannot compute parallel shift from Yref")
+            return None
+
+        parallel_shift = round(shifted_supply - reference_supply, 1)
+
+        # Apply uniform shift to all Yref points
         yref = ctrl.baseline['yref']
-        yref_values = [float(v) for v in yref.values()]
-        min_supply = min(yref_values)
-        max_supply = max(yref_values)
-
-        # For each curve point, shift outdoor temp by offset and look up Yref
         ml_curve = {}
         for point_num in range(1, 11):
-            outdoor = CURVE_OUTDOOR_TEMPS[point_num]
-            effective_outdoor = outdoor + offset
-            supply = self._interpolate_yref(effective_outdoor)
-            if supply is not None:
-                supply = max(min_supply, min(max_supply, round(supply, 1)))
-                ml_curve[point_num] = supply
+            baseline_supply = float(yref.get(str(point_num), 0))
+            ml_curve[point_num] = round(baseline_supply + parallel_shift, 1)
 
-        if len(ml_curve) != 10:
-            self.logger.warning(f"Incomplete ML curve: {len(ml_curve)}/10 points")
-            if not ml_curve:
-                return None
-
-        return ml_curve, offset
+        return ml_curve, parallel_shift
 
     def enter_ml_control(self, weather_model, conditions) -> bool:
         """
@@ -495,7 +492,7 @@ class HomeSideControl:
             self.logger.error("Cannot enter ML control: failed to compute ML curve")
             return False
 
-        ml_curve, offset = result
+        ml_curve, parallel_shift = result
 
         # 3. Write to Yref indices
         if not self._yref_advise_indices:
@@ -521,25 +518,26 @@ class HomeSideControl:
         ctrl.in_control = True
         ctrl.entered_at = datetime.now(timezone.utc).isoformat()
         ctrl.reason = "ML curve control"
-        ctrl.ml_last_offset = round(offset, 2)
+        ctrl.ml_last_offset = round(parallel_shift, 2)
         self.profile.save()
 
         msg = (
             f"Entered ML control for {self.profile.customer_id}: "
-            f"offset={offset:+.1f}°C, {success_count}/10 Yref points written"
+            f"shift={parallel_shift:+.1f}°C, {success_count}/10 Yref points written"
         )
         self.logger.info(msg)
-        print(f">> ML Control ON: {self.profile.friendly_name} — {success_count} Yref points set (offset: {offset:+.1f}°C)")
+        print(f">> ML Control ON: {self.profile.friendly_name} — {success_count} Yref points set (shift: {parallel_shift:+.1f}°C)")
 
         if self.seq_logger:
             self.seq_logger.log(
-                "ML curve control entered for {HouseId}: offset={Offset}°C",
+                "ML curve control entered for {HouseId}: shift {ParallelShift}°C supply, {PointsWritten}/10 points",
                 level='Information',
                 properties={
                     'EventType': 'MLCurveControlEnter',
                     'HouseId': self.profile.customer_id,
-                    'Offset': round(offset, 2),
+                    'ParallelShift': round(parallel_shift, 2),
                     'PointsWritten': success_count,
+                    'MLCurve': {str(k): v for k, v in ml_curve.items()},
                 }
             )
 
@@ -630,7 +628,7 @@ class HomeSideControl:
         Compute and write ML-adjusted curve to HomeSide Yref.
 
         Writes to Yref indices so HomeSide's own adaptation works from our
-        ML-adjusted baseline. Skips write if offset hasn't changed
+        ML-adjusted baseline. Skips write if parallel shift hasn't changed
         significantly (< 0.3°C) to avoid churn.
 
         Args:
@@ -644,15 +642,15 @@ class HomeSideControl:
         if result is None:
             return False
 
-        ml_curve, offset = result
+        ml_curve, parallel_shift = result
         ctrl = self.profile.heat_curve_control
 
-        # Check if offset changed enough to justify a write
+        # Check if shift changed enough to justify a write
         if ctrl.ml_last_offset is not None:
-            if abs(offset - ctrl.ml_last_offset) < 0.3:
+            if abs(parallel_shift - ctrl.ml_last_offset) < 0.3:
                 self.logger.debug(
-                    f"ML curve offset {offset:+.2f}°C unchanged from last "
-                    f"({ctrl.ml_last_offset:+.2f}°C), skipping write"
+                    f"ML curve shift {parallel_shift:+.1f}°C unchanged from last "
+                    f"({ctrl.ml_last_offset:+.1f}°C), skipping write"
                 )
                 return True
 
@@ -679,51 +677,32 @@ class HomeSideControl:
             self.logger.error("Failed to write any Yref points")
             return False
 
-        # Update profile with new offset
-        ctrl.ml_last_offset = round(offset, 2)
-        self.profile.save()
-
-        # Log
+        # Log baseline for reference
         yref = ctrl.baseline.get('yref', {})
-        changes = []
-        for p in range(1, 11):
-            yref_val = float(yref.get(str(p), 0))
-            ml_val = ml_curve.get(p, 0)
-            if abs(ml_val - yref_val) >= 0.1:
-                changes.append(f"P{p}:{yref_val:.0f}->{ml_val:.0f}")
+
+        # Update profile with new shift
+        previous_shift = ctrl.ml_last_offset
+        ctrl.ml_last_offset = round(parallel_shift, 2)
+        self.profile.save()
 
         msg = (
             f"ML curve updated for {self.profile.customer_id}: "
-            f"offset={offset:+.1f}°C, {success_count}/10 Yref points written"
+            f"shift={parallel_shift:+.1f}°C supply, {success_count}/10 Yref points written"
         )
-        if changes:
-            msg += f" [{', '.join(changes[:5])}]"
         self.logger.info(msg)
 
         if self.seq_logger:
-            # Build per-point change details
-            point_deltas = {}
-            for p in range(1, 11):
-                yref_val = float(yref.get(str(p), 0))
-                ml_val = ml_curve.get(p, 0)
-                point_deltas[f"P{p}_{CURVE_OUTDOOR_TEMPS[p]:+d}C"] = {
-                    'baseline': yref_val,
-                    'new': ml_val,
-                    'delta': round(ml_val - yref_val, 1),
-                }
-
             self.seq_logger.log(
-                "ML curve update for {HouseId}: offset={Offset}°C, {PointsWritten} Yref points. {ChangeSummary}",
+                "ML curve update for {HouseId}: shift {ParallelShift:+.1f}°C supply ({PreviousShift} -> {ParallelShift}), {PointsWritten}/10 points",
                 level='Information',
                 properties={
                     'EventType': 'MLCurveUpdate',
                     'HouseId': self.profile.customer_id,
-                    'Offset': round(offset, 2),
+                    'ParallelShift': round(parallel_shift, 2),
+                    'PreviousShift': previous_shift,
                     'PointsWritten': success_count,
                     'MLCurve': {str(k): v for k, v in ml_curve.items()},
                     'BaselineYref': {str(k): float(v) for k, v in yref.items()},
-                    'PointDeltas': point_deltas,
-                    'ChangeSummary': ', '.join(changes) if changes else 'no changes',
                 }
             )
 
