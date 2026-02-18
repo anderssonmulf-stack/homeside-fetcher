@@ -25,6 +25,13 @@
     "circuit_breaker_threshold": 3,
     "circuit_breaker_cooldown_seconds": 60
   },
+  "flexibility_control": {
+    "max_reduction_pct": 100,
+    "max_addition_pct": 20,
+    "window_hours": 12,
+    "split_before_after": [0.5, 0.5],
+    "description": "Limits for interactive demand shifting in Flexibility Control chart. max_reduction_pct: max % of avg-hour energy removable from one bar. max_addition_pct: max % of predicted value addable to a receiving hour. window_hours: time window for redistribution. split_before_after: ratio of removed energy sent to hours before vs after."
+  },
   "daily_tasks": {
     "energy_pipeline": {
       "time": "08:00",

@@ -255,6 +255,36 @@
         <div id="flexibility-chart" class="chart-container"></div>
         <div id="flexibility-summary" class="metric-summary"></div>
     </div>
+
+    <!-- Flexibility Control Chart (aggregate only — interactive demand shifting) -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Flexibility Control</h2>
+            <div class="chart-controls">
+                <select id="flex-ctrl-hours-select" class="role-select" onchange="updateFlexControlChart()">
+                    <option value="12">Next 12h</option>
+                    <option value="24" selected>Next 24h</option>
+                </select>
+                <button id="flex-ctrl-reset-btn" class="role-select" onclick="resetFlexControl()" style="cursor:pointer;" disabled>Reset</button>
+            </div>
+        </div>
+        <p class="card-description">
+            <strong>Drag bars down</strong> to shift energy demand. Removed energy is redistributed
+            to surrounding hours. Max <strong>{{ flex_settings.get('max_addition_pct', 20) }}%</strong> added per receiving hour,
+            within a <strong>{{ flex_settings.get('window_hours', 12) }}h</strong> window.
+            Snaps to 5% steps.
+        </p>
+        <div style="display:flex; align-items:center; gap:12px; margin:8px 0 4px 0; font-size:0.85rem; color:#555;">
+            <span style="white-space:nowrap;">Before</span>
+            <input type="range" id="flex-split-slider" min="0" max="100" value="{{ (flex_settings.get('split_before_after', [0.5, 0.5])[0] * 100) | int }}"
+                   style="flex:1; max-width:220px; cursor:pointer; accent-color:#044680;"
+                   oninput="onFlexSplitChange(this.value)">
+            <span style="white-space:nowrap;">After</span>
+            <span id="flex-split-label" style="min-width:50px; font-weight:600; color:#044680;">{{ (flex_settings.get('split_before_after', [0.5, 0.5])[0] * 100) | int }}/{{ (flex_settings.get('split_before_after', [0.5, 0.5])[1] * 100) | int }}</span>
+        </div>
+        <div id="flex-ctrl-chart" class="chart-container"></div>
+        <div id="flex-ctrl-summary" class="metric-summary"></div>
+    </div>
     {% endif %}
 
     <!-- Energy Breakdown (Heating vs Hot Water) — shown for both aggregate and single -->
@@ -456,6 +486,15 @@
     width: 100%;
     min-height: 300px;
 }
+/* Override Plotly's crosshair on the flex control chart drag overlay */
+#flex-ctrl-chart .nsewdrag,
+#flex-ctrl-chart .drag {
+    cursor: grab !important;
+}
+#flex-ctrl-chart.flex-grabbing .nsewdrag,
+#flex-ctrl-chart.flex-grabbing .drag {
+    cursor: grabbing !important;
+}
 .legend-inline {
     display: inline-flex;
     gap: 15px;
@@ -607,6 +646,7 @@
 <script>
     const buildingId = "{{ building_id }}";
     const isAggregate = {{ 'true' if is_aggregate else 'false' }};
+    const FLEX_SETTINGS = {{ flex_settings | tojson }};
     let currentChart = null;
 
     // Initial chart data from server
@@ -1997,6 +2037,555 @@
             });
     }
 
+    // =========================================================================
+    // Flexibility Control Chart (interactive demand shifting)
+    // =========================================================================
+    let flexCtrlState = {
+        originalForecast: null,   // immutable: original predicted kWh per bar
+        adjustedEnergy: null,     // mutable: current display values
+        timestamps: null,
+        tempRates: null,
+        barColors: null,
+        userDragged: new Set(),   // indices of bars the user has manually adjusted
+        dragCeilings: new Map(),  // per-bar max value (captures raised value at drag start)
+        dragging: false,          // is a drag in progress?
+        selectedBar: null,        // index of bar currently being dragged
+        hoveredBar: null,         // index of bar currently under cursor
+        dragStartPixelY: null,    // pixel Y at drag start
+        totalBudget: 0,           // max total reduction allowed (avg-hour kWh)
+        yMax: 0,                  // fixed Y-axis max (set once on load)
+    };
+
+    // Smart rounding to 2 significant figures: 310.15→310, 7.79→7.8, 0.54→0.54
+    function flexRound(val) {
+        if (val === 0) return 0;
+        const abs = Math.abs(val);
+        const digits = Math.floor(Math.log10(abs)) + 1;
+        const sigfigs = 2;
+        if (digits >= sigfigs) {
+            const factor = Math.pow(10, digits - sigfigs);
+            return Math.round(val / factor) * factor;
+        } else {
+            const decimals = sigfigs - digits;
+            return parseFloat(val.toFixed(decimals));
+        }
+    }
+
+    // Format energy with unit: kW or MW
+    function flexFmtEnergy(val) {
+        const rounded = flexRound(Math.abs(val));
+        if (rounded >= 1000) return (rounded / 1000).toFixed(1) + ' MW';
+        return rounded + ' kW';
+    }
+
+    // Format energy with sign for deltas
+    function flexFmtDelta(val) {
+        const sign = val >= 0 ? '+' : '-';
+        return sign + flexFmtEnergy(Math.abs(val));
+    }
+
+    // Color for unchanged bars based on temp rate
+    function flexRateToColor(rate) {
+        const clamped = Math.max(-2, Math.min(2, rate));
+        const t = (clamped + 2) / 4;
+        let r, g, b;
+        if (t <= 0.5) {
+            const s = t / 0.5;
+            r = 231; g = Math.round(76 + (196 - 76) * s); b = Math.round(60 + (15 - 60) * s);
+        } else {
+            const s = (t - 0.5) / 0.5;
+            r = Math.round(241 + (39 - 241) * s); g = Math.round(196 + (174 - 196) * s); b = Math.round(15 + (96 - 15) * s);
+        }
+        return `rgb(${r},${g},${b})`;
+    }
+
+    function distributeToRange(adj, orig, fromIdx, direction, windowH, energy, maxAddPct, skip) {
+        let remaining = energy;
+        for (let step = 1; step <= windowH && remaining > 0.001; step++) {
+            const i = fromIdx + direction * step;
+            if (i < 0 || i >= adj.length) break;
+            if (skip.has(i)) continue;
+            const maxAdd = orig[i] * maxAddPct;
+            const alreadyAdded = adj[i] - orig[i];
+            const capacity = Math.max(0, maxAdd - alreadyAdded);
+            const add = Math.min(remaining, capacity);
+            adj[i] += add;
+            remaining -= add;
+        }
+    }
+
+    function recalculateRedistribution() {
+        const orig = flexCtrlState.originalForecast;
+        const adj = flexCtrlState.adjustedEnergy;
+        const userDragged = flexCtrlState.userDragged;
+
+        // 1. Reset all NON-user-dragged bars to original
+        for (let i = 0; i < adj.length; i++) {
+            if (!userDragged.has(i)) adj[i] = orig[i];
+        }
+
+        // 2. For each user-dragged bar, redistribute its removed energy
+        const sliderEl = document.getElementById('flex-split-slider');
+        const beforePct = sliderEl ? parseInt(sliderEl.value) / 100 : 0.5;
+        const splitBA = [beforePct, 1 - beforePct];
+        const windowH = FLEX_SETTINGS.window_hours || 12;
+        const maxAddPct = (FLEX_SETTINGS.max_addition_pct || 20) / 100;
+
+        for (const barIdx of userDragged) {
+            const removedEnergy = orig[barIdx] - adj[barIdx];
+            if (removedEnergy <= 0) continue;
+
+            distributeToRange(adj, orig, barIdx, -1, windowH, removedEnergy * splitBA[0], maxAddPct, userDragged);
+            distributeToRange(adj, orig, barIdx, +1, windowH, removedEnergy * splitBA[1], maxAddPct, userDragged);
+        }
+    }
+
+    function getFlexBarColors() {
+        const orig = flexCtrlState.originalForecast;
+        const adj = flexCtrlState.adjustedEnergy;
+        const userDragged = flexCtrlState.userDragged;
+        const tempRates = flexCtrlState.tempRates;
+        const hovered = flexCtrlState.hoveredBar;
+        const selected = flexCtrlState.selectedBar;
+        const colors = [];
+        const borders = [];
+        const borderWidths = [];
+        const opacities = [];
+        for (let i = 0; i < orig.length; i++) {
+            const isActive = (i === selected || i === hovered);
+            if (userDragged.has(i)) {
+                colors.push('#27ae60');
+                borders.push(isActive ? '#fff' : '#1e8449');
+                borderWidths.push(isActive ? 3 : 1.5);
+                opacities.push(1);
+            } else if (adj[i] > orig[i] + 0.001) {
+                colors.push('#e74c3c');
+                borders.push(isActive ? '#fff' : '#c0392b');
+                borderWidths.push(isActive ? 3 : 1);
+                opacities.push(1);
+            } else {
+                colors.push(flexRateToColor(tempRates[i]));
+                borders.push(isActive ? '#fff' : 'rgba(0,0,0,0.2)');
+                borderWidths.push(isActive ? 3 : 1);
+                opacities.push(isActive ? 1 : 0.85);
+            }
+        }
+        return { colors, borders, borderWidths, opacities };
+    }
+
+    // Build bar text labels showing delta at bottom of each bar
+    function getFlexBarTextLabels() {
+        const orig = flexCtrlState.originalForecast;
+        const adj = flexCtrlState.adjustedEnergy;
+        return adj.map((val, i) => {
+            const diff = val - orig[i];
+            if (Math.abs(diff) < 0.001) return '';
+            return flexFmtDelta(diff);
+        });
+    }
+
+    function flexCtrlReact() {
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (!gd || !gd.data) return;
+
+        const { colors, borders, borderWidths, opacities } = getFlexBarColors();
+        const barLabels = getFlexBarTextLabels();
+
+        // Update adjusted energy trace (trace index 1 = adjusted bars)
+        gd.data[1].y = [...flexCtrlState.adjustedEnergy];
+        gd.data[1].marker.color = colors;
+        gd.data[1].marker.line.color = borders;
+        gd.data[1].marker.line.width = borderWidths;
+        gd.data[1].marker.opacity = opacities;
+
+        // Simple hover: just energy + change
+        const orig = flexCtrlState.originalForecast;
+        const adj = flexCtrlState.adjustedEnergy;
+        gd.data[1].hovertext = adj.map((val, i) => {
+            const diff = val - orig[i];
+            if (Math.abs(diff) < 0.001) return flexFmtEnergy(val);
+            return `${flexFmtEnergy(val)} (${flexFmtDelta(diff)})`;
+        });
+
+        // Bar text labels showing delta
+        gd.data[1].text = barLabels;
+
+        Plotly.react(gd, gd.data, gd.layout, chartConfig);
+        updateFlexCtrlSummary();
+    }
+
+    function onFlexDragStart(e) {
+        // Use hoveredBar (tracked by plotly_hover) to select + drag in one motion
+        if (flexCtrlState.hoveredBar === null) return;
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (!gd || !gd._fullLayout) return;
+
+        const i = flexCtrlState.hoveredBar;
+        flexCtrlState.selectedBar = i;
+        flexCtrlState.dragging = true;
+        flexCtrlState.dragStartPixelY = e.clientY || (e.touches && e.touches[0].clientY);
+
+        // Capture ceiling: if bar was raised by redistribution, allow dragging
+        // down to anywhere between 0 and its current raised value
+        if (!flexCtrlState.dragCeilings.has(i)) {
+            const orig = flexCtrlState.originalForecast[i];
+            const current = flexCtrlState.adjustedEnergy[i];
+            flexCtrlState.dragCeilings.set(i, Math.max(orig, current));
+        }
+
+        gd.classList.add('flex-grabbing');
+        flexCtrlReact();
+        e.preventDefault();
+    }
+
+    function onFlexDragMove(e) {
+        if (!flexCtrlState.dragging || flexCtrlState.selectedBar === null) return;
+        e.preventDefault();
+
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (!gd || !gd._fullLayout) return;
+
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+        const yaxis = gd._fullLayout.yaxis;
+
+        // Convert pixel Y to data Y
+        const rect = gd.getBoundingClientRect();
+        const plotTop = rect.top + gd._fullLayout.margin.t;
+        const pixelInPlot = clientY - plotTop;
+        const dataY = yaxis.p2d(pixelInPlot);
+
+        const i = flexCtrlState.selectedBar;
+        const orig = flexCtrlState.originalForecast;
+        const ceiling = flexCtrlState.dragCeilings.get(i) || orig[i];
+
+        if (orig[i] <= 0) return;
+
+        // Snap to 5% steps of the original value
+        const step = orig[i] * 0.05;
+        let newVal = Math.round(dataY / step) * step;
+
+        // Clamp: min 0, max = ceiling (original or raised value)
+        newVal = Math.max(0, Math.min(ceiling, newVal));
+
+        // Budget check only applies to reductions below original
+        if (newVal < orig[i]) {
+            let totalReduction = 0;
+            for (const idx of flexCtrlState.userDragged) {
+                if (idx !== i && flexCtrlState.adjustedEnergy[idx] < orig[idx]) {
+                    totalReduction += orig[idx] - flexCtrlState.adjustedEnergy[idx];
+                }
+            }
+            const thisReduction = orig[i] - newVal;
+            if (totalReduction + thisReduction > flexCtrlState.totalBudget) {
+                const maxThisReduction = Math.max(0, flexCtrlState.totalBudget - totalReduction);
+                newVal = orig[i] - maxThisReduction;
+                newVal = Math.round(newVal / step) * step;
+                newVal = Math.max(0, Math.min(ceiling, newVal));
+            }
+        }
+
+        flexCtrlState.adjustedEnergy[i] = newVal;
+        flexCtrlState.userDragged.add(i);
+
+        // If bar is back to original, un-drag it
+        if (Math.abs(newVal - orig[i]) < 0.001) {
+            flexCtrlState.userDragged.delete(i);
+            flexCtrlState.dragCeilings.delete(i);
+            flexCtrlState.adjustedEnergy[i] = orig[i];
+        }
+
+        recalculateRedistribution();
+        flexCtrlReact();
+    }
+
+    function onFlexDragEnd(e) {
+        if (!flexCtrlState.dragging) return;
+        flexCtrlState.dragging = false;
+        flexCtrlState.selectedBar = null;
+        flexCtrlState.hoveredBar = null;
+
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (gd) gd.classList.remove('flex-grabbing');
+
+        const resetBtn = document.getElementById('flex-ctrl-reset-btn');
+        if (resetBtn) resetBtn.disabled = (flexCtrlState.userDragged.size === 0);
+
+        flexCtrlReact();
+    }
+
+    function updateFlexControlChart() {
+        const selectEl = document.getElementById('flex-ctrl-hours-select');
+        if (!selectEl) return;
+        const hours = parseInt(selectEl.value);
+        const chartDiv = document.getElementById('flex-ctrl-chart');
+        const summaryDiv = document.getElementById('flex-ctrl-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading flexibility control data...</div>';
+        summaryDiv.innerHTML = '';
+
+        // Clean up old event listeners
+        document.removeEventListener('mousemove', onFlexDragMove);
+        document.removeEventListener('mouseup', onFlexDragEnd);
+        document.removeEventListener('touchmove', onFlexDragMove);
+        document.removeEventListener('touchend', onFlexDragEnd);
+
+        fetch(`/api/building/${buildingId}/energy-forecast?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
+            .then(result => {
+                const forecast = result.forecast || [];
+
+                if (forecast.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No forecast data available.</div>';
+                    return;
+                }
+
+                // Calculate hourly temperature change rate
+                const tempRates = forecast.map((d, i) => {
+                    if (i === 0) {
+                        if (forecast.length > 1 && forecast[1].outdoor_temp != null && d.outdoor_temp != null) {
+                            return forecast[1].outdoor_temp - d.outdoor_temp;
+                        }
+                        return 0;
+                    }
+                    if (d.outdoor_temp != null && forecast[i - 1].outdoor_temp != null) {
+                        return d.outdoor_temp - forecast[i - 1].outdoor_temp;
+                    }
+                    return 0;
+                });
+
+                const timestamps = forecast.map(d => d.timestamp_display);
+                const energyKwh = forecast.map(d => d.heating_energy_kwh);
+                const barColors = tempRates.map(r => flexRateToColor(r));
+
+                // Store state for interactive editing
+                flexCtrlState.originalForecast = forecast.map(d => d.heating_energy_kwh);
+                flexCtrlState.adjustedEnergy = [...energyKwh];
+                flexCtrlState.timestamps = timestamps;
+                flexCtrlState.tempRates = tempRates;
+                flexCtrlState.barColors = barColors;
+                flexCtrlState.userDragged = new Set();
+                flexCtrlState.dragCeilings = new Map();
+                flexCtrlState.dragging = false;
+                flexCtrlState.selectedBar = null;
+                flexCtrlState.totalBudget = energyKwh.reduce((a, b) => a + b, 0) / energyKwh.length;
+
+                // Fixed Y-axis: max of original data + 25% margin, locked for all interactions
+                const maxOrig = Math.max(...energyKwh);
+                flexCtrlState.yMax = maxOrig * 1.25;
+
+                // Ghost trace: semi-transparent original forecast (always behind)
+                const ghostTrace = {
+                    x: timestamps,
+                    y: [...flexCtrlState.originalForecast],
+                    type: 'bar',
+                    name: 'Predicted',
+                    marker: {
+                        color: 'rgba(180,180,180,0.3)',
+                        line: { width: 1, color: 'rgba(150,150,150,0.5)' }
+                    },
+                    hoverinfo: 'skip'
+                };
+
+                // Adjusted energy trace (interactive) — simple hover, bar labels for deltas
+                const hoverText = energyKwh.map(val => flexFmtEnergy(val));
+
+                const energyTrace = {
+                    x: timestamps,
+                    y: [...energyKwh],
+                    type: 'bar',
+                    name: 'Adjusted (kW)',
+                    marker: {
+                        color: barColors,
+                        line: { width: 1, color: barColors.map(() => 'rgba(0,0,0,0.2)') }
+                    },
+                    text: energyKwh.map(() => ''),  // no labels initially
+                    textposition: 'inside',
+                    textangle: 0,
+                    textfont: { size: 10, color: '#fff', family: 'system-ui, sans-serif' },
+                    insidetextanchor: 'start',
+                    hovertext: hoverText,
+                    hoverinfo: 'text'
+                };
+
+                const rateTrace = {
+                    x: timestamps,
+                    y: tempRates,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Temp trend (\u00B0C/h)',
+                    yaxis: 'y2',
+                    line: { color: '#555', width: 2 },
+                    marker: { size: 4 },
+                    hoverinfo: 'skip'
+                };
+
+                const zeroTrace = {
+                    x: [timestamps[0], timestamps[timestamps.length - 1]],
+                    y: [0, 0],
+                    type: 'scatter',
+                    mode: 'lines',
+                    yaxis: 'y2',
+                    line: { color: '#aaa', width: 1, dash: 'dot' },
+                    showlegend: false,
+                    hoverinfo: 'skip'
+                };
+
+                const layout = {
+                    height: 350,
+                    margin: { l: 60, r: 60, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: false,   // disable Plotly pan so our drag works
+                    hovermode: 'closest',
+                    xaxis: {
+                        title: 'Hour',
+                        tickangle: -45,
+                        gridcolor: '#e8e8e8'
+                    },
+                    yaxis: {
+                        title: 'Energy (kW)',
+                        gridcolor: '#e8e8e8',
+                        range: [0, flexCtrlState.yMax],  // fixed range
+                        fixedrange: true                  // no zoom/pan on y
+                    },
+                    yaxis2: {
+                        title: 'Temp trend (\u00B0C/h)',
+                        titlefont: { color: '#555' },
+                        tickfont: { color: '#555' },
+                        overlaying: 'y',
+                        side: 'right',
+                        zeroline: false
+                    },
+                    legend: {
+                        orientation: 'h',
+                        y: -0.2
+                    },
+                    bargap: 0.1,
+                    barmode: 'overlay'  // ghost behind adjusted
+                };
+
+                chartDiv.innerHTML = '';
+                // Traces: [0]=ghost, [1]=adjusted, [2]=rate, [3]=zero
+                Plotly.newPlot('flex-ctrl-chart', [ghostTrace, energyTrace, rateTrace, zeroTrace], layout, chartConfig)
+                    .then(() => {
+                        updateFlexCtrlSummary();
+                        document.getElementById('flex-ctrl-reset-btn').disabled = true;
+
+                        // Attach interaction handlers
+                        const gd = document.getElementById('flex-ctrl-chart');
+                        gd.addEventListener('mousedown', onFlexDragStart);
+                        gd.addEventListener('touchstart', onFlexDragStart, { passive: false });
+                        document.addEventListener('mousemove', onFlexDragMove);
+                        document.addEventListener('mouseup', onFlexDragEnd);
+                        document.addEventListener('touchmove', onFlexDragMove, { passive: false });
+                        document.addEventListener('touchend', onFlexDragEnd);
+
+                        // Highlight bar on hover + grab cursor
+                        gd.on('plotly_hover', function(data) {
+                            const pt = data.points[0];
+                            if (pt.curveNumber === 1 && !flexCtrlState.dragging) {
+                                const idx = pt.pointIndex;
+                                if (flexCtrlState.hoveredBar !== idx) {
+                                    flexCtrlState.hoveredBar = idx;
+                                    flexCtrlReact();
+                                }
+                            }
+                        });
+                        gd.on('plotly_unhover', function() {
+                            if (!flexCtrlState.dragging && flexCtrlState.hoveredBar !== null) {
+                                flexCtrlState.hoveredBar = null;
+                                flexCtrlReact();
+                            }
+                        });
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load flexibility control data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load flexibility control data.</div>';
+            });
+    }
+
+    function updateFlexCtrlSummary() {
+        const summaryDiv = document.getElementById('flex-ctrl-summary');
+        if (!flexCtrlState.originalForecast || !flexCtrlState.adjustedEnergy) return;
+
+        const orig = flexCtrlState.originalForecast;
+        const adj = flexCtrlState.adjustedEnergy;
+        const totalOrig = orig.reduce((a, b) => a + b, 0);
+        const totalAdj = adj.reduce((a, b) => a + b, 0);
+        const peakOrig = Math.max(...orig);
+        const peakAdj = Math.max(...adj);
+
+        // Sum of energy shifted away from user-dragged bars
+        let shiftedKwh = 0;
+        for (const idx of flexCtrlState.userDragged) {
+            shiftedKwh += orig[idx] - adj[idx];
+        }
+
+        const budgetRemaining = Math.max(0, flexCtrlState.totalBudget - shiftedKwh);
+        const barsAdjusted = flexCtrlState.userDragged.size;
+
+        summaryDiv.innerHTML = `
+            <div class="metric-item">
+                <div class="metric-value">${flexFmtEnergy(totalOrig)}</div>
+                <div class="metric-label">Original</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color:#044680">${flexFmtEnergy(totalAdj)}</div>
+                <div class="metric-label">Adjusted</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color:#27ae60">${flexFmtEnergy(peakOrig - peakAdj)}</div>
+                <div class="metric-label">Peak Reduction</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color:#9b59b6">${flexFmtEnergy(shiftedKwh)}</div>
+                <div class="metric-label">Energy Shifted</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color:#e67e22">${flexFmtEnergy(budgetRemaining)}</div>
+                <div class="metric-label">Budget Remaining</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color:#c0392b">${barsAdjusted}</div>
+                <div class="metric-label">Bars Adjusted</div>
+            </div>
+        `;
+    }
+
+    function resetFlexControl() {
+        if (!flexCtrlState.originalForecast) return;
+        flexCtrlState.adjustedEnergy = [...flexCtrlState.originalForecast];
+        flexCtrlState.userDragged = new Set();
+        flexCtrlState.dragCeilings = new Map();
+        flexCtrlState.dragging = false;
+        flexCtrlState.selectedBar = null;
+        flexCtrlState.hoveredBar = null;
+
+        const resetBtn = document.getElementById('flex-ctrl-reset-btn');
+        if (resetBtn) resetBtn.disabled = true;
+
+        flexCtrlReact();
+    }
+
+    function onFlexSplitChange(val) {
+        const before = parseInt(val);
+        const after = 100 - before;
+        const label = document.getElementById('flex-split-label');
+        if (label) label.textContent = `${before}/${after}`;
+
+        // Recalculate redistribution with new split and re-render
+        if (flexCtrlState.originalForecast && flexCtrlState.userDragged.size > 0) {
+            recalculateRedistribution();
+            flexCtrlReact();
+        }
+    }
+
     // K-Value History Chart
     function updateKValueChart() {
         const days = parseInt(document.getElementById('k-history-days-select').value);
@@ -2139,7 +2728,8 @@
             // Aggregate view: Energy Forecast, Flexibility, Energy Breakdown
             updateEnergyForecastChart();
             setTimeout(() => updateFlexibilityChart(), 100);
-            setTimeout(() => updateEnergySeparationChart(), 200);
+            setTimeout(() => updateFlexControlChart(), 200);
+            setTimeout(() => updateEnergySeparationChart(), 300);
         } else {
             // Supply & Return chart (top priority)
             updateSupplyReturnChart();

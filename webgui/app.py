@@ -1340,6 +1340,15 @@ def building_graphs(building_id):
     graph_json = json.dumps(fig.to_dict())
     config_json = json.dumps(graph_config)
 
+    # Load flexibility control settings for interactive chart
+    settings_path = os.path.join(os.path.dirname(__file__), '..', 'settings.json')
+    try:
+        with open(settings_path) as f:
+            app_settings = json.load(f)
+        flex_settings = app_settings.get('flexibility_control', {})
+    except Exception:
+        flex_settings = {}
+
     return render_template('building_graphs.html',
         building_id=building_id,
         friendly_name=friendly_name,
@@ -1349,7 +1358,8 @@ def building_graphs(building_id):
         realtime=realtime_data,
         signal_map=signal_map,
         current_building_name=friendly_name,
-        is_aggregate=is_aggregate
+        is_aggregate=is_aggregate,
+        flex_settings=flex_settings
     )
 
 
