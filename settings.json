@@ -30,7 +30,8 @@
     "max_addition_pct": 20,
     "window_hours": 12,
     "split_before_after": [0.5, 0.5],
-    "description": "Limits for interactive demand shifting in Flexibility Control chart. max_reduction_pct: max % of avg-hour energy removable from one bar. max_addition_pct: max % of predicted value addable to a receiving hour. window_hours: time window for redistribution. split_before_after: ratio of removed energy sent to hours before vs after."
+    "flex_roof_max_window_hours": 8,
+    "description": "Limits for interactive demand shifting in Flexibility Control chart. max_reduction_pct: max % of avg-hour energy removable from one bar. max_addition_pct: max % of predicted value addable to a receiving hour. window_hours: time window for redistribution. split_before_after: ratio of removed energy sent to hours before vs after. flex_roof_max_window_hours: max total hours from first compensation bar to last in peak-shaving mode."
   },
   "daily_tasks": {
     "energy_pipeline": {

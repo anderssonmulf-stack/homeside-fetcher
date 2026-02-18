@@ -269,10 +269,10 @@
             </div>
         </div>
         <p class="card-description">
-            <strong>Drag bars down</strong> to shift energy demand. Removed energy is redistributed
-            to surrounding hours. Max <strong>{{ flex_settings.get('max_addition_pct', 20) }}%</strong> added per receiving hour,
-            within a <strong>{{ flex_settings.get('window_hours', 12) }}h</strong> window.
-            Snaps to 5% steps.
+            <strong>Drag the Y-axis</strong> to set a power ceiling. Peaks above the line are shaved
+            and energy is redistributed to surrounding hours within a
+            <strong>{{ flex_settings.get('flex_roof_max_window_hours', 8) }}h</strong> window.
+            Use the slider to control before/after split.
         </p>
         <div style="display:flex; align-items:center; gap:12px; margin:8px 0 4px 0; font-size:0.85rem; color:#555;">
             <span style="white-space:nowrap;">Before</span>
@@ -2116,9 +2116,11 @@
         return `rgb(${r},${g},${b})`;
     }
 
-    // Distribute energy to exactly `count` non-skipped bars in the given direction
-    // Distribute energy to N bars, each capped at the ceiling value
-    function distributeToN(adj, orig, fromIdx, direction, count, energy, ceiling, skip) {
+    // Max window hours from settings (total span: compensation + peaks)
+    const flexRoofMaxWindow = {{ flex_settings.get('flex_roof_max_window_hours', 8) }};
+
+    // Distribute energy to up to `count` non-skipped bars, each capped at ceiling
+    function distributeToN(adj, fromIdx, direction, count, energy, ceiling, skip) {
         let remaining = energy;
         let found = 0;
         for (let step = 1; found < count && remaining > 0.001; step++) {
@@ -2126,7 +2128,6 @@
             if (i < 0 || i >= adj.length) break;
             if (skip.has(i)) continue;
             found++;
-            // Each bar can only receive up to the ceiling
             const capacity = Math.max(0, ceiling - adj[i]);
             const add = Math.min(remaining, capacity);
             adj[i] += add;
@@ -2135,10 +2136,12 @@
         return remaining;
     }
 
-    // Apply ceiling: cap bars, redistribute excess to N bars before + N bars after
+    // Apply ceiling: cap each bar above it, then for EACH capped bar
+    // distribute its removed energy left and right per the slider ratio.
+    // Returns leftover energy that couldn't be placed (0 = all placed).
     function applyCeiling(ceilingValue) {
         const orig = flexCtrlState.originalForecast;
-        if (!orig) return;
+        if (!orig) return 0;
 
         const adj = flexCtrlState.adjustedEnergy;
         const ceiling = Math.max(0, ceilingValue);
@@ -2147,47 +2150,61 @@
         // Reset all bars to original
         for (let i = 0; i < adj.length; i++) adj[i] = orig[i];
 
-        // Find capped bars and total removed energy
+        // Find capped bars
         const capped = new Set();
-        let totalRemoved = 0;
+        const cappedBars = [];
         for (let i = 0; i < orig.length; i++) {
             if (orig[i] > ceiling) {
+                const removed = orig[i] - ceiling;
                 adj[i] = ceiling;
                 capped.add(i);
-                totalRemoved += orig[i] - ceiling;
+                cappedBars.push({ index: i, removed });
             }
         }
 
-        if (capped.size === 0 || totalRemoved <= 0) {
+        if (cappedBars.length === 0) {
             flexCtrlReact();
-            return;
+            return 0;
         }
 
-        // N = number of capped bars = compensation window
-        const N = capped.size;
-        const indices = [...capped].sort((a, b) => a - b);
-        const minIdx = indices[0];
-        const maxIdx = indices[indices.length - 1];
-
-        // Split before/after using slider
+        // Slider: before/after split
         const sliderEl = document.getElementById('flex-split-slider');
         const beforePct = sliderEl ? parseInt(sliderEl.value) / 100 : 0.5;
 
-        // Distribute to N bars in each direction, capped at ceiling.
-        // If N bars can't absorb all energy, spill to additional bars.
-        let overflowBefore = distributeToN(adj, orig, minIdx, -1, N, totalRemoved * beforePct, ceiling, capped);
-        let overflowAfter = distributeToN(adj, orig, maxIdx, +1, N, totalRemoved * (1 - beforePct), ceiling, capped);
+        // Max compensation bars per capped bar (window minus the bar itself)
+        const compPerBar = Math.max(0, flexRoofMaxWindow - 1);
+        const maxBefore = Math.round(compPerBar * beforePct);
+        const maxAfter = compPerBar - maxBefore;
 
-        // Spill: try the other direction, then extend further
-        const totalBars = orig.length;
-        if (overflowBefore > 0.001) {
-            overflowBefore = distributeToN(adj, orig, maxIdx, +1, totalBars, overflowBefore, ceiling, capped);
-        }
-        if (overflowAfter > 0.001) {
-            overflowAfter = distributeToN(adj, orig, minIdx, -1, totalBars, overflowAfter, ceiling, capped);
+        // For each capped bar, distribute its removed energy left and right
+        let totalLeftover = 0;
+        for (const bar of cappedBars) {
+            const beforeEnergy = bar.removed * beforePct;
+            const afterEnergy = bar.removed * (1 - beforePct);
+
+            // Distribute left (before)
+            let ovBefore = maxBefore > 0
+                ? distributeToN(adj, bar.index, -1, maxBefore, beforeEnergy, ceiling, capped)
+                : beforeEnergy;
+
+            // Distribute right (after)
+            let ovAfter = maxAfter > 0
+                ? distributeToN(adj, bar.index, +1, maxAfter, afterEnergy, ceiling, capped)
+                : afterEnergy;
+
+            // Overflow: spill to the other direction
+            if (ovBefore > 0.001 && maxAfter > 0) {
+                ovBefore = distributeToN(adj, bar.index, +1, maxAfter, ovBefore, ceiling, capped);
+            }
+            if (ovAfter > 0.001 && maxBefore > 0) {
+                ovAfter = distributeToN(adj, bar.index, -1, maxBefore, ovAfter, ceiling, capped);
+            }
+
+            totalLeftover += ovBefore + ovAfter;
         }
 
         flexCtrlReact();
+        return totalLeftover;
     }
 
     function getFlexBarColors() {
@@ -2252,12 +2269,9 @@
             return flexFmtDelta(diff);
         });
 
-        // Update ceiling line trace (trace index 4)
-        if (gd.data[4] && flexCtrlState.ceiling !== null) {
+        // Update ceiling line trace (trace index 4) — always visible
+        if (gd.data[4]) {
             gd.data[4].y = [flexCtrlState.ceiling, flexCtrlState.ceiling];
-            gd.data[4].visible = true;
-        } else if (gd.data[4]) {
-            gd.data[4].visible = false;
         }
 
         Plotly.react(gd, gd.data, gd.layout, chartConfig);
@@ -2305,7 +2319,13 @@
         let ceiling = Math.round(dataY / step) * step;
         ceiling = Math.max(0, Math.min(flexCtrlState.yMax, ceiling));
 
-        applyCeiling(ceiling);
+        const prevCeiling = flexCtrlState.ceiling;
+        const leftover = applyCeiling(ceiling);
+
+        // If energy couldn't be placed, the window is maxed out — revert
+        if (leftover > 0.1 && prevCeiling !== null && ceiling < prevCeiling) {
+            applyCeiling(prevCeiling);
+        }
     }
 
     function onCeilingDragEnd(e) {
@@ -2435,16 +2455,17 @@
                     hoverinfo: 'skip'
                 };
 
-                // Ceiling line trace (initially hidden, shown when user drags Y-axis)
+                // Ceiling line trace (visible from start at yMax)
+                flexCtrlState.ceiling = flexCtrlState.yMax;
                 const ceilingTrace = {
                     x: [timestamps[0], timestamps[timestamps.length - 1]],
                     y: [flexCtrlState.yMax, flexCtrlState.yMax],
                     type: 'scatter',
                     mode: 'lines',
                     name: 'Power ceiling',
-                    line: { color: '#e74c3c', width: 3, dash: 'dash' },
+                    line: { color: '#e74c3c', width: 1.5, dash: 'dash' },
                     hoverinfo: 'skip',
-                    visible: false
+                    visible: true
                 };
 
                 const layout = {
@@ -2527,23 +2548,29 @@
         const peakAdj = Math.max(...adj);
         const ceiling = flexCtrlState.ceiling;
 
-        // Count capped bars and total shifted energy
+        // Count capped bars, compensation bars, total shifted energy
         let cappedCount = 0;
+        let compensationCount = 0;
         let shiftedKwh = 0;
         for (let i = 0; i < orig.length; i++) {
             if (adj[i] < orig[i] - 0.001) {
                 cappedCount++;
                 shiftedKwh += orig[i] - adj[i];
+            } else if (adj[i] > orig[i] + 0.001) {
+                compensationCount++;
             }
         }
 
+        const sliderEl = document.getElementById('flex-split-slider');
+        const beforePct = sliderEl ? parseInt(sliderEl.value) : 50;
+
         summaryDiv.innerHTML = `
             <div class="metric-item">
-                <div class="metric-value">${ceiling !== null ? flexFmtEnergy(ceiling) : '-'}</div>
+                <div class="metric-value">${ceiling !== null && ceiling < flexCtrlState.yMax - 0.1 ? flexFmtEnergy(ceiling) : '-'}</div>
                 <div class="metric-label">Ceiling</div>
             </div>
             <div class="metric-item">
-                <div class="metric-value" style="color:#e67e22">${cappedCount}</div>
+                <div class="metric-value" style="color:#e67e22">${cappedCount}h</div>
                 <div class="metric-label">Hours Capped</div>
             </div>
             <div class="metric-item">
@@ -2555,8 +2582,8 @@
                 <div class="metric-label">Energy Shifted</div>
             </div>
             <div class="metric-item">
-                <div class="metric-value">${cappedCount}</div>
-                <div class="metric-label">Compensation window</div>
+                <div class="metric-value">${compensationCount}h</div>
+                <div class="metric-label">Window (max ${flexRoofMaxWindow}h)</div>
             </div>
         `;
     }
@@ -2564,7 +2591,7 @@
     function resetFlexControl() {
         if (!flexCtrlState.originalForecast) return;
         flexCtrlState.adjustedEnergy = [...flexCtrlState.originalForecast];
-        flexCtrlState.ceiling = null;
+        flexCtrlState.ceiling = flexCtrlState.yMax;
         flexCtrlState.ceilingDragging = false;
 
         const resetBtn = document.getElementById('flex-ctrl-reset-btn');
