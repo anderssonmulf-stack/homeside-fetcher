@@ -486,14 +486,14 @@
     width: 100%;
     min-height: 300px;
 }
-/* Override Plotly's crosshair on the flex control chart drag overlay */
-#flex-ctrl-chart .nsewdrag,
-#flex-ctrl-chart .drag {
-    cursor: grab !important;
+/* Flex control chart: ns-resize cursor for ceiling drag */
+#flex-ctrl-chart .ytitle,
+#flex-ctrl-chart .yaxislayer-above {
+    cursor: ns-resize;
 }
-#flex-ctrl-chart.flex-grabbing .nsewdrag,
-#flex-ctrl-chart.flex-grabbing .drag {
-    cursor: grabbing !important;
+#flex-ctrl-chart.ceiling-dragging,
+#flex-ctrl-chart.ceiling-dragging * {
+    cursor: ns-resize !important;
 }
 .legend-inline {
     display: inline-flex;
@@ -1714,7 +1714,9 @@
         chartDiv.innerHTML = '<div class="loading-spinner">Loading energy forecast...</div>';
         summaryDiv.innerHTML = '';
 
-        fetch(`/api/building/${buildingId}/energy-forecast?hours=${hours}`)
+        // Always fetch 48h so panning reveals more data
+        const fetchHours = 48;
+        fetch(`/api/building/${buildingId}/energy-forecast?hours=${fetchHours}`)
             .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
             .then(result => {
                 const forecast = result.forecast || [];
@@ -1725,7 +1727,8 @@
                     return;
                 }
 
-                const timestamps = forecast.map(d => d.timestamp_display);
+                // Use full ISO timestamps so bars stay unique beyond 24h
+                const timestamps = forecast.map(d => d.timestamp);
                 const energyKwh = forecast.map(d => d.heating_energy_kwh);
                 const outdoorTemp = forecast.map(d => d.outdoor_temp);
 
@@ -1775,21 +1778,29 @@
                     xaxis: {
                         title: 'Hour',
                         tickangle: -45,
-                        gridcolor: '#e8e8e8'
+                        gridcolor: '#e8e8e8',
+                        type: 'date',
+                        tickformat: '%a %H:%M',
+                        dtick: 3600000,
+                        range: hours < timestamps.length
+                            ? [timestamps[0], timestamps[hours]]
+                            : undefined
                     },
                     yaxis: {
                         title: 'Energy (kWh)',
                         titlefont: { color: '#FF6B6B' },
                         tickfont: { color: '#FF6B6B' },
                         gridcolor: '#e8e8e8',
-                        rangemode: 'tozero'
+                        rangemode: 'tozero',
+                        fixedrange: true
                     },
                     yaxis2: {
                         title: 'Temp (°C)',
                         titlefont: { color: '#4ECDC4' },
                         tickfont: { color: '#4ECDC4' },
                         overlaying: 'y',
-                        side: 'right'
+                        side: 'right',
+                        fixedrange: true
                     },
                     legend: {
                         orientation: 'h',
@@ -1869,7 +1880,9 @@
         chartDiv.innerHTML = '<div class="loading-spinner">Loading flexibility data...</div>';
         summaryDiv.innerHTML = '';
 
-        fetch(`/api/building/${buildingId}/energy-forecast?hours=${hours}`)
+        // Always fetch 48h so panning reveals more data
+        const fetchHours = 48;
+        fetch(`/api/building/${buildingId}/energy-forecast?hours=${fetchHours}`)
             .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
             .then(result => {
                 const forecast = result.forecast || [];
@@ -1912,7 +1925,8 @@
                     return `rgb(${r},${g},${b})`;
                 }
 
-                const timestamps = forecast.map(d => d.timestamp_display);
+                // Use full ISO timestamps so bars stay unique beyond 24h
+                const timestamps = forecast.map(d => d.timestamp);
                 const energyKwh = forecast.map(d => d.heating_energy_kwh);
                 const barColors = tempRates.map(r => rateToColor(r));
 
@@ -1975,12 +1989,19 @@
                     xaxis: {
                         title: 'Hour',
                         tickangle: -45,
-                        gridcolor: '#e8e8e8'
+                        gridcolor: '#e8e8e8',
+                        type: 'date',
+                        tickformat: '%a %H:%M',
+                        dtick: 3600000,
+                        range: hours < timestamps.length
+                            ? [timestamps[0], timestamps[hours]]
+                            : undefined
                     },
                     yaxis: {
                         title: 'Energy (kWh)',
                         gridcolor: '#e8e8e8',
-                        rangemode: 'tozero'
+                        rangemode: 'tozero',
+                        fixedrange: true
                     },
                     yaxis2: {
                         title: 'Temp trend (\u00B0C/h)',
@@ -1988,7 +2009,8 @@
                         tickfont: { color: '#555' },
                         overlaying: 'y',
                         side: 'right',
-                        zeroline: false
+                        zeroline: false,
+                        fixedrange: true
                     },
                     legend: {
                         orientation: 'h',
@@ -2046,12 +2068,8 @@
         timestamps: null,
         tempRates: null,
         barColors: null,
-        userDragged: new Set(),   // indices of bars the user has manually adjusted
-        dragging: false,          // is a drag in progress?
-        selectedBar: null,        // index of bar currently being dragged
-        hoveredBar: null,         // index of bar currently under cursor
-        dragStartPixelY: null,    // pixel Y at drag start
-        totalBudget: 0,           // max total reduction allowed (avg-hour kWh)
+        ceiling: null,            // current ceiling kWh (null = no ceiling active)
+        ceilingDragging: false,   // is the ceiling line being dragged?
         yMax: 0,                  // fixed Y-axis max (set once on load)
     };
 
@@ -2070,11 +2088,11 @@
         }
     }
 
-    // Format energy with unit: kW or MW
+    // Format energy with unit: kWh or MWh
     function flexFmtEnergy(val) {
         const rounded = flexRound(Math.abs(val));
-        if (rounded >= 1000) return (rounded / 1000).toFixed(1) + ' MW';
-        return rounded + ' kW';
+        if (rounded >= 1000) return (rounded / 1000).toFixed(1) + ' MWh';
+        return rounded + ' kWh';
     }
 
     // Format energy with sign for deltas
@@ -2098,92 +2116,111 @@
         return `rgb(${r},${g},${b})`;
     }
 
-    function distributeToRange(adj, orig, fromIdx, direction, windowH, energy, maxAddPct, skip) {
+    // Distribute energy to exactly `count` non-skipped bars in the given direction
+    // Distribute energy to N bars, each capped at the ceiling value
+    function distributeToN(adj, orig, fromIdx, direction, count, energy, ceiling, skip) {
         let remaining = energy;
-        for (let step = 1; step <= windowH && remaining > 0.001; step++) {
+        let found = 0;
+        for (let step = 1; found < count && remaining > 0.001; step++) {
             const i = fromIdx + direction * step;
             if (i < 0 || i >= adj.length) break;
             if (skip.has(i)) continue;
-            const maxAdd = orig[i] * maxAddPct;
-            const alreadyAdded = adj[i] - orig[i];
-            const capacity = Math.max(0, maxAdd - alreadyAdded);
+            found++;
+            // Each bar can only receive up to the ceiling
+            const capacity = Math.max(0, ceiling - adj[i]);
             const add = Math.min(remaining, capacity);
             adj[i] += add;
             remaining -= add;
         }
+        return remaining;
     }
 
-    function recalculateRedistribution() {
+    // Apply ceiling: cap bars, redistribute excess to N bars before + N bars after
+    function applyCeiling(ceilingValue) {
         const orig = flexCtrlState.originalForecast;
-        const adj = flexCtrlState.adjustedEnergy;
-        const userDragged = flexCtrlState.userDragged;
+        if (!orig) return;
 
-        // 1. Reset all NON-user-dragged bars to original
-        for (let i = 0; i < adj.length; i++) {
-            if (!userDragged.has(i)) adj[i] = orig[i];
+        const adj = flexCtrlState.adjustedEnergy;
+        const ceiling = Math.max(0, ceilingValue);
+        flexCtrlState.ceiling = ceiling;
+
+        // Reset all bars to original
+        for (let i = 0; i < adj.length; i++) adj[i] = orig[i];
+
+        // Find capped bars and total removed energy
+        const capped = new Set();
+        let totalRemoved = 0;
+        for (let i = 0; i < orig.length; i++) {
+            if (orig[i] > ceiling) {
+                adj[i] = ceiling;
+                capped.add(i);
+                totalRemoved += orig[i] - ceiling;
+            }
         }
 
-        // 2. For each user-dragged bar, redistribute its removed energy
+        if (capped.size === 0 || totalRemoved <= 0) {
+            flexCtrlReact();
+            return;
+        }
+
+        // N = number of capped bars = compensation window
+        const N = capped.size;
+        const indices = [...capped].sort((a, b) => a - b);
+        const minIdx = indices[0];
+        const maxIdx = indices[indices.length - 1];
+
+        // Split before/after using slider
         const sliderEl = document.getElementById('flex-split-slider');
         const beforePct = sliderEl ? parseInt(sliderEl.value) / 100 : 0.5;
-        const splitBA = [beforePct, 1 - beforePct];
-        const windowH = FLEX_SETTINGS.window_hours || 12;
-        const maxAddPct = (FLEX_SETTINGS.max_addition_pct || 20) / 100;
 
-        for (const barIdx of userDragged) {
-            const removedEnergy = orig[barIdx] - adj[barIdx];
-            if (removedEnergy <= 0) continue;
+        // Distribute to N bars in each direction, capped at ceiling.
+        // If N bars can't absorb all energy, spill to additional bars.
+        let overflowBefore = distributeToN(adj, orig, minIdx, -1, N, totalRemoved * beforePct, ceiling, capped);
+        let overflowAfter = distributeToN(adj, orig, maxIdx, +1, N, totalRemoved * (1 - beforePct), ceiling, capped);
 
-            distributeToRange(adj, orig, barIdx, -1, windowH, removedEnergy * splitBA[0], maxAddPct, userDragged);
-            distributeToRange(adj, orig, barIdx, +1, windowH, removedEnergy * splitBA[1], maxAddPct, userDragged);
+        // Spill: try the other direction, then extend further
+        const totalBars = orig.length;
+        if (overflowBefore > 0.001) {
+            overflowBefore = distributeToN(adj, orig, maxIdx, +1, totalBars, overflowBefore, ceiling, capped);
         }
+        if (overflowAfter > 0.001) {
+            overflowAfter = distributeToN(adj, orig, minIdx, -1, totalBars, overflowAfter, ceiling, capped);
+        }
+
+        flexCtrlReact();
     }
 
     function getFlexBarColors() {
         const orig = flexCtrlState.originalForecast;
         const adj = flexCtrlState.adjustedEnergy;
         const tempRates = flexCtrlState.tempRates;
-        const hovered = flexCtrlState.hoveredBar;
-        const selected = flexCtrlState.selectedBar;
         const colors = [];
         const borders = [];
         const borderWidths = [];
         const opacities = [];
         for (let i = 0; i < orig.length; i++) {
-            const isActive = (i === selected || i === hovered);
             const diff = adj[i] - orig[i];
             if (diff < -0.001) {
-                // Below prediction = green (demand reduction)
-                colors.push('#27ae60');
-                borders.push(isActive ? '#fff' : '#1e8449');
-                borderWidths.push(isActive ? 3 : 1.5);
+                // Capped below original = orange (peak shaved)
+                colors.push('#e67e22');
+                borders.push('#d35400');
+                borderWidths.push(1.5);
                 opacities.push(1);
             } else if (diff > 0.001) {
-                // Above prediction = red (extra load)
-                colors.push('#e74c3c');
-                borders.push(isActive ? '#fff' : '#c0392b');
-                borderWidths.push(isActive ? 3 : 1.5);
+                // Above original = blue (received redistributed energy)
+                colors.push('#3498db');
+                borders.push('#2980b9');
+                borderWidths.push(1.5);
                 opacities.push(1);
             } else {
-                // At prediction = default color
+                // Unchanged = colored by temp rate
                 colors.push(flexRateToColor(tempRates[i]));
-                borders.push(isActive ? '#fff' : 'rgba(0,0,0,0.2)');
-                borderWidths.push(isActive ? 3 : 1);
-                opacities.push(isActive ? 1 : 0.85);
+                borders.push('rgba(0,0,0,0.2)');
+                borderWidths.push(1);
+                opacities.push(0.85);
             }
         }
         return { colors, borders, borderWidths, opacities };
-    }
-
-    // Build bar text labels showing delta at bottom of each bar
-    function getFlexBarTextLabels() {
-        const orig = flexCtrlState.originalForecast;
-        const adj = flexCtrlState.adjustedEnergy;
-        return adj.map((val, i) => {
-            const diff = val - orig[i];
-            if (Math.abs(diff) < 0.001) return '';
-            return flexFmtDelta(diff);
-        });
     }
 
     function flexCtrlReact() {
@@ -2191,18 +2228,17 @@
         if (!gd || !gd.data) return;
 
         const { colors, borders, borderWidths, opacities } = getFlexBarColors();
-        const barLabels = getFlexBarTextLabels();
+        const orig = flexCtrlState.originalForecast;
+        const adj = flexCtrlState.adjustedEnergy;
 
-        // Update adjusted energy trace (trace index 1 = adjusted bars)
-        gd.data[1].y = [...flexCtrlState.adjustedEnergy];
+        // Update adjusted energy trace (trace index 1)
+        gd.data[1].y = [...adj];
         gd.data[1].marker.color = colors;
         gd.data[1].marker.line.color = borders;
         gd.data[1].marker.line.width = borderWidths;
         gd.data[1].marker.opacity = opacities;
 
-        // Simple hover: just energy + change
-        const orig = flexCtrlState.originalForecast;
-        const adj = flexCtrlState.adjustedEnergy;
+        // Hover text: energy + change
         gd.data[1].hovertext = adj.map((val, i) => {
             const diff = val - orig[i];
             if (Math.abs(diff) < 0.001) return flexFmtEnergy(val);
@@ -2210,30 +2246,47 @@
         });
 
         // Bar text labels showing delta
-        gd.data[1].text = barLabels;
+        gd.data[1].text = adj.map((val, i) => {
+            const diff = val - orig[i];
+            if (Math.abs(diff) < 0.001) return '';
+            return flexFmtDelta(diff);
+        });
+
+        // Update ceiling line trace (trace index 4)
+        if (gd.data[4] && flexCtrlState.ceiling !== null) {
+            gd.data[4].y = [flexCtrlState.ceiling, flexCtrlState.ceiling];
+            gd.data[4].visible = true;
+        } else if (gd.data[4]) {
+            gd.data[4].visible = false;
+        }
 
         Plotly.react(gd, gd.data, gd.layout, chartConfig);
         updateFlexCtrlSummary();
     }
 
-    function onFlexDragStart(e) {
-        // Use hoveredBar (tracked by plotly_hover) to select + drag in one motion
-        if (flexCtrlState.hoveredBar === null) return;
+    // --- Ceiling drag handlers ---
+    function onCeilingDragStart(e) {
         const gd = document.getElementById('flex-ctrl-chart');
         if (!gd || !gd._fullLayout) return;
 
-        const i = flexCtrlState.hoveredBar;
-        flexCtrlState.selectedBar = i;
-        flexCtrlState.dragging = true;
-        flexCtrlState.dragStartPixelY = e.clientY || (e.touches && e.touches[0].clientY);
+        // Only start ceiling drag if click is on the Y-axis gutter (left margin)
+        const rect = gd.getBoundingClientRect();
+        const clickX = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+        const marginLeft = gd._fullLayout.margin.l;
 
-        gd.classList.add('flex-grabbing');
-        flexCtrlReact();
+        if (clickX > marginLeft) return;  // Click is in plot area — let Plotly handle pan
+
+        flexCtrlState.ceilingDragging = true;
+        gd.classList.add('ceiling-dragging');
+        e.stopPropagation();
         e.preventDefault();
+
+        // Apply ceiling at current Y position immediately
+        onCeilingDragMove(e);
     }
 
-    function onFlexDragMove(e) {
-        if (!flexCtrlState.dragging || flexCtrlState.selectedBar === null) return;
+    function onCeilingDragMove(e) {
+        if (!flexCtrlState.ceilingDragging) return;
         e.preventDefault();
 
         const gd = document.getElementById('flex-ctrl-chart');
@@ -2241,71 +2294,29 @@
 
         const clientY = e.clientY || (e.touches && e.touches[0].clientY);
         const yaxis = gd._fullLayout.yaxis;
-
-        // Convert pixel Y to data Y
         const rect = gd.getBoundingClientRect();
         const plotTop = rect.top + gd._fullLayout.margin.t;
         const pixelInPlot = clientY - plotTop;
         const dataY = yaxis.p2d(pixelInPlot);
 
-        const i = flexCtrlState.selectedBar;
-        const orig = flexCtrlState.originalForecast;
+        // Snap to nice round values
+        const maxOrig = Math.max(...flexCtrlState.originalForecast);
+        const step = maxOrig * 0.02;  // 2% steps
+        let ceiling = Math.round(dataY / step) * step;
+        ceiling = Math.max(0, Math.min(flexCtrlState.yMax, ceiling));
 
-        if (orig[i] <= 0) return;
-
-        // Snap to 1% steps of the original value
-        const step = orig[i] * 0.01;
-        let newVal = Math.round(dataY / step) * step;
-
-        // Snap to exact original if within half a step
-        if (Math.abs(newVal - orig[i]) < step * 0.6) newVal = orig[i];
-
-        // Clamp: min 0, max = Y-axis ceiling (free to raise above original)
-        newVal = Math.max(0, Math.min(flexCtrlState.yMax, newVal));
-
-        // Budget check only applies to reductions below original
-        if (newVal < orig[i]) {
-            let totalReduction = 0;
-            for (const idx of flexCtrlState.userDragged) {
-                if (idx !== i && flexCtrlState.adjustedEnergy[idx] < orig[idx]) {
-                    totalReduction += orig[idx] - flexCtrlState.adjustedEnergy[idx];
-                }
-            }
-            const thisReduction = orig[i] - newVal;
-            if (totalReduction + thisReduction > flexCtrlState.totalBudget) {
-                const maxThisReduction = Math.max(0, flexCtrlState.totalBudget - totalReduction);
-                newVal = orig[i] - maxThisReduction;
-                newVal = Math.round(newVal / step) * step;
-                newVal = Math.max(0, Math.min(flexCtrlState.yMax, newVal));
-            }
-        }
-
-        flexCtrlState.adjustedEnergy[i] = newVal;
-        flexCtrlState.userDragged.add(i);
-
-        // If bar is back to original, un-drag it
-        if (Math.abs(newVal - orig[i]) < 0.001) {
-            flexCtrlState.userDragged.delete(i);
-            flexCtrlState.adjustedEnergy[i] = orig[i];
-        }
-
-        recalculateRedistribution();
-        flexCtrlReact();
+        applyCeiling(ceiling);
     }
 
-    function onFlexDragEnd(e) {
-        if (!flexCtrlState.dragging) return;
-        flexCtrlState.dragging = false;
-        flexCtrlState.selectedBar = null;
-        flexCtrlState.hoveredBar = null;
+    function onCeilingDragEnd(e) {
+        if (!flexCtrlState.ceilingDragging) return;
+        flexCtrlState.ceilingDragging = false;
 
         const gd = document.getElementById('flex-ctrl-chart');
-        if (gd) gd.classList.remove('flex-grabbing');
+        if (gd) gd.classList.remove('ceiling-dragging');
 
         const resetBtn = document.getElementById('flex-ctrl-reset-btn');
-        if (resetBtn) resetBtn.disabled = (flexCtrlState.userDragged.size === 0);
-
-        flexCtrlReact();
+        if (resetBtn) resetBtn.disabled = (flexCtrlState.ceiling === null);
     }
 
     function updateFlexControlChart() {
@@ -2319,12 +2330,14 @@
         summaryDiv.innerHTML = '';
 
         // Clean up old event listeners
-        document.removeEventListener('mousemove', onFlexDragMove);
-        document.removeEventListener('mouseup', onFlexDragEnd);
-        document.removeEventListener('touchmove', onFlexDragMove);
-        document.removeEventListener('touchend', onFlexDragEnd);
+        document.removeEventListener('mousemove', onCeilingDragMove);
+        document.removeEventListener('mouseup', onCeilingDragEnd);
+        document.removeEventListener('touchmove', onCeilingDragMove);
+        document.removeEventListener('touchend', onCeilingDragEnd);
 
-        fetch(`/api/building/${buildingId}/energy-forecast?hours=${hours}`)
+        // Always fetch 48h so there is data to pan into; initial view = selected hours
+        const fetchHours = 48;
+        fetch(`/api/building/${buildingId}/energy-forecast?hours=${fetchHours}`)
             .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
             .then(result => {
                 const forecast = result.forecast || [];
@@ -2348,22 +2361,21 @@
                     return 0;
                 });
 
-                const timestamps = forecast.map(d => d.timestamp_display);
+                // Use full ISO timestamps so each bar is unique (HH:MM would repeat after 24h)
+                const timestamps = forecast.map(d => d.timestamp);
                 const energyKwh = forecast.map(d => d.heating_energy_kwh);
                 const barColors = tempRates.map(r => flexRateToColor(r));
 
-                // Store state for interactive editing
+                // Store state
                 flexCtrlState.originalForecast = forecast.map(d => d.heating_energy_kwh);
                 flexCtrlState.adjustedEnergy = [...energyKwh];
                 flexCtrlState.timestamps = timestamps;
                 flexCtrlState.tempRates = tempRates;
                 flexCtrlState.barColors = barColors;
-                flexCtrlState.userDragged = new Set();
-                flexCtrlState.dragging = false;
-                flexCtrlState.selectedBar = null;
-                flexCtrlState.totalBudget = energyKwh.reduce((a, b) => a + b, 0) / energyKwh.length;
+                flexCtrlState.ceiling = null;
+                flexCtrlState.ceilingDragging = false;
 
-                // Fixed Y-axis: max of original data + 25% margin, locked for all interactions
+                // Fixed Y-axis: max of original data + 25% margin
                 const maxOrig = Math.max(...energyKwh);
                 flexCtrlState.yMax = maxOrig * 1.25;
 
@@ -2380,19 +2392,18 @@
                     hoverinfo: 'skip'
                 };
 
-                // Adjusted energy trace (interactive) — simple hover, bar labels for deltas
+                // Adjusted energy trace
                 const hoverText = energyKwh.map(val => flexFmtEnergy(val));
-
                 const energyTrace = {
                     x: timestamps,
                     y: [...energyKwh],
                     type: 'bar',
-                    name: 'Adjusted (kW)',
+                    name: 'Adjusted (kWh)',
                     marker: {
                         color: barColors,
                         line: { width: 1, color: barColors.map(() => 'rgba(0,0,0,0.2)') }
                     },
-                    text: energyKwh.map(() => ''),  // no labels initially
+                    text: energyKwh.map(() => ''),
                     textposition: 'inside',
                     textangle: 0,
                     textfont: { size: 10, color: '#fff', family: 'system-ui, sans-serif' },
@@ -2424,24 +2435,43 @@
                     hoverinfo: 'skip'
                 };
 
+                // Ceiling line trace (initially hidden, shown when user drags Y-axis)
+                const ceilingTrace = {
+                    x: [timestamps[0], timestamps[timestamps.length - 1]],
+                    y: [flexCtrlState.yMax, flexCtrlState.yMax],
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Power ceiling',
+                    line: { color: '#e74c3c', width: 3, dash: 'dash' },
+                    hoverinfo: 'skip',
+                    visible: false
+                };
+
                 const layout = {
                     height: 350,
                     margin: { l: 60, r: 60, t: 30, b: 80 },
                     paper_bgcolor: 'rgba(0,0,0,0)',
                     plot_bgcolor: '#ffffff',
                     font: { family: 'system-ui, -apple-system, sans-serif' },
-                    dragmode: false,   // disable Plotly pan so our drag works
+                    dragmode: 'pan',
                     hovermode: 'closest',
                     xaxis: {
                         title: 'Hour',
                         tickangle: -45,
-                        gridcolor: '#e8e8e8'
+                        gridcolor: '#e8e8e8',
+                        fixedrange: false,
+                        type: 'date',
+                        tickformat: '%a %H:%M',
+                        dtick: 3600000,
+                        range: hours < timestamps.length
+                            ? [timestamps[0], timestamps[hours]]
+                            : undefined
                     },
                     yaxis: {
-                        title: 'Energy (kW)',
+                        title: 'Energy (kWh) \u2014 drag here to set ceiling',
                         gridcolor: '#e8e8e8',
-                        range: [0, flexCtrlState.yMax],  // fixed range
-                        fixedrange: true                  // no zoom/pan on y
+                        range: [0, flexCtrlState.yMax],
+                        fixedrange: true
                     },
                     yaxis2: {
                         title: 'Temp trend (\u00B0C/h)',
@@ -2449,49 +2479,32 @@
                         tickfont: { color: '#555' },
                         overlaying: 'y',
                         side: 'right',
-                        zeroline: false
+                        zeroline: false,
+                        fixedrange: true
                     },
                     legend: {
                         orientation: 'h',
                         y: -0.2
                     },
                     bargap: 0.1,
-                    barmode: 'overlay'  // ghost behind adjusted
+                    barmode: 'overlay'
                 };
 
                 chartDiv.innerHTML = '';
-                // Traces: [0]=ghost, [1]=adjusted, [2]=rate, [3]=zero
-                Plotly.newPlot('flex-ctrl-chart', [ghostTrace, energyTrace, rateTrace, zeroTrace], layout, chartConfig)
+                // Traces: [0]=ghost, [1]=adjusted, [2]=rate, [3]=zero, [4]=ceiling
+                Plotly.newPlot('flex-ctrl-chart', [ghostTrace, energyTrace, rateTrace, zeroTrace, ceilingTrace], layout, chartConfig)
                     .then(() => {
                         updateFlexCtrlSummary();
                         document.getElementById('flex-ctrl-reset-btn').disabled = true;
 
-                        // Attach interaction handlers
+                        // Ceiling drag: mousedown on Y-axis gutter (capture phase)
                         const gd = document.getElementById('flex-ctrl-chart');
-                        gd.addEventListener('mousedown', onFlexDragStart);
-                        gd.addEventListener('touchstart', onFlexDragStart, { passive: false });
-                        document.addEventListener('mousemove', onFlexDragMove);
-                        document.addEventListener('mouseup', onFlexDragEnd);
-                        document.addEventListener('touchmove', onFlexDragMove, { passive: false });
-                        document.addEventListener('touchend', onFlexDragEnd);
-
-                        // Highlight bar on hover + grab cursor
-                        gd.on('plotly_hover', function(data) {
-                            const pt = data.points[0];
-                            if (pt.curveNumber === 1 && !flexCtrlState.dragging) {
-                                const idx = pt.pointIndex;
-                                if (flexCtrlState.hoveredBar !== idx) {
-                                    flexCtrlState.hoveredBar = idx;
-                                    flexCtrlReact();
-                                }
-                            }
-                        });
-                        gd.on('plotly_unhover', function() {
-                            if (!flexCtrlState.dragging && flexCtrlState.hoveredBar !== null) {
-                                flexCtrlState.hoveredBar = null;
-                                flexCtrlReact();
-                            }
-                        });
+                        gd.addEventListener('mousedown', onCeilingDragStart, { capture: true });
+                        gd.addEventListener('touchstart', onCeilingDragStart, { capture: true, passive: false });
+                        document.addEventListener('mousemove', onCeilingDragMove);
+                        document.addEventListener('mouseup', onCeilingDragEnd);
+                        document.addEventListener('touchmove', onCeilingDragMove, { passive: false });
+                        document.addEventListener('touchend', onCeilingDragEnd);
                     })
                     .catch(err => {
                         console.error('Plotly render error:', err);
@@ -2510,44 +2523,40 @@
 
         const orig = flexCtrlState.originalForecast;
         const adj = flexCtrlState.adjustedEnergy;
-        const totalOrig = orig.reduce((a, b) => a + b, 0);
-        const totalAdj = adj.reduce((a, b) => a + b, 0);
         const peakOrig = Math.max(...orig);
         const peakAdj = Math.max(...adj);
+        const ceiling = flexCtrlState.ceiling;
 
-        // Sum of energy shifted away from user-dragged bars
+        // Count capped bars and total shifted energy
+        let cappedCount = 0;
         let shiftedKwh = 0;
-        for (const idx of flexCtrlState.userDragged) {
-            shiftedKwh += orig[idx] - adj[idx];
+        for (let i = 0; i < orig.length; i++) {
+            if (adj[i] < orig[i] - 0.001) {
+                cappedCount++;
+                shiftedKwh += orig[i] - adj[i];
+            }
         }
-
-        const budgetRemaining = Math.max(0, flexCtrlState.totalBudget - shiftedKwh);
-        const barsAdjusted = flexCtrlState.userDragged.size;
 
         summaryDiv.innerHTML = `
             <div class="metric-item">
-                <div class="metric-value">${flexFmtEnergy(totalOrig)}</div>
-                <div class="metric-label">Original</div>
+                <div class="metric-value">${ceiling !== null ? flexFmtEnergy(ceiling) : '-'}</div>
+                <div class="metric-label">Ceiling</div>
             </div>
             <div class="metric-item">
-                <div class="metric-value" style="color:#044680">${flexFmtEnergy(totalAdj)}</div>
-                <div class="metric-label">Adjusted</div>
+                <div class="metric-value" style="color:#e67e22">${cappedCount}</div>
+                <div class="metric-label">Hours Capped</div>
             </div>
             <div class="metric-item">
                 <div class="metric-value" style="color:#27ae60">${flexFmtEnergy(peakOrig - peakAdj)}</div>
                 <div class="metric-label">Peak Reduction</div>
             </div>
             <div class="metric-item">
-                <div class="metric-value" style="color:#9b59b6">${flexFmtEnergy(shiftedKwh)}</div>
+                <div class="metric-value" style="color:#3498db">${flexFmtEnergy(shiftedKwh)}</div>
                 <div class="metric-label">Energy Shifted</div>
             </div>
             <div class="metric-item">
-                <div class="metric-value" style="color:#e67e22">${flexFmtEnergy(budgetRemaining)}</div>
-                <div class="metric-label">Budget Remaining</div>
-            </div>
-            <div class="metric-item">
-                <div class="metric-value" style="color:#c0392b">${barsAdjusted}</div>
-                <div class="metric-label">Bars Adjusted</div>
+                <div class="metric-value">${cappedCount}</div>
+                <div class="metric-label">Compensation window</div>
             </div>
         `;
     }
@@ -2555,10 +2564,8 @@
     function resetFlexControl() {
         if (!flexCtrlState.originalForecast) return;
         flexCtrlState.adjustedEnergy = [...flexCtrlState.originalForecast];
-        flexCtrlState.userDragged = new Set();
-        flexCtrlState.dragging = false;
-        flexCtrlState.selectedBar = null;
-        flexCtrlState.hoveredBar = null;
+        flexCtrlState.ceiling = null;
+        flexCtrlState.ceilingDragging = false;
 
         const resetBtn = document.getElementById('flex-ctrl-reset-btn');
         if (resetBtn) resetBtn.disabled = true;
@@ -2572,10 +2579,9 @@
         const label = document.getElementById('flex-split-label');
         if (label) label.textContent = `${before}/${after}`;
 
-        // Recalculate redistribution with new split and re-render
-        if (flexCtrlState.originalForecast && flexCtrlState.userDragged.size > 0) {
-            recalculateRedistribution();
-            flexCtrlReact();
+        // Recalculate redistribution with new split
+        if (flexCtrlState.originalForecast && flexCtrlState.ceiling !== null) {
+            applyCeiling(flexCtrlState.ceiling);
         }
     }
 
