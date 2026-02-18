@@ -1539,11 +1539,18 @@ def api_building_k_value_history(building_id):
 @require_login
 def api_building_energy_forecast(building_id):
     """API endpoint for building energy forecast using k-value + SMHI weather."""
-    if not user_manager.can_access_building(session.get('user_id'), building_id):
+    if building_id != '__all__' and not user_manager.can_access_building(session.get('user_id'), building_id):
         return jsonify({'error': 'Access denied'}), 403
 
     hours = request.args.get('hours', 24, type=int)
     hours = min(max(hours, 1), 72)
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+
+    if building_id == '__all__':
+        result = influx.get_building_energy_forecast_all(hours=hours)
+        return jsonify(result)
 
     # Load building config to get k-value and location
     buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
@@ -1564,8 +1571,6 @@ def api_building_energy_forecast(building_id):
     if not k_value:
         return jsonify({'forecast': [], 'summary': {}, 'error': 'No k-value calibrated yet'})
 
-    from influx_reader import get_influx_reader
-    influx = get_influx_reader()
     result = influx.get_building_energy_forecast(
         building_id, hours=hours,
         k_value=k_value, assumed_indoor_temp=assumed_indoor,

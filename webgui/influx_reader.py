@@ -2149,6 +2149,147 @@ class InfluxReader:
             print(f"Failed to compute building energy forecast: {e}")
             return {'forecast': [], 'summary': {}}
 
+    def get_building_energy_forecast_all(self, hours: int = 24) -> dict:
+        """
+        Get aggregated energy forecast across ALL buildings.
+        Loads building configs, fetches SMHI weather per unique location,
+        computes k-value forecasts, and sums by hour.
+        """
+        try:
+            import sys, os, json, glob, logging
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+            from smhi_weather import SMHIWeather
+
+            buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+            config_files = glob.glob(os.path.join(buildings_dir, '*.json'))
+
+            # Load all buildings with valid k-values
+            buildings = []
+            for cf in config_files:
+                try:
+                    with open(cf, 'r') as f:
+                        config = json.load(f)
+                    k = config.get('energy_separation', {}).get('heat_loss_k')
+                    lat = config.get('location', {}).get('latitude')
+                    lon = config.get('location', {}).get('longitude')
+                    indoor = config.get('energy_separation', {}).get('assumed_indoor_temp', 21.0)
+                    if k and lat and lon:
+                        buildings.append({
+                            'id': os.path.splitext(os.path.basename(cf))[0],
+                            'k': float(k), 'indoor': float(indoor),
+                            'lat': float(lat), 'lon': float(lon)
+                        })
+                except Exception:
+                    continue
+
+            if not buildings:
+                return {'forecast': [], 'summary': {}, 'error': 'No calibrated buildings found'}
+
+            # Group by rounded (lat, lon) to avoid redundant SMHI calls
+            location_groups = {}
+            for b in buildings:
+                loc_key = (round(b['lat'], 1), round(b['lon'], 1))
+                if loc_key not in location_groups:
+                    location_groups[loc_key] = {'lat': b['lat'], 'lon': b['lon'], 'buildings': []}
+                location_groups[loc_key]['buildings'].append(b)
+
+            # Fetch weather per unique location and compute forecasts
+            hour_data = {}  # iso_key -> {energy, power, outdoor_temps, building_ids}
+
+            for loc_key, group in location_groups.items():
+                client = SMHIWeather(group['lat'], group['lon'], logging.getLogger('smhi_forecast'))
+                weather = client.get_forecast(hours_ahead=hours)
+                if not weather:
+                    continue
+
+                for b in group['buildings']:
+                    for point in weather:
+                        outdoor_temp = point.get('temp')
+                        if outdoor_temp is None:
+                            continue
+
+                        timestamp_str = point.get('time', '')
+                        try:
+                            ts = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        except (ValueError, TypeError):
+                            continue
+
+                        hour_key = ts.replace(minute=0, second=0, microsecond=0)
+                        key = hour_key.isoformat()
+
+                        degree_diff = max(0, b['indoor'] - outdoor_temp)
+                        power_kw = b['k'] * degree_diff
+                        energy_kwh = power_kw  # 1 hour interval
+
+                        if key not in hour_data:
+                            hour_data[key] = {
+                                'timestamp': hour_key,
+                                'energy': 0, 'power': 0,
+                                'outdoor_temps': [], 'building_ids': set()
+                            }
+
+                        hour_data[key]['energy'] += energy_kwh
+                        hour_data[key]['power'] += power_kw
+                        hour_data[key]['building_ids'].add(b['id'])
+                        if outdoor_temp is not None:
+                            hour_data[key]['outdoor_temps'].append(outdoor_temp)
+
+            # Build results
+            forecast = []
+            total_energy = 0
+            peak_power = 0
+            peak_hour = None
+
+            for key in sorted(hour_data.keys()):
+                d = hour_data[key]
+                ts = d['timestamp']
+                swedish_time = ts.astimezone(SWEDISH_TZ)
+
+                avg_outdoor = None
+                if d['outdoor_temps']:
+                    avg_outdoor = sum(d['outdoor_temps']) / len(d['outdoor_temps'])
+
+                forecast.append({
+                    'timestamp': ts.isoformat(),
+                    'timestamp_display': swedish_time.strftime('%H:%M'),
+                    'timestamp_date': swedish_time.strftime('%Y-%m-%d'),
+                    'hour': swedish_time.hour,
+                    'heating_energy_kwh': round(d['energy'], 2),
+                    'heating_power_kw': round(d['power'], 3),
+                    'outdoor_temp': round(avg_outdoor, 1) if avg_outdoor is not None else None,
+                    'lead_time_hours': None,
+                    'building_count': len(d['building_ids']),
+                })
+
+                total_energy += d['energy']
+                if d['power'] > peak_power:
+                    peak_power = d['power']
+                    peak_hour = swedish_time.strftime('%H:%M')
+
+            summary = {
+                'total_energy_kwh': round(total_energy, 1),
+                'avg_power_kw': round(total_energy / len(forecast), 2) if forecast else 0,
+                'peak_power_kw': round(peak_power, 2),
+                'peak_hour': peak_hour,
+                'hours_forecasted': len(forecast),
+            }
+
+            generated_at = datetime.now(SWEDISH_TZ).strftime('%Y-%m-%d %H:%M')
+
+            return {
+                'forecast': forecast,
+                'summary': summary,
+                'generated_at': generated_at,
+                'hours': hours,
+                'model': f'{len(buildings)} buildings aggregated'
+            }
+
+        except Exception as e:
+            print(f"Failed to compute aggregated building energy forecast: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'forecast': [], 'summary': {}}
+
     def get_solar_events_ml2(self, house_id: str, days: int = 30) -> dict:
         """
         Get detected solar heating events (ML2 model) for visualization.
