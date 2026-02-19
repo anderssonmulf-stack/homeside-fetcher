@@ -421,17 +421,22 @@ class HomeSideControl:
 
         return None
 
-    def compute_ml_curve(self, weather_model, conditions) -> Optional[tuple]:
+    def compute_ml_curve(self, weather_model, conditions,
+                         indoor_temp: Optional[float] = None,
+                         setpoint: Optional[float] = None) -> Optional[tuple]:
         """
         Compute ML-adjusted curve as a parallel shift of the baseline Yref.
 
-        Uses the effective temperature model to determine how much warmer/colder
-        it "feels" than actual outdoor temp, then shifts the entire Yref curve
-        up or down by a uniform supply temp delta.
+        Two components:
+        1. Weather shift: accounts for wind chill and solar gain
+        2. Indoor correction: proportional feedback when indoor temp drifts
+           from setpoint beyond the acceptable deviation (dead band)
 
         Args:
             weather_model: SimpleWeatherModel instance
             conditions: WeatherConditions for current weather
+            indoor_temp: Current indoor temperature (from HomeSide)
+            setpoint: Current indoor setpoint (from HomeSide)
 
         Returns:
             Tuple of (curve_dict {point_num: supply_temp}, parallel_shift) or None
@@ -441,7 +446,7 @@ class HomeSideControl:
             self.logger.error("No baseline Yref stored — cannot compute ML curve")
             return None
 
-        # Compute effective temp offset from current conditions
+        # --- Component 1: Weather-based shift ---
         eff_result = weather_model.effective_temperature(conditions)
         outdoor_offset = eff_result.effective_temp - conditions.temperature
 
@@ -449,8 +454,7 @@ class HomeSideControl:
         MAX_OFFSET = 5.0
         outdoor_offset = max(-MAX_OFFSET, min(MAX_OFFSET, outdoor_offset))
 
-        # Compute parallel shift: use curve slope at 0°C reference point
-        # to convert outdoor offset to supply temp delta
+        # Compute weather shift: use curve slope at 0°C reference point
         reference_supply = self._interpolate_yref(0.0)
         shifted_supply = self._interpolate_yref(0.0 + outdoor_offset)
 
@@ -458,7 +462,23 @@ class HomeSideControl:
             self.logger.error("Cannot compute parallel shift from Yref")
             return None
 
-        parallel_shift = round(shifted_supply - reference_supply, 1)
+        weather_shift = round(shifted_supply - reference_supply, 1)
+
+        # --- Component 2: Indoor temp feedback ---
+        indoor_correction = 0.0
+        if indoor_temp is not None and setpoint is not None:
+            deviation = indoor_temp - setpoint  # positive = too warm
+            tolerance = self.profile.comfort.acceptable_deviation
+            if abs(deviation) > tolerance:
+                # Proportional correction beyond dead band
+                K = 1.5  # °C supply per °C indoor deviation
+                MAX_CORRECTION = 3.0
+                sign = 1.0 if deviation > 0 else -1.0
+                indoor_correction = -K * (deviation - sign * tolerance)
+                indoor_correction = max(-MAX_CORRECTION, min(MAX_CORRECTION, indoor_correction))
+                indoor_correction = round(indoor_correction, 1)
+
+        parallel_shift = round(weather_shift + indoor_correction, 1)
 
         # Apply uniform shift to all Yref points
         yref = ctrl.baseline['yref']
@@ -662,7 +682,9 @@ class HomeSideControl:
 
         return fail_count == 0
 
-    def update_ml_curve(self, weather_model, conditions) -> bool:
+    def update_ml_curve(self, weather_model, conditions,
+                        indoor_temp: Optional[float] = None,
+                        setpoint: Optional[float] = None) -> bool:
         """
         Compute and write ML-adjusted curve to HomeSide Yref.
 
@@ -673,11 +695,14 @@ class HomeSideControl:
         Args:
             weather_model: SimpleWeatherModel instance
             conditions: WeatherConditions for current weather
+            indoor_temp: Current indoor temperature (from HomeSide)
+            setpoint: Current indoor setpoint (from HomeSide)
 
         Returns:
             True if curve was written (or skipped due to small change)
         """
-        result = self.compute_ml_curve(weather_model, conditions)
+        result = self.compute_ml_curve(weather_model, conditions,
+                                       indoor_temp=indoor_temp, setpoint=setpoint)
         if result is None:
             return False
 
@@ -724,25 +749,36 @@ class HomeSideControl:
         ctrl.ml_last_offset = round(parallel_shift, 2)
         self.profile.save()
 
+        # Build log message
+        indoor_info = ""
+        if indoor_temp is not None and setpoint is not None:
+            indoor_info = f", indoor={indoor_temp:.1f}°C (setpoint={setpoint:.1f}°C)"
         msg = (
             f"ML curve updated for {self.profile.customer_id}: "
             f"shift={parallel_shift:+.1f}°C supply, {success_count}/10 Yref points written"
+            f"{indoor_info}"
         )
         self.logger.info(msg)
 
         if self.seq_logger:
+            props = {
+                'EventType': 'MLCurveUpdate',
+                'HouseId': self.profile.customer_id,
+                'ParallelShift': round(parallel_shift, 2),
+                'PreviousShift': previous_shift,
+                'PointsWritten': success_count,
+                'MLCurve': {str(k): v for k, v in ml_curve.items()},
+                'BaselineYref': {str(k): float(v) for k, v in yref.items()},
+            }
+            if indoor_temp is not None:
+                props['IndoorTemp'] = round(indoor_temp, 1)
+            if setpoint is not None:
+                props['SetPoint'] = round(setpoint, 1)
+
             self.seq_logger.log(
                 "ML curve update for {HouseId}: shift {ParallelShift:+.1f}°C supply ({PreviousShift} -> {ParallelShift}), {PointsWritten}/10 points",
                 level='Information',
-                properties={
-                    'EventType': 'MLCurveUpdate',
-                    'HouseId': self.profile.customer_id,
-                    'ParallelShift': round(parallel_shift, 2),
-                    'PreviousShift': previous_shift,
-                    'PointsWritten': success_count,
-                    'MLCurve': {str(k): v for k, v in ml_curve.items()},
-                    'BaselineYref': {str(k): float(v) for k, v in yref.items()},
-                }
+                properties=props,
             )
 
         return True

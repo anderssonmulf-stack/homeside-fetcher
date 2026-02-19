@@ -20,6 +20,7 @@ from k_recalibrator import recalibrate_house
 from energy_importer import EnergyImporter
 from dropbox_client import create_client_from_env
 from weather_sensitivity_learner import WeatherSensitivityLearner
+from thermal_inertia_test import ThermalInertiaTest
 
 
 def check_data_staleness(influx, settings: dict, logger) -> dict:
@@ -999,6 +1000,10 @@ def monitor_heating_system(config):
     # Track ML curve control timing
     last_ml_curve_update = None
 
+    # Thermal inertia test
+    thermal_inertia_test = None
+    last_thermal_test_check = None  # Daily check for qualifying conditions
+
     # Track periodic Dropbox import check (every hour)
     last_dropbox_check_time = None
     dropbox_check_interval_hours = 1
@@ -1247,8 +1252,8 @@ def monitor_heating_system(config):
                                         (now - last_ml_curve_update).total_seconds() >= interval * 60
                                     )
 
-                                    # Reactive update: rewrite early if estimated supply shift changed significantly
-                                    # ml_last_offset stores parallel supply shift; estimate current from outdoor offset
+                                    # Reactive update: rewrite early if conditions changed significantly
+                                    # Check 1: weather shift changed
                                     current_outdoor_offset = effective_temp - outdoor_temp
                                     estimated_shift = -0.7 * current_outdoor_offset  # approx curve slope
                                     if ctrl.ml_last_offset is not None:
@@ -1256,9 +1261,56 @@ def monitor_heating_system(config):
                                         if shift_change >= ctrl.ml_reactive_threshold:
                                             should_update = True
 
+                                    # Check 2: indoor temp drifting beyond tolerance
+                                    room_temp = extracted_data.get('room_temperature')
+                                    hw_setpoint = extracted_data.get('target_temp_setpoint')
+                                    if room_temp is not None and hw_setpoint is not None:
+                                        tolerance = customer_profile.comfort.acceptable_deviation
+                                        if abs(room_temp - hw_setpoint) > tolerance:
+                                            should_update = True
+
                                     if should_update:
-                                        if ml_curve_control.update_ml_curve(weather_model, conditions):
+                                        if ml_curve_control.update_ml_curve(
+                                            weather_model, conditions,
+                                            indoor_temp=extracted_data.get('room_temperature'),
+                                            setpoint=extracted_data.get('target_temp_setpoint'),
+                                        ):
                                             last_ml_curve_update = now
+
+                    # =====================================================
+                    # Thermal inertia test (active test polling)
+                    # =====================================================
+                    if thermal_inertia_test and thermal_inertia_test.is_active and ml_curve_control:
+                        room_temp = extracted_data.get('room_temperature')
+                        outdoor = extracted_data.get('outdoor_temperature')
+                        if room_temp is not None and outdoor is not None:
+                            action = thermal_inertia_test.poll(room_temp, outdoor)
+                            if action == "heat":
+                                # Boost supply to heat up quickly
+                                supply = thermal_inertia_test.get_supply_for_phase()
+                                if supply and ml_curve_control._yref_advise_indices:
+                                    for pt in range(1, 11):
+                                        idx = ml_curve_control._yref_advise_indices.get(pt)
+                                        if idx is not None:
+                                            api.write_value(f"Cwl.Advise.A[{idx}]", supply)
+                            elif action == "cooldown":
+                                # Reduce supply to minimum
+                                supply = thermal_inertia_test.get_supply_for_phase()
+                                if supply and ml_curve_control._yref_advise_indices:
+                                    for pt in range(1, 11):
+                                        idx = ml_curve_control._yref_advise_indices.get(pt)
+                                        if idx is not None:
+                                            api.write_value(f"Cwl.Advise.A[{idx}]", supply)
+                            elif action == "restore":
+                                # Test complete/failed — restore normal ML control
+                                logger.info("Thermal inertia test finished, restoring ML curve")
+                                if customer_profile.heat_curve_control.in_control:
+                                    ml_curve_control.update_ml_curve(
+                                        weather_model, conditions,
+                                        indoor_temp=room_temp,
+                                        setpoint=extracted_data.get('target_temp_setpoint'),
+                                    )
+                                thermal_inertia_test = None
 
                     # Record curve control mode in extracted_data for InfluxDB
                     if customer_profile:

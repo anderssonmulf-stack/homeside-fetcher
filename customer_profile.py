@@ -110,6 +110,11 @@ class LearnedParameters:
     # ML2 weather sensitivity coefficients (learned from solar events)
     weather_coefficients: LearnedWeatherCoefficients = field(default_factory=LearnedWeatherCoefficients)
     thermal_timing: ThermalResponseTiming = field(default_factory=ThermalResponseTiming)
+    # Thermal time constant (hours) — how fast the building responds to heating changes
+    thermal_time_constant: Optional[float] = None
+    thermal_time_constant_measured_at: Optional[str] = None
+    thermal_time_constant_source: Optional[str] = None  # "measured" or "copied"
+    thermal_time_constant_copied_from: Optional[str] = None  # customer_id if copied
 
 
 @dataclass
