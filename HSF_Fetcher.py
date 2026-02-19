@@ -1857,48 +1857,60 @@ def monitor_heating_system(config):
                     except Exception:
                         pass
 
-                # Check for approved test — start it
+                # Check for approved test — start it at 23:00 local
                 if (not thermal_inertia_test and
                     customer_profile.thermal_test.status == "approved"):
-                    room_temp = extracted_data.get('room_temperature') if extracted_data else None
-                    outdoor = extracted_data.get('outdoor_temperature') if extracted_data else None
-                    hw_setpoint = extracted_data.get('target_temp_setpoint', 22.0) if extracted_data else 22.0
-                    if room_temp is not None and outdoor is not None:
-                        customer_profile.thermal_test.status = "in_progress"
-                        customer_profile.save()
-                        thermal_inertia_test = ThermalInertiaTest(
-                            customer_profile, ml_curve_control, logger, seq_logger
-                        )
-                        phase = thermal_inertia_test.start_test(room_temp, hw_setpoint, outdoor)
-                        print(f"\n🔬 Thermal inertia test STARTED (phase: {phase})")
-                        logger.info(f"Thermal inertia test started after approval (phase: {phase})")
+                    local_hour = (now.hour + 1) % 24  # Approximate CET
+                    if local_hour >= 23 or local_hour < 7:
+                        room_temp = extracted_data.get('room_temperature') if extracted_data else None
+                        outdoor = extracted_data.get('outdoor_temperature') if extracted_data else None
+                        hw_setpoint = extracted_data.get('target_temp_setpoint', 22.0) if extracted_data else 22.0
+                        if room_temp is not None and outdoor is not None:
+                            customer_profile.thermal_test.status = "in_progress"
+                            customer_profile.save()
+                            thermal_inertia_test = ThermalInertiaTest(
+                                customer_profile, ml_curve_control, logger, seq_logger
+                            )
+                            phase = thermal_inertia_test.start_test(room_temp, hw_setpoint, outdoor)
+                            print(f"\n🔬 Thermal inertia test STARTED (phase: {phase})")
+                            logger.info(f"Thermal inertia test started after approval (phase: {phase})")
 
-                # Nightly condition check (~22:00 local, once per day)
-                # Only check if no test is active or pending
+                # Morning forecast check (~07:00 Swedish, once per day)
+                # Evaluate tonight's forecast and send email if conditions look good
                 if (not thermal_inertia_test and
                     customer_profile.thermal_test.status in ("none", "declined", "failed")):
                     local_hour = (now.hour + 1) % 24  # Approximate CET
-                    if local_hour == 22:  # Check once at ~22:00 local
+                    if local_hour == 7:  # 07:00 Swedish time
                         should_check = (
                             last_thermal_test_check is None or
                             (now - last_thermal_test_check).total_seconds() > 3600 * 20
                         )
                         if should_check:
                             last_thermal_test_check = now
-                            if weather_obs_data:
+                            # Read tonight's forecast from InfluxDB (already cached)
+                            overnight_forecast = None
+                            lat = config.get('latitude')
+                            lon = config.get('longitude')
+                            if influx and lat and lon:
+                                cached = influx.read_shared_weather_forecast(lat, lon)
+                                if cached:
+                                    # Filter for tonight's window: 23:00-07:00 Swedish
+                                    # At 07:00 CET (06:00 UTC), tonight 23:00 is ~16h ahead
+                                    overnight_forecast = []
+                                    for pt in cached:
+                                        lead = pt.get('hour', 0)
+                                        if 15 <= lead <= 25:  # ~23:00 to ~07:00 tonight
+                                            overnight_forecast.append({
+                                                'temperature': pt.get('temp'),
+                                                'wind_speed': pt.get('wind_speed'),
+                                            })
+
+                            if overnight_forecast:
                                 hw_setpoint = (extracted_data.get('target_temp_setpoint', 22.0)
                                                if extracted_data else 22.0)
-                                # Get overnight forecast for stability check
-                                forecast = None
-                                if weather:
-                                    hourly = weather.get_forecast(hours_ahead=10)
-                                    if hourly:
-                                        forecast = {'points': [{'temperature': h['temp']} for h in hourly]}
-
                                 requested = request_thermal_test(
                                     profile=customer_profile,
-                                    weather_obs=weather_obs_data,
-                                    forecast_data=forecast,
+                                    overnight_forecast=overnight_forecast,
                                     setpoint=hw_setpoint,
                                     logger=logger,
                                     seq_logger=seq_logger,

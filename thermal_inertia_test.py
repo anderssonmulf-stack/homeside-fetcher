@@ -113,49 +113,45 @@ class ThermalInertiaTest:
 
         return False
 
-    def check_conditions(self, weather_obs: Dict, forecast_data: Dict = None,
-                         setpoint: float = 22.0) -> bool:
+    def check_tonight_forecast(self, overnight_forecast: List[Dict],
+                              setpoint: float = 22.0) -> bool:
         """
-        Check if current conditions are suitable for running the test.
+        Check if tonight's forecast is suitable for running the test.
+
+        Called in the morning (~07:00) to evaluate the COMING night's
+        conditions from forecast data.
 
         Args:
-            weather_obs: Current weather observation dict
-            forecast_data: Weather forecast for the night
+            overnight_forecast: Forecast points for tonight (23:00-07:00),
+                                each with 'temperature' and optionally 'wind_speed'
             setpoint: Current indoor setpoint
 
         Returns:
-            True if conditions are suitable
+            True if tonight looks suitable
         """
-        now = datetime.now(timezone.utc)
-        hour = now.hour
-
-        # Must be within test window (23:00-07:00 local, approximate with UTC+1)
-        local_hour = (hour + 1) % 24  # Approximate CET
-        if not (local_hour >= TEST_WINDOW_START or local_hour < TEST_WINDOW_END - 2):
-            # Need at least 2 hours before window closes
+        if not overnight_forecast or len(overnight_forecast) < 2:
             return False
 
-        # Wind speed check
-        wind = weather_obs.get('wind_speed')
-        if wind is not None and wind > MAX_WIND_SPEED:
+        temps = [p['temperature'] for p in overnight_forecast
+                 if p.get('temperature') is not None]
+        if not temps:
             return False
 
-        # Outdoor temp check: must be cold enough for meaningful heat loss
-        outdoor = weather_obs.get('temperature')
-        if outdoor is None:
-            return False
+        # Temperature check: must be cold enough all night
         max_outdoor = setpoint - MIN_OUTDOOR_DELTA
-        if outdoor > max_outdoor:
+        if max(temps) > max_outdoor:
             return False
 
-        # Forecast stability check
-        if forecast_data:
-            temps = [p.get('temperature') for p in forecast_data.get('points', [])
-                     if p.get('temperature') is not None]
-            if temps and len(temps) >= 2:
-                swing = max(temps) - min(temps)
-                if swing > MAX_FORECAST_SWING:
-                    return False
+        # Stability check: no big swings overnight
+        swing = max(temps) - min(temps)
+        if swing > MAX_FORECAST_SWING:
+            return False
+
+        # Wind check: use forecast wind if available
+        winds = [p['wind_speed'] for p in overnight_forecast
+                 if p.get('wind_speed') is not None]
+        if winds and max(winds) > MAX_WIND_SPEED:
+            return False
 
         return True
 
@@ -420,20 +416,22 @@ class ThermalInertiaTest:
             self.logger.info(f"Thermal inertia test aborted: {reason}")
 
 
-def request_thermal_test(profile, weather_obs: Dict, forecast_data: Dict = None,
+def request_thermal_test(profile, overnight_forecast: List[Dict],
                          setpoint: float = 22.0, logger=None,
                          seq_logger=None) -> bool:
     """
     Check if a thermal test should be requested and send email for approval.
 
-    Called nightly (~22:00) by the fetcher. If conditions are right and the house
-    needs calibration, stores a pending request in the profile and sends an email
-    to admin with approve/decline links.
+    Called in the morning (~07:00 Swedish) by the fetcher. Evaluates tonight's
+    forecast. If conditions look good and the house needs calibration, stores
+    a pending request in the profile and sends an approval email.
+
+    The user has all day to approve. If approved, the test starts at 23:00.
 
     Args:
         profile: CustomerProfile instance
-        weather_obs: Current weather observation dict with 'temperature', 'wind_speed'
-        forecast_data: Weather forecast for the night
+        overnight_forecast: Forecast points for tonight (23:00-07:00),
+                           each with 'temperature' and optionally 'wind_speed'
         setpoint: Current indoor setpoint
         logger: Python logger
         seq_logger: Optional Seq logger
@@ -452,28 +450,37 @@ def request_thermal_test(profile, weather_obs: Dict, forecast_data: Dict = None,
     if not test.needs_calibration():
         return False
 
-    # Check weather conditions
-    if not test.check_conditions(weather_obs, forecast_data, setpoint):
-        logger.debug(f"Thermal test conditions not met for {profile.customer_id}")
+    # Check tonight's forecast
+    if not test.check_tonight_forecast(overnight_forecast, setpoint):
+        logger.debug(f"Thermal test forecast not suitable for {profile.customer_id}")
         return False
 
-    # Conditions are met — create approval request
+    # Forecast looks good — create approval request
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
+
+    # Extract forecast summary for email
+    forecast_temps = [p['temperature'] for p in overnight_forecast
+                      if p.get('temperature') is not None]
+    forecast_winds = [p['wind_speed'] for p in overnight_forecast
+                      if p.get('wind_speed') is not None]
 
     profile.thermal_test.status = "pending_approval"
     profile.thermal_test.token = token
     profile.thermal_test.requested_at = now.isoformat()
-    profile.thermal_test.expires_at = (now + timedelta(hours=20)).isoformat()
+    profile.thermal_test.expires_at = (now + timedelta(hours=16)).isoformat()  # Until 23:00
     profile.thermal_test.conditions = {
-        'outdoor_temp': weather_obs.get('temperature'),
-        'wind_speed': weather_obs.get('wind_speed'),
+        'forecast_temp_min': round(min(forecast_temps), 1) if forecast_temps else None,
+        'forecast_temp_max': round(max(forecast_temps), 1) if forecast_temps else None,
+        'forecast_wind_max': round(max(forecast_winds), 1) if forecast_winds else None,
         'setpoint': setpoint,
     }
     profile.save()
 
     # Send email
-    email_sent = _send_thermal_test_email(profile, token, weather_obs, setpoint, logger)
+    email_sent = _send_thermal_test_email(
+        profile, token, profile.thermal_test.conditions, setpoint, logger
+    )
 
     if seq_logger:
         seq_logger.log(
@@ -482,23 +489,23 @@ def request_thermal_test(profile, weather_obs: Dict, forecast_data: Dict = None,
             properties={
                 'EventType': 'ThermalTestRequested',
                 'HouseId': profile.customer_id,
-                'OutdoorTemp': weather_obs.get('temperature'),
-                'WindSpeed': weather_obs.get('wind_speed'),
+                'ForecastConditions': profile.thermal_test.conditions,
                 'EmailSent': email_sent,
             }
         )
 
+    cond = profile.thermal_test.conditions
     logger.info(
         f"Thermal test requested for {profile.customer_id}: "
-        f"outdoor={weather_obs.get('temperature')}°C, "
-        f"wind={weather_obs.get('wind_speed')} m/s, "
+        f"forecast {cond.get('forecast_temp_min')} to {cond.get('forecast_temp_max')}°C, "
+        f"wind max {cond.get('forecast_wind_max')} m/s, "
         f"email_sent={email_sent}"
     )
 
     return True
 
 
-def _send_thermal_test_email(profile, token: str, weather_obs: Dict,
+def _send_thermal_test_email(profile, token: str, conditions: Dict,
                              setpoint: float, logger) -> bool:
     """Send thermal test approval email to admins via SMTP."""
     smtp_server = os.environ.get('SMTP_SERVER', 'send.one.com')
@@ -517,18 +524,19 @@ def _send_thermal_test_email(profile, token: str, weather_obs: Dict,
     approve_url = f"{base_url}/thermal-test/{profile.customer_id}/{token}/approve"
     decline_url = f"{base_url}/thermal-test/{profile.customer_id}/{token}/decline"
 
-    outdoor = weather_obs.get('temperature', '?')
-    wind = weather_obs.get('wind_speed', '?')
+    temp_min = conditions.get('forecast_temp_min', '?')
+    temp_max = conditions.get('forecast_temp_max', '?')
+    wind_max = conditions.get('forecast_wind_max', '?')
     house_name = profile.friendly_name or profile.customer_id
 
-    subject = f"[BVPro] Thermal calibration request: {house_name}"
+    subject = f"[BVPro] Thermal calibration tonight? {house_name}"
 
     html_body = f"""
     <html>
     <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #2c3e50;">Thermal Calibration Request</h2>
 
-        <p>Tonight's conditions are suitable for measuring the thermal time constant
+        <p>Tonight's forecast looks suitable for measuring the thermal time constant
            of <strong>{house_name}</strong>.</p>
 
         <p>The test will:</p>
@@ -545,12 +553,12 @@ def _send_thermal_test_email(profile, token: str, weather_obs: Dict,
                 <td style="padding: 8px; border: 1px solid #ddd;">{house_name}</td>
             </tr>
             <tr>
-                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Outdoor temp:</td>
-                <td style="padding: 8px; border: 1px solid #ddd;">{outdoor}°C</td>
+                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Forecast overnight:</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{temp_min} to {temp_max}°C</td>
             </tr>
             <tr>
-                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Wind speed:</td>
-                <td style="padding: 8px; border: 1px solid #ddd;">{wind} m/s</td>
+                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Max wind:</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{wind_max} m/s</td>
             </tr>
             <tr>
                 <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Setpoint:</td>
@@ -562,7 +570,7 @@ def _send_thermal_test_email(profile, token: str, weather_obs: Dict,
             </tr>
         </table>
 
-        <p>The test runs between 23:00-07:00 and will not affect comfort noticeably.</p>
+        <p>If approved, the test runs tonight 23:00-07:00 and will not affect comfort noticeably.</p>
 
         <div style="margin: 30px 0;">
             <a href="{approve_url}"
@@ -580,7 +588,7 @@ def _send_thermal_test_email(profile, token: str, weather_obs: Dict,
         </div>
 
         <p style="color: #7f8c8d; font-size: 12px;">
-            This link expires in 20 hours. The test will only run tonight if approved.
+            Approve before 23:00 tonight for the test to run. The link expires at 23:00.
         </p>
 
         <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
@@ -593,17 +601,17 @@ def _send_thermal_test_email(profile, token: str, weather_obs: Dict,
     text_body = f"""
 Thermal Calibration Request
 
-Tonight's conditions are suitable for measuring the thermal time constant
+Tonight's forecast looks suitable for measuring the thermal time constant
 of {house_name}.
 
-Outdoor temp: {outdoor}°C
-Wind speed: {wind} m/s
+Forecast overnight: {temp_min} to {temp_max}°C
+Max wind: {wind_max} m/s
 Setpoint: {setpoint}°C
 
 Approve: {approve_url}
 Decline: {decline_url}
 
-This link expires in 20 hours.
+This link expires at 23:00 tonight.
     """
 
     try:
