@@ -13,7 +13,12 @@ explicit user approval via email confirmation link.
 """
 
 import math
+import os
+import secrets
+import smtplib
 import logging
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
@@ -413,6 +418,247 @@ class ThermalInertiaTest:
             self.state.phase = "failed"
             self.state.failure_reason = f"aborted: {reason}"
             self.logger.info(f"Thermal inertia test aborted: {reason}")
+
+
+def request_thermal_test(profile, weather_obs: Dict, forecast_data: Dict = None,
+                         setpoint: float = 22.0, logger=None,
+                         seq_logger=None) -> bool:
+    """
+    Check if a thermal test should be requested and send email for approval.
+
+    Called nightly (~22:00) by the fetcher. If conditions are right and the house
+    needs calibration, stores a pending request in the profile and sends an email
+    to admin with approve/decline links.
+
+    Args:
+        profile: CustomerProfile instance
+        weather_obs: Current weather observation dict with 'temperature', 'wind_speed'
+        forecast_data: Weather forecast for the night
+        setpoint: Current indoor setpoint
+        logger: Python logger
+        seq_logger: Optional Seq logger
+
+    Returns:
+        True if a request was sent
+    """
+    logger = logger or logging.getLogger(__name__)
+
+    # Skip if there's already a pending or active request
+    if profile.thermal_test.status in ("pending_approval", "approved", "in_progress"):
+        return False
+
+    # Check if calibration is needed
+    test = ThermalInertiaTest(profile, control=None, logger=logger)
+    if not test.needs_calibration():
+        return False
+
+    # Check weather conditions
+    if not test.check_conditions(weather_obs, forecast_data, setpoint):
+        logger.debug(f"Thermal test conditions not met for {profile.customer_id}")
+        return False
+
+    # Conditions are met — create approval request
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+
+    profile.thermal_test.status = "pending_approval"
+    profile.thermal_test.token = token
+    profile.thermal_test.requested_at = now.isoformat()
+    profile.thermal_test.expires_at = (now + timedelta(hours=20)).isoformat()
+    profile.thermal_test.conditions = {
+        'outdoor_temp': weather_obs.get('temperature'),
+        'wind_speed': weather_obs.get('wind_speed'),
+        'setpoint': setpoint,
+    }
+    profile.save()
+
+    # Send email
+    email_sent = _send_thermal_test_email(profile, token, weather_obs, setpoint, logger)
+
+    if seq_logger:
+        seq_logger.log(
+            "Thermal test requested for {HouseId} (email_sent={EmailSent})",
+            level='Information',
+            properties={
+                'EventType': 'ThermalTestRequested',
+                'HouseId': profile.customer_id,
+                'OutdoorTemp': weather_obs.get('temperature'),
+                'WindSpeed': weather_obs.get('wind_speed'),
+                'EmailSent': email_sent,
+            }
+        )
+
+    logger.info(
+        f"Thermal test requested for {profile.customer_id}: "
+        f"outdoor={weather_obs.get('temperature')}°C, "
+        f"wind={weather_obs.get('wind_speed')} m/s, "
+        f"email_sent={email_sent}"
+    )
+
+    return True
+
+
+def _send_thermal_test_email(profile, token: str, weather_obs: Dict,
+                             setpoint: float, logger) -> bool:
+    """Send thermal test approval email to admins via SMTP."""
+    smtp_server = os.environ.get('SMTP_SERVER', 'send.one.com')
+    smtp_port = int(os.environ.get('SMTP_PORT', '587'))
+    smtp_user = os.environ.get('SMTP_USER', '')
+    smtp_password = os.environ.get('SMTP_PASSWORD', '')
+    from_email = os.environ.get('FROM_EMAIL', smtp_user)
+    from_name = os.environ.get('FROM_NAME', 'BVPro')
+    base_url = os.environ.get('BASE_URL', '')
+    admin_emails = os.environ.get('ADMIN_EMAILS', '').split(',')
+
+    if not smtp_user or not smtp_password or not base_url:
+        logger.warning("SMTP or BASE_URL not configured, cannot send thermal test email")
+        return False
+
+    approve_url = f"{base_url}/thermal-test/{profile.customer_id}/{token}/approve"
+    decline_url = f"{base_url}/thermal-test/{profile.customer_id}/{token}/decline"
+
+    outdoor = weather_obs.get('temperature', '?')
+    wind = weather_obs.get('wind_speed', '?')
+    house_name = profile.friendly_name or profile.customer_id
+
+    subject = f"[BVPro] Thermal calibration request: {house_name}"
+
+    html_body = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2c3e50;">Thermal Calibration Request</h2>
+
+        <p>Tonight's conditions are suitable for measuring the thermal time constant
+           of <strong>{house_name}</strong>.</p>
+
+        <p>The test will:</p>
+        <ol>
+            <li>Heat the house slightly above setpoint (+0.5°C)</li>
+            <li>Reduce heating to minimum</li>
+            <li>Measure how quickly the house cools (1°C drop)</li>
+            <li>Restore normal heating automatically</li>
+        </ol>
+
+        <table style="border-collapse: collapse; margin: 20px 0;">
+            <tr>
+                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">House:</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{house_name}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Outdoor temp:</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{outdoor}°C</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Wind speed:</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{wind} m/s</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Setpoint:</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{setpoint}°C</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Max indoor swing:</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">~1°C (barely noticeable)</td>
+            </tr>
+        </table>
+
+        <p>The test runs between 23:00-07:00 and will not affect comfort noticeably.</p>
+
+        <div style="margin: 30px 0;">
+            <a href="{approve_url}"
+               style="display: inline-block; padding: 14px 28px; background-color: #27ae60;
+                      color: white; text-decoration: none; border-radius: 4px;
+                      margin-right: 10px; font-weight: bold;">
+                Approve Test
+            </a>
+            <a href="{decline_url}"
+               style="display: inline-block; padding: 14px 28px; background-color: #e74c3c;
+                      color: white; text-decoration: none; border-radius: 4px;
+                      font-weight: bold;">
+                Decline
+            </a>
+        </div>
+
+        <p style="color: #7f8c8d; font-size: 12px;">
+            This link expires in 20 hours. The test will only run tonight if approved.
+        </p>
+
+        <p style="color: #7f8c8d; font-size: 12px; margin-top: 30px;">
+            This is an automated message from BVPro.
+        </p>
+    </body>
+    </html>
+    """
+
+    text_body = f"""
+Thermal Calibration Request
+
+Tonight's conditions are suitable for measuring the thermal time constant
+of {house_name}.
+
+Outdoor temp: {outdoor}°C
+Wind speed: {wind} m/s
+Setpoint: {setpoint}°C
+
+Approve: {approve_url}
+Decline: {decline_url}
+
+This link expires in 20 hours.
+    """
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = f"{from_name} <{from_email}>"
+
+        msg.attach(MIMEText(text_body, 'plain', 'utf-8'))
+        msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+
+        recipients = [e.strip() for e in admin_emails if e.strip()]
+        if not recipients:
+            logger.warning("No ADMIN_EMAILS configured for thermal test email")
+            return False
+
+        msg['To'] = ', '.join(recipients)
+
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+
+        logger.info(f"Thermal test email sent to {recipients}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send thermal test email: {e}")
+        return False
+
+
+def check_thermal_test_approval(profile) -> Optional[str]:
+    """
+    Check if a pending thermal test has been approved, declined, or expired.
+
+    Returns:
+        "approved", "declined", "expired", or None if no pending request
+    """
+    if profile.thermal_test.status != "pending_approval":
+        return None
+
+    # Check expiry
+    if profile.thermal_test.expires_at:
+        try:
+            expires = datetime.fromisoformat(
+                profile.thermal_test.expires_at.replace('Z', '+00:00')
+            )
+            if datetime.now(timezone.utc) > expires:
+                profile.thermal_test.status = "none"
+                profile.thermal_test.token = None
+                profile.save()
+                return "expired"
+        except (ValueError, TypeError):
+            pass
+
+    return None  # Still pending
 
 
 def copy_thermal_constant(source_profile, target_profile, logger=None) -> bool:

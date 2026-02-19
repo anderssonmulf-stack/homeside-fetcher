@@ -20,7 +20,7 @@ from k_recalibrator import recalibrate_house
 from energy_importer import EnergyImporter
 from dropbox_client import create_client_from_env
 from weather_sensitivity_learner import WeatherSensitivityLearner
-from thermal_inertia_test import ThermalInertiaTest
+from thermal_inertia_test import ThermalInertiaTest, request_thermal_test, check_thermal_test_approval
 
 
 def check_data_staleness(influx, settings: dict, logger) -> dict:
@@ -1303,6 +1303,16 @@ def monitor_heating_system(config):
                                             api.write_value(f"Cwl.Advise.A[{idx}]", supply)
                             elif action == "restore":
                                 # Test complete/failed — restore normal ML control
+                                test_state = thermal_inertia_test.state
+                                if test_state.phase == "complete":
+                                    customer_profile.thermal_test.status = "completed"
+                                    tau = test_state.result_tau
+                                    print(f"\n🔬 Thermal test COMPLETE: τ = {tau} hours")
+                                else:
+                                    customer_profile.thermal_test.status = "failed"
+                                    print(f"\n🔬 Thermal test ended: {test_state.failure_reason}")
+                                customer_profile.save()
+
                                 logger.info("Thermal inertia test finished, restoring ML curve")
                                 if customer_profile.heat_curve_control.in_control:
                                     ml_curve_control.update_ml_curve(
@@ -1831,6 +1841,76 @@ def monitor_heating_system(config):
                     logger.warning(f"Recalibration failed: {e}")
                     print(f"⚠ Recalibration error: {e}")
                     last_recalibration_time = now  # Don't retry immediately
+
+            # =====================================================
+            # Thermal inertia test: nightly scheduling + approval check
+            # =====================================================
+            if (customer_profile and ml_curve_control and
+                customer_profile.heat_curve_control.curve_control_mode == "intelligent"):
+
+                # Reload profile from disk to pick up web GUI changes (e.g., approval click)
+                if customer_profile.thermal_test.status == "pending_approval":
+                    try:
+                        from customer_profile import CustomerProfile
+                        fresh = CustomerProfile.load(customer_profile.customer_id, "profiles")
+                        customer_profile.thermal_test = fresh.thermal_test
+                    except Exception:
+                        pass
+
+                # Check for approved test — start it
+                if (not thermal_inertia_test and
+                    customer_profile.thermal_test.status == "approved"):
+                    room_temp = extracted_data.get('room_temperature') if extracted_data else None
+                    outdoor = extracted_data.get('outdoor_temperature') if extracted_data else None
+                    hw_setpoint = extracted_data.get('target_temp_setpoint', 22.0) if extracted_data else 22.0
+                    if room_temp is not None and outdoor is not None:
+                        customer_profile.thermal_test.status = "in_progress"
+                        customer_profile.save()
+                        thermal_inertia_test = ThermalInertiaTest(
+                            customer_profile, ml_curve_control, logger, seq_logger
+                        )
+                        phase = thermal_inertia_test.start_test(room_temp, hw_setpoint, outdoor)
+                        print(f"\n🔬 Thermal inertia test STARTED (phase: {phase})")
+                        logger.info(f"Thermal inertia test started after approval (phase: {phase})")
+
+                # Nightly condition check (~22:00 local, once per day)
+                # Only check if no test is active or pending
+                if (not thermal_inertia_test and
+                    customer_profile.thermal_test.status in ("none", "declined", "failed")):
+                    local_hour = (now.hour + 1) % 24  # Approximate CET
+                    if local_hour == 22:  # Check once at ~22:00 local
+                        should_check = (
+                            last_thermal_test_check is None or
+                            (now - last_thermal_test_check).total_seconds() > 3600 * 20
+                        )
+                        if should_check:
+                            last_thermal_test_check = now
+                            if weather_obs_data:
+                                hw_setpoint = (extracted_data.get('target_temp_setpoint', 22.0)
+                                               if extracted_data else 22.0)
+                                # Get overnight forecast for stability check
+                                forecast = None
+                                if weather:
+                                    hourly = weather.get_forecast(hours_ahead=10)
+                                    if hourly:
+                                        forecast = {'points': [{'temperature': h['temp']} for h in hourly]}
+
+                                requested = request_thermal_test(
+                                    profile=customer_profile,
+                                    weather_obs=weather_obs_data,
+                                    forecast_data=forecast,
+                                    setpoint=hw_setpoint,
+                                    logger=logger,
+                                    seq_logger=seq_logger,
+                                )
+                                if requested:
+                                    print(f"\n📧 Thermal test email sent for {customer_profile.customer_id}")
+
+                # Check for expired pending requests
+                if customer_profile.thermal_test.status == "pending_approval":
+                    result = check_thermal_test_approval(customer_profile)
+                    if result == "expired":
+                        logger.info("Thermal test request expired (no response)")
 
             # Re-read interval from settings.json (live reload — no restart needed)
             settings = load_settings()

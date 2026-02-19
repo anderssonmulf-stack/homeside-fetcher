@@ -2511,6 +2511,66 @@ def handle_action(token, action):
                            action_type=pending_action.get('type'))
 
 
+@app.route('/thermal-test/<house_id>/<token>/<action>')
+def handle_thermal_test_action(house_id, token, action):
+    """Handle thermal test approval/decline from email link."""
+    if action not in ['approve', 'decline']:
+        flash('Invalid action.', 'error')
+        return render_template('action_result.html', success=False)
+
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+
+    try:
+        profile = CustomerProfile.load(house_id, profiles_dir)
+    except FileNotFoundError:
+        flash('House not found.', 'error')
+        return render_template('action_result.html', success=False)
+
+    # Validate token
+    if profile.thermal_test.status != "pending_approval":
+        flash('No pending thermal test request for this house.', 'error')
+        return render_template('action_result.html', success=False)
+
+    if profile.thermal_test.token != token:
+        flash('Invalid or expired link.', 'error')
+        return render_template('action_result.html', success=False)
+
+    # Check expiry
+    if profile.thermal_test.expires_at:
+        from datetime import datetime, timezone
+        try:
+            expires = datetime.fromisoformat(
+                profile.thermal_test.expires_at.replace('Z', '+00:00')
+            )
+            if datetime.now(timezone.utc) > expires:
+                profile.thermal_test.status = "none"
+                profile.thermal_test.token = None
+                profile.save()
+                flash('This link has expired.', 'error')
+                return render_template('action_result.html', success=False)
+        except (ValueError, TypeError):
+            pass
+
+    # Apply the action
+    if action == 'approve':
+        profile.thermal_test.status = "approved"
+    else:
+        profile.thermal_test.status = "declined"
+    profile.thermal_test.token = None  # One-time use
+    profile.save()
+
+    audit_logger.log('ThermalTestAction', 'email_link', {
+        'action': action,
+        'house_id': house_id,
+    })
+
+    return render_template('action_result.html',
+                           success=True,
+                           action=action,
+                           action_type='thermal calibration test')
+
+
 # =============================================================================
 # API Routes (for AJAX)
 # =============================================================================

@@ -146,6 +146,16 @@ class EnergySeparationConfig:
 
 
 @dataclass
+class ThermalTestRequest:
+    """Pending thermal inertia test request stored in profile for cross-process communication."""
+    status: str = "none"  # none, pending_approval, approved, declined, in_progress, completed, failed
+    token: Optional[str] = None
+    requested_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    conditions: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class HeatCurveControlConfig:
     """
     State for heat curve control via control_homeside.py.
@@ -193,6 +203,7 @@ class CustomerProfile:
     learned: LearnedParameters = field(default_factory=LearnedParameters)
     energy_separation: EnergySeparationConfig = field(default_factory=EnergySeparationConfig)
     heat_curve_control: HeatCurveControlConfig = field(default_factory=HeatCurveControlConfig)
+    thermal_test: ThermalTestRequest = field(default_factory=ThermalTestRequest)
     variable_overrides: Dict[str, str] = field(default_factory=dict)
 
     _profiles_dir: str = field(default="profiles", repr=False)
@@ -277,6 +288,7 @@ class CustomerProfile:
             learned=learned,
             energy_separation=EnergySeparationConfig(**data.get("energy_separation", {})),
             heat_curve_control=HeatCurveControlConfig(**data.get("heat_curve_control", {})),
+            thermal_test=ThermalTestRequest(**data.get("thermal_test", {})),
             variable_overrides=data.get("variable_overrides", {})
         )
 
@@ -295,8 +307,13 @@ class CustomerProfile:
             "learned": asdict(self.learned),
             "energy_separation": asdict(self.energy_separation),
             "heat_curve_control": asdict(self.heat_curve_control),
+            "thermal_test": asdict(self.thermal_test),
             "variable_overrides": self.variable_overrides
         }
+
+        # Omit thermal_test from JSON if status is "none" (keep profiles clean)
+        if data["thermal_test"]["status"] == "none":
+            del data["thermal_test"]
 
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=2)
@@ -305,7 +322,7 @@ class CustomerProfile:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert profile to dictionary (for GUI/API)."""
-        return {
+        result = {
             "schema_version": self.schema_version,
             "customer_id": self.customer_id,
             "friendly_name": self.friendly_name,
@@ -316,8 +333,14 @@ class CustomerProfile:
             "learned": asdict(self.learned),
             "energy_separation": asdict(self.energy_separation),
             "heat_curve_control": asdict(self.heat_curve_control),
+            "thermal_test": asdict(self.thermal_test),
             "variable_overrides": self.variable_overrides
         }
+
+        if result["thermal_test"]["status"] == "none":
+            del result["thermal_test"]
+
+        return result
 
     def update_learned_params(
         self,
