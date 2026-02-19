@@ -1292,11 +1292,12 @@ def monitor_heating_system(config):
                                             should_update = True
 
                                     # Check 2: indoor temp drifting beyond tolerance
+                                    # Use profile target (more accurate than HomeSide setpoint)
                                     room_temp = extracted_data.get('room_temperature')
-                                    hw_setpoint = extracted_data.get('target_temp_setpoint')
-                                    if room_temp is not None and hw_setpoint is not None:
+                                    target_temp = customer_profile.comfort.target_indoor_temp
+                                    if room_temp is not None and target_temp is not None:
                                         tolerance = customer_profile.comfort.acceptable_deviation
-                                        if abs(room_temp - hw_setpoint) > tolerance:
+                                        if abs(room_temp - target_temp) > tolerance:
                                             should_update = True
 
                                     if should_update:

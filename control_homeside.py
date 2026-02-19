@@ -465,14 +465,18 @@ class HomeSideControl:
         weather_shift = round(shifted_supply - reference_supply, 1)
 
         # --- Component 2: Indoor temp feedback ---
+        # Use profile target (not HomeSide setpoint, which may differ)
         indoor_correction = 0.0
-        if indoor_temp is not None and setpoint is not None:
-            deviation = indoor_temp - setpoint  # positive = too warm
+        target = self.profile.comfort.target_indoor_temp
+        reference_temp = target if target else setpoint
+        if indoor_temp is not None and reference_temp is not None:
+            deviation = indoor_temp - reference_temp  # positive = too warm
             tolerance = self.profile.comfort.acceptable_deviation
             if abs(deviation) > tolerance:
                 # Proportional correction beyond dead band
-                K = 1.5  # °C supply per °C indoor deviation
-                MAX_CORRECTION = 3.0
+                # K=2.5: aggressive enough that 2°C overshoot → -3.75°C supply shift
+                K = 2.5  # °C supply per °C indoor deviation
+                MAX_CORRECTION = 8.0  # Allow large corrections for persistent overshoot
                 sign = 1.0 if deviation > 0 else -1.0
                 indoor_correction = -K * (deviation - sign * tolerance)
                 indoor_correction = max(-MAX_CORRECTION, min(MAX_CORRECTION, indoor_correction))
