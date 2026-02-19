@@ -26,6 +26,13 @@
                     <div class="house-icon">🏠</div>
                     <div class="house-name">{{ house.name }}</div>
                     <div class="house-id">{{ house.id }}</div>
+                    {% if house.thermal_test_status == 'approved' %}
+                    <div style="margin-top: 8px;"><span class="badge badge-info">Thermal test tonight</span></div>
+                    {% elif house.thermal_test_status == 'in_progress' %}
+                    <div style="margin-top: 8px;"><span class="badge badge-warning">Thermal test running</span></div>
+                    {% elif house.thermal_test_status == 'pending_approval' %}
+                    <div style="margin-top: 8px;"><span class="badge badge-info">Thermal test pending</span></div>
+                    {% endif %}
                 </a>
                 <div class="house-links">
                     <a href="{{ url_for('house_graphs', house_id=house.id) }}" class="house-link">📈 Graphs</a>

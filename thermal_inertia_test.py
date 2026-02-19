@@ -36,7 +36,7 @@ COOLDOWN_START_HOUR = 23  # Begin cooldown measurement
 COOLDOWN_END_HOUR = 7     # End of test window
 MAX_WIND_SPEED = 3.0      # m/s
 MIN_OUTDOOR_DELTA = 20.0  # outdoor must be at least setpoint - 20°C
-MAX_FORECAST_SWING = 2.0  # Max outdoor temp change during test window
+MAX_FORECAST_SWING = 3.0  # Max outdoor temp change during test window
 
 # How often to check if a house needs calibration
 CALIBRATION_STALE_MONTHS = 10

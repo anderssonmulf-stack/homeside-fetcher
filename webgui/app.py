@@ -392,7 +392,8 @@ def dashboard():
             profile = CustomerProfile.load(house_id, profiles_dir)
             houses.append({
                 'id': house_id,
-                'name': profile.friendly_name or house_id
+                'name': profile.friendly_name or house_id,
+                'thermal_test_status': profile.thermal_test.status,
             })
         except FileNotFoundError:
             houses.append({'id': house_id, 'name': house_id})
@@ -479,6 +480,7 @@ def house_detail(house_id):
                            changes=changes,
                            realtime=realtime_data,
                            forecast=forecast_data,
+                           thermal_test=profile.thermal_test,
                            current_house_name=profile.friendly_name or house_id)
 
 

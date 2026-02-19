@@ -9,6 +9,20 @@
         <p class="subtitle">{{ profile.customer_id }}</p>
     </div>
 
+    {% if thermal_test.status == 'approved' %}
+    <div class="alert alert-info">
+        <span>Thermal calibration test approved for tonight. Heating starts at 19:00, cooldown measurement 23:00-07:00.</span>
+    </div>
+    {% elif thermal_test.status == 'in_progress' %}
+    <div class="alert alert-warning">
+        <span>Thermal calibration test in progress. The heating curve is under test control — normal adjustments are paused.</span>
+    </div>
+    {% elif thermal_test.status == 'pending_approval' %}
+    <div class="alert alert-info">
+        <span>Thermal calibration test requested — check your email to approve or decline.</span>
+    </div>
+    {% endif %}
+
     <!-- Current Status Card -->
     <div class="status-card">
         <h2>Current Status</h2>
@@ -84,6 +98,17 @@
 
     <div class="detail-grid">
         {% if is_own_house %}
+        {% if thermal_test.status in ['approved', 'in_progress', 'pending_approval'] %}
+        <div class="alert alert-{% if thermal_test.status == 'in_progress' %}warning{% else %}info{% endif %}" style="grid-column: 1 / -1;">
+            {% if thermal_test.status == 'approved' %}
+            <span>Thermal calibration scheduled for tonight (19:00-07:00). Settings changes will take effect after the test.</span>
+            {% elif thermal_test.status == 'in_progress' %}
+            <span>Thermal calibration in progress. Settings changes will take effect after the test completes.</span>
+            {% elif thermal_test.status == 'pending_approval' %}
+            <span>Thermal calibration requested — check your email to approve.</span>
+            {% endif %}
+        </div>
+        {% endif %}
         <!-- Comfort Settings Card (only shown for own house) -->
         <div class="card">
             <h2>Comfort Settings</h2>
