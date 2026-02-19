@@ -1285,22 +1285,24 @@ def monitor_heating_system(config):
                         outdoor = extracted_data.get('outdoor_temperature')
                         if room_temp is not None and outdoor is not None:
                             action = thermal_inertia_test.poll(room_temp, outdoor)
-                            if action == "heat":
-                                # Boost supply to heat up quickly
+                            if action in ("heat", "cooldown"):
+                                # Heat: boost supply to reach target
+                                # Cooldown: reduce supply to minimum
                                 supply = thermal_inertia_test.get_supply_for_phase()
                                 if supply and ml_curve_control._yref_advise_indices:
                                     for pt in range(1, 11):
                                         idx = ml_curve_control._yref_advise_indices.get(pt)
                                         if idx is not None:
                                             api.write_value(f"Cwl.Advise.A[{idx}]", supply)
-                            elif action == "cooldown":
-                                # Reduce supply to minimum
-                                supply = thermal_inertia_test.get_supply_for_phase()
-                                if supply and ml_curve_control._yref_advise_indices:
+                            elif action == "hold":
+                                # Holding phase: write baseline Yref to maintain temp
+                                baseline_yref = ml_curve_control.baseline.get('yref', {})
+                                if baseline_yref and ml_curve_control._yref_advise_indices:
                                     for pt in range(1, 11):
                                         idx = ml_curve_control._yref_advise_indices.get(pt)
-                                        if idx is not None:
-                                            api.write_value(f"Cwl.Advise.A[{idx}]", supply)
+                                        val = baseline_yref.get(str(pt))
+                                        if idx is not None and val is not None:
+                                            api.write_value(f"Cwl.Advise.A[{idx}]", float(val))
                             elif action == "restore":
                                 # Test complete/failed — restore normal ML control
                                 test_state = thermal_inertia_test.state
@@ -1857,11 +1859,11 @@ def monitor_heating_system(config):
                     except Exception:
                         pass
 
-                # Check for approved test — start it at 23:00 local
+                # Check for approved test — start heating at 19:00 local
                 if (not thermal_inertia_test and
                     customer_profile.thermal_test.status == "approved"):
                     local_hour = (now.hour + 1) % 24  # Approximate CET
-                    if local_hour >= 23 or local_hour < 7:
+                    if local_hour >= 19 or local_hour < 7:
                         room_temp = extracted_data.get('room_temperature') if extracted_data else None
                         outdoor = extracted_data.get('outdoor_temperature') if extracted_data else None
                         hw_setpoint = extracted_data.get('target_temp_setpoint', 22.0) if extracted_data else 22.0

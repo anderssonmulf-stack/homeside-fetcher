@@ -27,12 +27,13 @@ from dataclasses import dataclass, field
 # Test parameters
 TEST_OVERSHOOT = 0.5      # Heat to setpoint + this value before turning off
 TEST_DROP = 1.0           # Measure time for this temperature drop (hardcoded)
-TEST_TIMEOUT_HOURS = 8.0  # Max test duration
+TEST_TIMEOUT_HOURS = 12.0 # Max total test duration (19:00-07:00)
 MIN_SUPPLY_TEMP = 15.0    # Minimum supply temp during cooldown phase
 
-# Qualifying conditions for running the test
-TEST_WINDOW_START = 23    # Earliest hour to start (23:00)
-TEST_WINDOW_END = 7       # Latest hour to still be running (07:00)
+# Test schedule (Swedish local hours, approximate CET)
+HEATING_START_HOUR = 19   # Start heating up (after dinner, house already warm)
+COOLDOWN_START_HOUR = 23  # Begin cooldown measurement
+COOLDOWN_END_HOUR = 7     # End of test window
 MAX_WIND_SPEED = 3.0      # m/s
 MIN_OUTDOOR_DELTA = 20.0  # outdoor must be at least setpoint - 20°C
 MAX_FORECAST_SWING = 2.0  # Max outdoor temp change during test window
@@ -44,7 +45,7 @@ CALIBRATION_STALE_MONTHS = 10
 @dataclass
 class TestState:
     """Tracks state of an active thermal inertia test."""
-    phase: str = "idle"  # idle, heating, cooldown, complete, failed
+    phase: str = "idle"  # idle, heating, holding, cooldown, complete, failed
     started_at: Optional[str] = None
     phase_started_at: Optional[str] = None
     initial_indoor_temp: Optional[float] = None
@@ -233,6 +234,7 @@ class ThermalInertiaTest:
         Returns:
             Action for the caller:
             - "heat": boost supply temp to heat up
+            - "hold": maintain current temp (use normal baseline curve)
             - "cooldown": reduce supply to minimum
             - "restore": test complete or failed, restore normal operation
             - None: no test active
@@ -248,17 +250,31 @@ class ThermalInertiaTest:
             if (now - started).total_seconds() > TEST_TIMEOUT_HOURS * 3600:
                 return self._finish_test("timeout", outdoor_temp)
 
-        # Check time window (stop if past 07:00 local)
         local_hour = (now.hour + 1) % 24  # Approximate CET
-        if self.state.phase != "heating" and TEST_WINDOW_END <= local_hour < TEST_WINDOW_START:
+
+        # Check time window (stop cooldown if past 07:00 local)
+        if self.state.phase == "cooldown" and COOLDOWN_END_HOUR <= local_hour < HEATING_START_HOUR:
             return self._finish_test("window_closed", outdoor_temp)
 
         if self.state.phase == "heating":
             target_heat = self.state.setpoint + TEST_OVERSHOOT
             if current_indoor >= target_heat:
+                # Target reached — hold until 23:00
+                self.state.phase = "holding"
+                self.state.peak_indoor_temp = current_indoor
+                self.logger.info(
+                    f"Thermal test: target reached ({current_indoor:.1f}°C), "
+                    f"holding until {COOLDOWN_START_HOUR}:00"
+                )
+                return "hold"
+            return "heat"
+
+        elif self.state.phase == "holding":
+            # Wait for 23:00 to start cooldown
+            if local_hour >= COOLDOWN_START_HOUR or local_hour < COOLDOWN_END_HOUR:
                 self._enter_cooldown(current_indoor, outdoor_temp)
                 return "cooldown"
-            return "heat"
+            return "hold"
 
         elif self.state.phase == "cooldown":
             # Record reading
@@ -393,8 +409,9 @@ class ThermalInertiaTest:
         Get the supply temp to write for the current test phase.
 
         Returns:
-            Supply temp to set, or None if no test active.
+            Supply temp to set, or None if caller should use normal curve.
             During heating: setpoint + 10°C (boost)
+            During holding: None (use normal baseline curve)
             During cooldown: MIN_SUPPLY_TEMP (15°C)
         """
         if self.state.phase == "heating":
@@ -402,11 +419,12 @@ class ThermalInertiaTest:
             return (self.state.setpoint or 22.0) + 10.0
         elif self.state.phase == "cooldown":
             return MIN_SUPPLY_TEMP
+        # Holding phase: return None → caller uses baseline curve
         return None
 
     @property
     def is_active(self) -> bool:
-        return self.state.phase in ("heating", "cooldown")
+        return self.state.phase in ("heating", "holding", "cooldown")
 
     def abort(self, reason: str = "manual") -> None:
         """Abort an active test."""
@@ -541,10 +559,10 @@ def _send_thermal_test_email(profile, token: str, conditions: Dict,
 
         <p>The test will:</p>
         <ol>
-            <li>Heat the house slightly above setpoint (+0.5°C)</li>
-            <li>Reduce heating to minimum</li>
-            <li>Measure how quickly the house cools (1°C drop)</li>
-            <li>Restore normal heating automatically</li>
+            <li>19:00 — Heat the house slightly above setpoint (+0.5°C)</li>
+            <li>23:00 — Reduce heating to minimum</li>
+            <li>23:00-07:00 — Measure how quickly the house cools (1°C drop)</li>
+            <li>Restore normal heating automatically when done</li>
         </ol>
 
         <table style="border-collapse: collapse; margin: 20px 0;">
