@@ -210,6 +210,27 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="distribution_type">Heat Distribution</label>
+                    <select id="distribution_type" name="distribution_type" {% if not can_edit %}disabled{% endif %}>
+                        <option value="floor" {% if profile.heating_system.distribution_type == 'floor' %}selected{% endif %}>Floor heating</option>
+                        <option value="radiator" {% if profile.heating_system.distribution_type == 'radiator' %}selected{% endif %}>Radiators</option>
+                        <option value="ventilation" {% if profile.heating_system.distribution_type == 'ventilation' %}selected{% endif %}>Ventilation (FTX)</option>
+                        <option value="floor,radiator" {% if profile.heating_system.distribution_type == 'floor,radiator' %}selected{% endif %}>Floor + Radiators</option>
+                    </select>
+                    <small class="help-text">Affects thermal test calibration thresholds.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="has_power_meter" value="true"
+                               {% if profile.heating_system.has_power_meter %}checked{% endif %}
+                               {% if not can_edit %}disabled{% endif %}>
+                        Has primary power meter (dh_power)
+                    </label>
+                    <small class="help-text">If available, used for precise thermal test calibration.</small>
+                </div>
+
+                <div class="form-group">
                     <label for="meter_ids">Energy Meter IDs</label>
                     <input type="text" id="meter_ids" name="meter_ids"
                            value="{{ profile.meter_ids|join(', ') if profile.meter_ids else '' }}"

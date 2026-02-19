@@ -1284,7 +1284,12 @@ def monitor_heating_system(config):
                         room_temp = extracted_data.get('room_temperature')
                         outdoor = extracted_data.get('outdoor_temperature')
                         if room_temp is not None and outdoor is not None:
-                            action = thermal_inertia_test.poll(room_temp, outdoor)
+                            action = thermal_inertia_test.poll(
+                                room_temp, outdoor,
+                                dh_power=extracted_data.get('dh_power'),
+                                supply_temp=extracted_data.get('supply_temp'),
+                                return_temp=extracted_data.get('return_temp'),
+                            )
                             if action in ("heat", "cooldown"):
                                 # Heat: boost supply to reach target
                                 # Cooldown: reduce supply to minimum

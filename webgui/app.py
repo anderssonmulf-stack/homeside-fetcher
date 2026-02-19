@@ -1587,6 +1587,23 @@ def update_house_settings(house_id):
         }
         profile.building.description = new_description
 
+    # Update heating system settings
+    new_dist_type = request.form.get('distribution_type', '').strip()
+    if new_dist_type and new_dist_type != profile.heating_system.distribution_type:
+        changes['distribution_type'] = {
+            'old': profile.heating_system.distribution_type,
+            'new': new_dist_type
+        }
+        profile.heating_system.distribution_type = new_dist_type
+
+    new_has_power = request.form.get('has_power_meter') == 'true'
+    if new_has_power != profile.heating_system.has_power_meter:
+        changes['has_power_meter'] = {
+            'old': profile.heating_system.has_power_meter,
+            'new': new_has_power
+        }
+        profile.heating_system.has_power_meter = new_has_power
+
     # Update comfort settings
     new_target = request.form.get('target_indoor_temp', type=float)
     if new_target and new_target != profile.comfort.target_indoor_temp:

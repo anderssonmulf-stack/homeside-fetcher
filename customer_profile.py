@@ -39,6 +39,10 @@ class HeatingSystemConfig:
     """Heating system characteristics."""
     response_time_minutes: int = 30
     max_supply_temp: float = 55.0
+    # Distribution type(s): "floor", "radiator", "ventilation", or comma-separated combo
+    distribution_type: str = "floor"
+    # Whether primary-side power is available (dh_power field from HomeSide)
+    has_power_meter: bool = False
 
 
 @dataclass
