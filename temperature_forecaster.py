@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field, asdict
 
 from customer_profile import CustomerProfile
+from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
 
 
 @dataclass
@@ -125,7 +126,10 @@ class TemperatureForecaster:
         current_indoor: float,
         current_outdoor: float,
         weather_forecast: List[Dict[str, Any]],
-        heat_curve=None
+        heat_curve=None,
+        weather_model: Optional[SimpleWeatherModel] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
     ) -> List[ForecastPoint]:
         """
         Generate temperature forecasts for the next 24 hours.
@@ -135,6 +139,9 @@ class TemperatureForecaster:
             current_outdoor: Current outdoor temperature
             weather_forecast: List of hourly forecasts with 'time' and 'temp' keys
             heat_curve: Optional HeatCurveController for supply temp forecasts
+            weather_model: Optional SimpleWeatherModel for effective temp calculation
+            latitude: Location latitude (for solar calculations)
+            longitude: Location longitude (for solar calculations)
 
         Returns:
             List of ForecastPoint objects ready for InfluxDB and GUI
@@ -170,7 +177,7 @@ class TemperatureForecaster:
 
             # 2. Supply temperature forecasts (from heat curve)
             if heat_curve:
-                baseline_supply, ml_supply = heat_curve.get_supply_temps_for_outdoor(
+                baseline_supply, _ = heat_curve.get_supply_temps_for_outdoor(
                     forecast_outdoor
                 )
                 if baseline_supply is not None:
@@ -180,7 +187,31 @@ class TemperatureForecaster:
                         value=baseline_supply,
                         lead_time_hours=round(lead_time_hours, 1)
                     ))
-                if ml_supply is not None:
+                    # ML supply: use effective temperature (accounts for wind chill
+                    # and solar gain) to look up the baseline curve. This predicts
+                    # what the ML controller will actually write when conditions
+                    # change — e.g., sunny afternoon → effective temp warmer →
+                    # lower supply needed.
+                    ml_supply = baseline_supply  # fallback: same as baseline
+                    if weather_model:
+                        try:
+                            conditions = WeatherConditions(
+                                timestamp=forecast_time,
+                                temperature=forecast_outdoor,
+                                wind_speed=forecast.get('wind_speed', 3.0),
+                                humidity=forecast.get('humidity', 50.0),
+                                cloud_cover=forecast.get('cloud_cover', 8.0),
+                                latitude=latitude,
+                                longitude=longitude,
+                            )
+                            eff = weather_model.effective_temperature(conditions)
+                            eff_supply, _ = heat_curve.get_supply_temps_for_outdoor(
+                                eff.effective_temp
+                            )
+                            if eff_supply is not None:
+                                ml_supply = eff_supply
+                        except Exception:
+                            pass  # Fall back to baseline
                     forecast_points.append(ForecastPoint(
                         timestamp=forecast_time,
                         forecast_type='supply_temp_ml',

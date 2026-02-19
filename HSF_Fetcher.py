@@ -161,7 +161,10 @@ def generate_forecast_points(
     current_indoor: float,
     current_outdoor: float,
     logger,
-    forecast_hours: int = 72
+    forecast_hours: int = 72,
+    weather_model=None,
+    latitude: float = None,
+    longitude: float = None,
 ) -> list:
     """
     Generate forecast points for visualization.
@@ -169,7 +172,7 @@ def generate_forecast_points(
     Creates hourly forecast data for the configured forecast horizon:
     - outdoor_temp: From SMHI weather forecast
     - supply_temp_baseline: Expected supply temp from original heat curve
-    - supply_temp_ml: Expected supply temp from ML-adjusted curve
+    - supply_temp_ml: Expected supply temp from ML-adjusted curve (uses effective temp)
     - indoor_temp: Predicted indoor temp using thermal analysis
 
     Args:
@@ -179,11 +182,15 @@ def generate_forecast_points(
         current_indoor: Current indoor temperature
         current_outdoor: Current outdoor temperature
         logger: Logger instance
+        weather_model: Optional SimpleWeatherModel for effective temp
+        latitude: Location latitude (for solar calculations)
+        longitude: Location longitude (for solar calculations)
 
     Returns:
         List of forecast point dictionaries ready for InfluxDB
     """
     from datetime import datetime, timedelta, timezone
+    from energy_models.weather_energy_model import WeatherConditions
 
     forecast_points = []
 
@@ -222,7 +229,7 @@ def generate_forecast_points(
 
         # 2. Supply temperature forecasts (from heat curve)
         if heat_curve:
-            baseline_supply, current_supply = heat_curve.get_supply_temps_for_outdoor(
+            baseline_supply, _ = heat_curve.get_supply_temps_for_outdoor(
                 forecast_outdoor
             )
             if baseline_supply is not None:
@@ -231,11 +238,31 @@ def generate_forecast_points(
                     'forecast_type': 'supply_temp_baseline',
                     'value': baseline_supply
                 })
-            if current_supply is not None:
+                # ML supply: use effective temperature from weather model
+                ml_supply = baseline_supply
+                if weather_model:
+                    try:
+                        conditions = WeatherConditions(
+                            timestamp=forecast_time,
+                            temperature=forecast_outdoor,
+                            wind_speed=forecast.get('wind_speed', 3.0),
+                            humidity=forecast.get('humidity', 50.0),
+                            cloud_cover=forecast.get('cloud_cover', 8.0),
+                            latitude=latitude,
+                            longitude=longitude,
+                        )
+                        eff = weather_model.effective_temperature(conditions)
+                        eff_supply, _ = heat_curve.get_supply_temps_for_outdoor(
+                            eff.effective_temp
+                        )
+                        if eff_supply is not None:
+                            ml_supply = eff_supply
+                    except Exception:
+                        pass
                 forecast_points.append({
                     'timestamp': forecast_time,
                     'forecast_type': 'supply_temp_ml',
-                    'value': current_supply
+                    'value': ml_supply
                 })
 
         # 3. Indoor temperature forecast (using thermal prediction)
@@ -1000,6 +1027,9 @@ def monitor_heating_system(config):
     # Track ML curve control timing
     last_ml_curve_update = None
 
+    # Weather model (created when ML curve control is active)
+    weather_model = None
+
     # Thermal inertia test
     thermal_inertia_test = None
     last_thermal_test_check = None  # Daily check for qualifying conditions
@@ -1562,7 +1592,10 @@ def monitor_heating_system(config):
                                             current_indoor=extracted_data.get('room_temperature', 22.0),
                                             current_outdoor=extracted_data.get('outdoor_temperature', 0.0),
                                             weather_forecast=hourly_forecast,
-                                            heat_curve=heat_curve
+                                            heat_curve=heat_curve,
+                                            weather_model=weather_model,
+                                            latitude=config.get('latitude'),
+                                            longitude=config.get('longitude'),
                                         )
                                         if forecast_points:
                                             # Convert to InfluxDB format
@@ -1623,7 +1656,10 @@ def monitor_heating_system(config):
                                         current_indoor=extracted_data.get('room_temperature', 22.0),
                                         current_outdoor=extracted_data.get('outdoor_temperature', 0.0),
                                         logger=logger,
-                                        forecast_hours=forecast_hours
+                                        forecast_hours=forecast_hours,
+                                        weather_model=weather_model,
+                                        latitude=config.get('latitude'),
+                                        longitude=config.get('longitude'),
                                     )
                                     if forecast_points:
                                         influx.write_forecast_points(forecast_points)
