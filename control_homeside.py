@@ -66,6 +66,8 @@ class HomeSideControl:
         # Discovered index mappings (populated by read_baseline or _discover_indices)
         self._y_advise_indices: Dict[int, int] = {}  # point_num -> Cwl.Advise.A index for Y values
         self._yref_advise_indices: Dict[int, int] = {}  # point_num -> Cwl.Advise.A index for Yref
+        self._adaption_advise_idx: Optional[int] = None  # Cwl.Advise.A index for Adaption toggle
+        self._setpoint_advise_idx: Optional[int] = None  # Cwl.Advise.A index for SetPoint
 
     def _parse_variables(self, raw_data):
         """Parse get_heating_data() response into lookups by short name and path."""
@@ -141,8 +143,19 @@ class HomeSideControl:
                 if not curve:
                     return None
 
-            # Extract adaption settings
+            # Extract adaption settings and discover Adaption/SetPoint indices
             adaption = short_lookup.get('KU_VS1_GT_TILL_1_Adaption')
+            setpoint = short_lookup.get('KU_VS1_GT_TILL_1_SetPoint')
+
+            for var in raw_data.get('variables', []):
+                short_name = var.get('variable', '').split('.')[-1]
+                path = var.get('path', '')
+                if path.startswith('Cwl.Advise.A['):
+                    advise_idx = int(path.replace('Cwl.Advise.A[', '').replace(']', ''))
+                    if short_name == 'KU_VS1_GT_TILL_1_Adaption':
+                        self._adaption_advise_idx = advise_idx
+                    elif short_name == 'KU_VS1_GT_TILL_1_SetPoint':
+                        self._setpoint_advise_idx = advise_idx
 
             baseline = {
                 'curve': curve,
@@ -150,6 +163,7 @@ class HomeSideControl:
                 'adaption': bool(adaption) if adaption is not None else None,
                 'adapt_time': short_lookup.get('KU_VS1_GT_TILL_1_AdaptTime'),
                 'adapt_delay': short_lookup.get('KU_VS1_GT_TILL_1_AdaptDelay'),
+                'setpoint': float(setpoint) if setpoint is not None else None,
             }
 
             self.logger.info(
@@ -514,7 +528,16 @@ class HomeSideControl:
             self.logger.error("Failed to write any Yref points — aborting ML control entry")
             return False
 
-        # 4. Update profile state
+        # 4. Disable HomeSide adaptation — it fights our Yref writes
+        #    by drifting the SetPoint and CurveAdaptation_Y values
+        if self._adaption_advise_idx is not None and baseline.get('adaption'):
+            path = f"Cwl.Advise.A[{self._adaption_advise_idx}]"
+            if self.api.write_value(path, False):
+                self.logger.info(f"Disabled HomeSide adaptation ({path})")
+            else:
+                self.logger.warning(f"Failed to disable adaptation ({path})")
+
+        # 5. Update profile state
         ctrl.in_control = True
         ctrl.entered_at = datetime.now(timezone.utc).isoformat()
         ctrl.reason = "ML curve control"
@@ -592,6 +615,22 @@ class HomeSideControl:
             else:
                 self.logger.error(f"Failed to restore Yref {path} = {supply_temp}")
                 fail_count += 1
+
+        # Re-enable HomeSide adaptation if it was on before we took control
+        if self._adaption_advise_idx is not None and baseline.get('adaption'):
+            path = f"Cwl.Advise.A[{self._adaption_advise_idx}]"
+            if self.api.write_value(path, True):
+                self.logger.info(f"Re-enabled HomeSide adaptation ({path})")
+            else:
+                self.logger.warning(f"Failed to re-enable adaptation ({path})")
+
+        # Restore SetPoint if it was saved in baseline
+        if self._setpoint_advise_idx is not None and baseline.get('setpoint') is not None:
+            path = f"Cwl.Advise.A[{self._setpoint_advise_idx}]"
+            if self.api.write_value(path, baseline['setpoint']):
+                self.logger.info(f"Restored SetPoint to {baseline['setpoint']} ({path})")
+            else:
+                self.logger.warning(f"Failed to restore SetPoint ({path})")
 
         # Update profile state
         ctrl.in_control = False
@@ -724,10 +763,9 @@ class HomeSideControl:
             status['baseline_points'] = len(ctrl.baseline.get('curve', {}))
         return status
 
-    # NOTE: Writing to KU_VS1_GT_TILL_1_Adaption causes API timeouts.
-    # Only Cwl.Advise.A[*] paths work for writes. The adaption toggle
-    # may need a different mechanism (e.g. HomeSide web UI) or a yet-
-    # undiscovered write path. For now, we control only the curve values.
+    # NOTE: Writing to KU_VS1_GT_TILL_1_Adaption by named path causes API timeouts,
+    # but writing via Cwl.Advise.A[idx] works. ML control now disables adaptation
+    # on enter and re-enables on exit to prevent SetPoint drift.
 
 
 def format_curve(curve: Dict[str, float]) -> str:
