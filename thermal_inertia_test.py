@@ -3,13 +3,22 @@
 Thermal Inertia Test
 
 Measures a building's thermal time constant (τ) by:
-1. Heating to setpoint + 0.5°C
-2. Turning off heating (minimum supply)
-3. Measuring how long it takes for indoor temp to drop 1.0°C
-4. Calculating τ from Newton's law of cooling
+1. If house is below setpoint: preheat to setpoint + 0.5°C first
+2. Lowering Yref to minimum supply temperature
+3. Waiting for heating to actually stop (secondary-side delta T)
+4. Recording starting temperature when heating confirmed off
+5. Measuring how long it takes for indoor temp to drop 1.0°C
+6. Calculating τ from Newton's law of cooling
 
-The test runs at night (23:00–07:00) under stable conditions and requires
-explicit user approval via email confirmation link.
+If the house is already at setpoint (e.g., sunny day), preheating is
+skipped and the test goes straight to lowering Yref.
+
+DHW events cause primary-side power spikes, so power meter is NOT used
+for settling detection. Only secondary-side supply-return delta T is
+reliable for confirming space heating is off.
+
+The test runs at night under stable conditions and requires explicit
+user approval via email confirmation link.
 """
 
 import math
@@ -25,20 +34,20 @@ from dataclasses import dataclass, field
 
 
 # Test parameters
-TEST_OVERSHOOT = 0.5      # Heat to setpoint + this value before turning off
-TEST_DROP = 1.0           # Measure time for this temperature drop (hardcoded)
-TEST_TIMEOUT_HOURS = 12.0 # Max total test duration (19:00-07:00)
+TEST_OVERSHOOT = 0.5      # Heat to setpoint + this buffer before turning off
+TEST_DROP = 1.0           # Measure time for this temperature drop
+TEST_TIMEOUT_HOURS = 12.0 # Max total test duration
 MIN_SUPPLY_TEMP = 15.0    # Minimum supply temp during cooldown phase
 
 # Test schedule (Swedish local hours, approximate CET)
-HEATING_START_HOUR = 19   # Start heating up (after dinner, house already warm)
-COOLDOWN_START_HOUR = 23  # Begin cooldown measurement
-COOLDOWN_END_HOUR = 7     # End of test window
+TEST_START_HOUR = 19      # Start test (lower Yref to minimum)
+TEST_END_HOUR = 7         # End of test window
 
-# Cooldown verification: confirm heating is actually off before measuring
-POWER_THRESHOLD_KW = 0.2      # If power meter available: < 200W = heating off
+# Settling: confirm heating is actually off before measuring
 SETTLING_TIMEOUT_MINUTES = 60  # Max time to wait for heating to settle
 # Delta T thresholds per distribution type (supply - return below this = no heating)
+# NOTE: Power meter NOT used — DHW events cause primary-side spikes even when
+# space heating is off, making power an unreliable indicator.
 DELTA_T_THRESHOLDS = {
     'floor': 1.0,         # Floor heating: small delta is normal, need < 1°C
     'radiator': 3.0,      # Radiators: larger normal delta, < 3°C = off
@@ -55,12 +64,11 @@ CALIBRATION_STALE_MONTHS = 10
 @dataclass
 class TestState:
     """Tracks state of an active thermal inertia test."""
-    phase: str = "idle"  # idle, heating, holding, settling, cooldown, complete, failed
+    phase: str = "idle"  # idle, heating, settling, cooldown, complete, failed
     started_at: Optional[str] = None
     phase_started_at: Optional[str] = None
     settling_started_at: Optional[str] = None  # When Yref was set to minimum
     initial_indoor_temp: Optional[float] = None
-    peak_indoor_temp: Optional[float] = None
     cooldown_start_temp: Optional[float] = None
     target_drop_temp: Optional[float] = None
     outdoor_temp_at_start: Optional[float] = None
@@ -172,7 +180,8 @@ class ThermalInertiaTest:
         """
         Start the thermal inertia test.
 
-        Phase 1: Heat to setpoint + TEST_OVERSHOOT
+        If the house is already at/above setpoint, skip straight to settling
+        (lower Yref to minimum). Otherwise, preheat to setpoint + buffer first.
 
         Args:
             current_indoor: Current indoor temperature
@@ -180,23 +189,44 @@ class ThermalInertiaTest:
             outdoor_temp: Current outdoor temperature
 
         Returns:
-            Initial phase: "heating" or "cooldown" if already warm enough
+            "heat" if preheating needed, "cooldown" if skipping to settling
         """
-        self.state = TestState(
-            phase="heating",
-            started_at=datetime.now(timezone.utc).isoformat(),
-            phase_started_at=datetime.now(timezone.utc).isoformat(),
-            initial_indoor_temp=current_indoor,
-            setpoint=setpoint,
-            outdoor_temp_at_start=outdoor_temp,
-        )
-
+        now = datetime.now(timezone.utc)
         target_heat = setpoint + TEST_OVERSHOOT
-        self.logger.info(
-            f"Thermal inertia test started for {self.profile.customer_id}: "
-            f"indoor={current_indoor:.1f}°C, target={target_heat:.1f}°C, "
-            f"outdoor={outdoor_temp:.1f}°C"
-        )
+
+        if current_indoor >= setpoint:
+            # Already warm enough — skip straight to settling
+            self.state = TestState(
+                phase="settling",
+                started_at=now.isoformat(),
+                phase_started_at=now.isoformat(),
+                settling_started_at=now.isoformat(),
+                initial_indoor_temp=current_indoor,
+                setpoint=setpoint,
+                outdoor_temp_at_start=outdoor_temp,
+            )
+            self.logger.info(
+                f"Thermal inertia test started for {self.profile.customer_id}: "
+                f"indoor={current_indoor:.1f}°C >= setpoint {setpoint:.1f}°C "
+                f"— skipping preheat, lowering Yref"
+            )
+            initial_action = "cooldown"
+        else:
+            # Need to preheat first
+            self.state = TestState(
+                phase="heating",
+                started_at=now.isoformat(),
+                phase_started_at=now.isoformat(),
+                initial_indoor_temp=current_indoor,
+                setpoint=setpoint,
+                outdoor_temp_at_start=outdoor_temp,
+            )
+            self.logger.info(
+                f"Thermal inertia test started for {self.profile.customer_id}: "
+                f"indoor={current_indoor:.1f}°C < setpoint {setpoint:.1f}°C "
+                f"— preheating to {target_heat:.1f}°C first"
+            )
+            initial_action = "heat"
 
         if self.seq_logger:
             self.seq_logger.log(
@@ -208,34 +238,28 @@ class ThermalInertiaTest:
                     'IndoorTemp': round(current_indoor, 1),
                     'SetPoint': setpoint,
                     'OutdoorTemp': round(outdoor_temp, 1),
-                    'TargetHeatTemp': round(target_heat, 1),
+                    'Phase': self.state.phase,
                 }
             )
 
-        # If already warm enough, skip straight to cooldown
-        if current_indoor >= target_heat:
-            return self._enter_cooldown(current_indoor, outdoor_temp)
-
-        return "heating"
+        return initial_action
 
     def _enter_cooldown(self, current_indoor: float, outdoor_temp: float) -> str:
-        """Transition to cooldown phase."""
+        """Transition to cooldown phase — T_start recorded here."""
         self.state.phase = "cooldown"
         self.state.phase_started_at = datetime.now(timezone.utc).isoformat()
-        self.state.peak_indoor_temp = current_indoor
         self.state.cooldown_start_temp = current_indoor
         self.state.target_drop_temp = current_indoor - TEST_DROP
         self.state.readings = []
 
         self.logger.info(
-            f"Thermal test cooldown started: peak={current_indoor:.1f}°C, "
-            f"target={self.state.target_drop_temp:.1f}°C"
+            f"Thermal test cooldown started: T_start={current_indoor:.1f}°C, "
+            f"target={self.state.target_drop_temp:.1f}°C (drop {TEST_DROP}°C)"
         )
 
         return "cooldown"
 
     def poll(self, current_indoor: float, outdoor_temp: float,
-             dh_power: Optional[float] = None,
              supply_temp: Optional[float] = None,
              return_temp: Optional[float] = None) -> Optional[str]:
         """
@@ -244,14 +268,12 @@ class ThermalInertiaTest:
         Args:
             current_indoor: Current indoor temperature
             outdoor_temp: Current outdoor temperature
-            dh_power: District heating power in kW (if available)
             supply_temp: Actual supply temperature (secondary side)
             return_temp: Actual return temperature (secondary side)
 
         Returns:
             Action for the caller:
-            - "heat": boost supply temp to heat up
-            - "hold": maintain current temp (use normal baseline curve)
+            - "heat": boost supply temp (preheating if house is cold)
             - "cooldown": reduce supply to minimum (settling + measuring)
             - "restore": test complete or failed, restore normal operation
             - None: no test active
@@ -269,43 +291,36 @@ class ThermalInertiaTest:
 
         local_hour = (now.hour + 1) % 24  # Approximate CET
 
-        # Check time window (stop if past 07:00 local during cooldown/settling)
-        if self.state.phase in ("settling", "cooldown") and COOLDOWN_END_HOUR <= local_hour < HEATING_START_HOUR:
+        # Check time window (stop if past 07:00 local)
+        if TEST_END_HOUR <= local_hour < TEST_START_HOUR:
             return self._finish_test("window_closed", outdoor_temp)
 
         if self.state.phase == "heating":
             target_heat = self.state.setpoint + TEST_OVERSHOOT
             if current_indoor >= target_heat:
-                # Target reached — hold until 23:00
-                self.state.phase = "holding"
-                self.state.peak_indoor_temp = current_indoor
+                # Target reached — go straight to settling (lower Yref)
+                now_iso = now.isoformat()
+                self.state.phase = "settling"
+                self.state.phase_started_at = now_iso
+                self.state.settling_started_at = now_iso
                 self.logger.info(
-                    f"Thermal test: target reached ({current_indoor:.1f}°C), "
-                    f"holding until {COOLDOWN_START_HOUR}:00"
+                    f"Thermal test: preheat done ({current_indoor:.1f}°C >= "
+                    f"{target_heat:.1f}°C), lowering Yref"
                 )
-                return "hold"
+                return "cooldown"
             return "heat"
 
-        elif self.state.phase == "holding":
-            # Wait for 23:00 to start settling (Yref → minimum)
-            if local_hour >= COOLDOWN_START_HOUR or local_hour < COOLDOWN_END_HOUR:
-                self.state.phase = "settling"
-                self.state.settling_started_at = now.isoformat()
-                self.state.phase_started_at = now.isoformat()
-                self.logger.info(
-                    "Thermal test: settling phase — waiting for heating to stop"
-                )
-                return "cooldown"  # Same action: write MIN_SUPPLY_TEMP
-            return "hold"
-
         elif self.state.phase == "settling":
-            # Wait for heating to actually stop before starting measurement
-            heating_off = self._is_heating_off(dh_power, supply_temp, return_temp)
+            # Wait for heating to actually stop before starting measurement.
+            # Only use secondary-side delta T — primary power is unreliable
+            # because DHW events cause spikes even when space heating is off.
+            heating_off = self._is_heating_off(supply_temp, return_temp)
 
             if heating_off:
                 self.logger.info(
                     f"Thermal test: heating confirmed off — starting measurement "
-                    f"(indoor={current_indoor:.1f}°C)"
+                    f"(indoor={current_indoor:.1f}°C, "
+                    f"delta_t={round(supply_temp - return_temp, 1) if supply_temp and return_temp else '?'})"
                 )
                 self._enter_cooldown(current_indoor, outdoor_temp)
                 return "cooldown"
@@ -319,8 +334,8 @@ class ThermalInertiaTest:
                 if settle_minutes > SETTLING_TIMEOUT_MINUTES:
                     self.logger.warning(
                         f"Thermal test: heating didn't stop within {SETTLING_TIMEOUT_MINUTES} min, "
-                        f"starting measurement anyway (power={dh_power}, "
-                        f"delta_t={round(supply_temp - return_temp, 1) if supply_temp and return_temp else '?'})"
+                        f"starting measurement anyway "
+                        f"(delta_t={round(supply_temp - return_temp, 1) if supply_temp and return_temp else '?'})"
                     )
                     self._enter_cooldown(current_indoor, outdoor_temp)
                     return "cooldown"
@@ -455,21 +470,21 @@ class ThermalInertiaTest:
 
         return "restore"
 
-    def _is_heating_off(self, dh_power: Optional[float],
-                        supply_temp: Optional[float],
+    def _is_heating_off(self, supply_temp: Optional[float],
                         return_temp: Optional[float]) -> bool:
         """
-        Check if heating has actually stopped.
+        Check if space heating has actually stopped using secondary-side delta T.
 
-        Uses primary power if available (most accurate), otherwise
-        falls back to supply-return delta T with thresholds that
-        depend on the distribution type (floor/radiator/ventilation).
+        NOTE: Primary-side power meter is NOT used here because DHW (domestic
+        hot water) events cause power spikes even when space heating is off.
+        Secondary-side supply-return delta T is the reliable indicator since
+        DHW uses a separate circuit.
+
+        Thresholds depend on distribution type:
+        - Floor heating: < 1°C (normally small delta)
+        - Radiators: < 3°C (normally large delta)
+        - Ventilation: < 2°C
         """
-        # Method 1: Primary power meter (most reliable)
-        if self.profile.heating_system.has_power_meter and dh_power is not None:
-            return dh_power < POWER_THRESHOLD_KW
-
-        # Method 2: Supply-return delta T
         if supply_temp is not None and return_temp is not None:
             delta_t = abs(supply_temp - return_temp)
             dist_type = self.profile.heating_system.distribution_type.split(',')[0].strip()
@@ -484,22 +499,18 @@ class ThermalInertiaTest:
         Get the supply temp to write for the current test phase.
 
         Returns:
-            Supply temp to set, or None if caller should use normal curve.
             During heating: setpoint + 10°C (boost)
-            During holding: None (use normal baseline curve)
-            During cooldown: MIN_SUPPLY_TEMP (15°C)
+            During settling/cooldown: MIN_SUPPLY_TEMP (15°C)
         """
         if self.state.phase == "heating":
-            # Boost: set supply high to heat up quickly
             return (self.state.setpoint or 22.0) + 10.0
         elif self.state.phase in ("settling", "cooldown"):
             return MIN_SUPPLY_TEMP
-        # Holding phase: return None → caller uses baseline curve
         return None
 
     @property
     def is_active(self) -> bool:
-        return self.state.phase in ("heating", "holding", "settling", "cooldown")
+        return self.state.phase in ("heating", "settling", "cooldown")
 
     def abort(self, reason: str = "manual") -> None:
         """Abort an active test."""
@@ -634,9 +645,9 @@ def _send_thermal_test_email(profile, token: str, conditions: Dict,
 
         <p>The test will:</p>
         <ol>
-            <li>19:00 — Heat the house slightly above setpoint (+0.5°C)</li>
-            <li>23:00 — Reduce heating to minimum</li>
-            <li>23:00-07:00 — Measure how quickly the house cools (1°C drop)</li>
+            <li>19:00 — If below setpoint, preheat first. Otherwise reduce heating immediately.</li>
+            <li>Wait for heating to fully stop (verified by supply-return delta T)</li>
+            <li>Measure how quickly the house cools down (1°C drop)</li>
             <li>Restore normal heating automatically when done</li>
         </ol>
 

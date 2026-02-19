@@ -1286,12 +1286,11 @@ def monitor_heating_system(config):
                         if room_temp is not None and outdoor is not None:
                             action = thermal_inertia_test.poll(
                                 room_temp, outdoor,
-                                dh_power=extracted_data.get('dh_power'),
                                 supply_temp=extracted_data.get('supply_temp'),
                                 return_temp=extracted_data.get('return_temp'),
                             )
                             if action in ("heat", "cooldown"):
-                                # Heat: boost supply to reach target
+                                # Heat: boost supply to reach setpoint
                                 # Cooldown: reduce supply to minimum
                                 supply = thermal_inertia_test.get_supply_for_phase()
                                 if supply and ml_curve_control._yref_advise_indices:
@@ -1299,15 +1298,6 @@ def monitor_heating_system(config):
                                         idx = ml_curve_control._yref_advise_indices.get(pt)
                                         if idx is not None:
                                             api.write_value(f"Cwl.Advise.A[{idx}]", supply)
-                            elif action == "hold":
-                                # Holding phase: write baseline Yref to maintain temp
-                                baseline_yref = ml_curve_control.baseline.get('yref', {})
-                                if baseline_yref and ml_curve_control._yref_advise_indices:
-                                    for pt in range(1, 11):
-                                        idx = ml_curve_control._yref_advise_indices.get(pt)
-                                        val = baseline_yref.get(str(pt))
-                                        if idx is not None and val is not None:
-                                            api.write_value(f"Cwl.Advise.A[{idx}]", float(val))
                             elif action == "restore":
                                 # Test complete/failed — restore normal ML control
                                 test_state = thermal_inertia_test.state
