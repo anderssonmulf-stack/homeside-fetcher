@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 TEST_OVERSHOOT = 0.5      # Heat to setpoint + this buffer before turning off
 TEST_DROP = 1.0           # Measure time for this temperature drop
 TEST_TIMEOUT_HOURS = 12.0 # Max total test duration
-MIN_SUPPLY_TEMP = 15.0    # Minimum supply temp during cooldown phase
+MIN_SUPPLY_TEMP = 22.0    # Minimum supply temp during cooldown phase (near room temp)
 
 # Test schedule (Swedish local hours, approximate CET)
 TEST_START_HOUR = 19      # Start test (lower Yref to minimum)
@@ -261,7 +261,8 @@ class ThermalInertiaTest:
 
     def poll(self, current_indoor: float, outdoor_temp: float,
              supply_temp: Optional[float] = None,
-             return_temp: Optional[float] = None) -> Optional[str]:
+             return_temp: Optional[float] = None,
+             dh_power: Optional[float] = None) -> Optional[str]:
         """
         Called each poll cycle during an active test.
 
@@ -270,6 +271,7 @@ class ThermalInertiaTest:
             outdoor_temp: Current outdoor temperature
             supply_temp: Actual supply temperature (secondary side)
             return_temp: Actual return temperature (secondary side)
+            dh_power: District heating power in kW (if available from meter)
 
         Returns:
             Action for the caller:
@@ -343,11 +345,14 @@ class ThermalInertiaTest:
             return "cooldown"  # Keep writing MIN_SUPPLY_TEMP
 
         elif self.state.phase == "cooldown":
-            # Record reading
+            # Record reading (include supply/return/power for energy compensation)
             self.state.readings.append({
                 'timestamp': now.isoformat(),
                 'indoor_temp': round(current_indoor, 2),
                 'outdoor_temp': round(outdoor_temp, 2),
+                'supply_temp': round(supply_temp, 2) if supply_temp is not None else None,
+                'return_temp': round(return_temp, 2) if return_temp is not None else None,
+                'dh_power': round(dh_power, 3) if dh_power is not None else None,
             })
 
             # Check if we've dropped enough
@@ -362,97 +367,100 @@ class ThermalInertiaTest:
         """
         Finish the test and calculate τ if possible.
 
+        Uses energy-compensated calculation when k-value is available:
+        residual heating during cooldown inflates the raw τ, so we correct
+        using the energy balance equation.
+
         Returns "restore" to signal the caller to restore normal operation.
         """
         readings = self.state.readings
         cooldown_start = self.state.cooldown_start_temp
-        outdoor_at_start = self.state.outdoor_temp_at_start
 
-        if reason == "success" and readings and cooldown_start is not None:
-            # Calculate τ from Newton's law of cooling
-            # T(t) = T_outdoor + (T_start - T_outdoor) * e^(-t/τ)
-            # τ = -t / ln((T_end - T_outdoor) / (T_start - T_outdoor))
+        can_calculate = (
+            reason in ("success", "timeout")
+            and readings
+            and len(readings) >= 6
+            and cooldown_start is not None
+        )
+
+        if can_calculate:
             first_reading = datetime.fromisoformat(readings[0]['timestamp'].replace('Z', '+00:00'))
             last_reading = datetime.fromisoformat(readings[-1]['timestamp'].replace('Z', '+00:00'))
             elapsed_hours = (last_reading - first_reading).total_seconds() / 3600
-
             t_start = cooldown_start
             t_end = readings[-1]['indoor_temp']
-            # Use average outdoor temp during cooldown for accuracy
+            actual_drop = t_start - t_end
             avg_outdoor = sum(r['outdoor_temp'] for r in readings) / len(readings)
 
+            # Need at least 0.3°C drop for any calculation
+            if actual_drop < 0.3:
+                can_calculate = False
+
+        if can_calculate:
             numerator = t_end - avg_outdoor
             denominator = t_start - avg_outdoor
 
-            if denominator > 0 and numerator > 0 and numerator < denominator:
-                tau = -elapsed_hours / math.log(numerator / denominator)
-                self.state.result_tau = round(tau, 1)
-                self.state.phase = "complete"
+            if denominator <= 0 or numerator <= 0 or numerator >= denominator:
+                can_calculate = False
 
-                # Store in profile
-                self.profile.learned.thermal_time_constant = round(tau, 1)
-                self.profile.learned.thermal_time_constant_measured_at = \
-                    datetime.now(timezone.utc).isoformat()
-                self.profile.learned.thermal_time_constant_source = "measured"
-                self.profile.learned.thermal_time_constant_copied_from = None
-                self.profile.save()
+        if can_calculate:
+            # Raw τ (Newton's cooling, no energy compensation)
+            tau_raw = -elapsed_hours / math.log(numerator / denominator)
 
-                self.logger.info(
-                    f"Thermal inertia test complete for {self.profile.customer_id}: "
-                    f"τ = {tau:.1f} hours (drop: {t_start:.1f} -> {t_end:.1f}°C "
-                    f"in {elapsed_hours:.1f}h, avg outdoor: {avg_outdoor:.1f}°C)"
+            # Try compensated τ using energy balance
+            tau = self._compute_compensated_tau(
+                readings, t_start, t_end, avg_outdoor, elapsed_hours, tau_raw
+            )
+
+            source = "measured" if reason == "success" else "measured_partial"
+            tau_int = int(tau)  # Round down to nearest hour
+            self.state.result_tau = tau_int
+            self.state.phase = "complete" if reason == "success" else "failed"
+            if reason != "success":
+                self.state.failure_reason = reason
+
+            # Store in profile
+            self.profile.learned.thermal_time_constant = tau_int
+            self.profile.learned.thermal_time_constant_measured_at = \
+                datetime.now(timezone.utc).isoformat()
+            self.profile.learned.thermal_time_constant_source = source
+            self.profile.learned.thermal_time_constant_copied_from = None
+            self.profile.save()
+
+            self.logger.info(
+                f"Thermal inertia test {'complete' if reason == 'success' else 'partial'} "
+                f"for {self.profile.customer_id}: "
+                f"τ = {tau_int}h (raw={tau_raw:.1f}h, compensated={tau:.1f}h, "
+                f"drop: {t_start:.1f} -> {t_end:.1f}°C "
+                f"in {elapsed_hours:.1f}h, avg outdoor: {avg_outdoor:.1f}°C)"
+            )
+
+            if self.seq_logger:
+                self.seq_logger.log(
+                    "Thermal inertia test result for {HouseId}: τ = {Tau} hours",
+                    level='Information',
+                    properties={
+                        'EventType': 'ThermalTestComplete',
+                        'HouseId': self.profile.customer_id,
+                        'Tau': tau_int,
+                        'TauRaw': round(tau_raw, 1),
+                        'TauCompensated': round(tau, 1),
+                        'StartTemp': round(t_start, 1),
+                        'EndTemp': round(t_end, 1),
+                        'ElapsedHours': round(elapsed_hours, 1),
+                        'AvgOutdoorTemp': round(avg_outdoor, 1),
+                        'ReadingCount': len(readings),
+                        'Reason': reason,
+                    }
                 )
-
-                if self.seq_logger:
-                    self.seq_logger.log(
-                        "Thermal inertia test complete for {HouseId}: τ = {Tau} hours",
-                        level='Information',
-                        properties={
-                            'EventType': 'ThermalTestComplete',
-                            'HouseId': self.profile.customer_id,
-                            'Tau': round(tau, 1),
-                            'StartTemp': round(t_start, 1),
-                            'EndTemp': round(t_end, 1),
-                            'ElapsedHours': round(elapsed_hours, 1),
-                            'AvgOutdoorTemp': round(avg_outdoor, 1),
-                            'ReadingCount': len(readings),
-                        }
-                    )
-            else:
-                reason = "invalid_data"
-
-        if reason != "success":
+        else:
+            # No usable data
             self.state.phase = "failed"
-            self.state.failure_reason = reason
-
-            # If we timed out but have partial data, try to calculate from what we have
-            if reason == "timeout" and readings and len(readings) >= 6 and cooldown_start:
-                first_reading = datetime.fromisoformat(readings[0]['timestamp'].replace('Z', '+00:00'))
-                last_reading = datetime.fromisoformat(readings[-1]['timestamp'].replace('Z', '+00:00'))
-                elapsed_hours = (last_reading - first_reading).total_seconds() / 3600
-                t_end = readings[-1]['indoor_temp']
-                avg_outdoor = sum(r['outdoor_temp'] for r in readings) / len(readings)
-                actual_drop = cooldown_start - t_end
-
-                if actual_drop >= 0.3:  # At least 0.3°C drop for partial calculation
-                    numerator = t_end - avg_outdoor
-                    denominator = cooldown_start - avg_outdoor
-                    if denominator > 0 and numerator > 0 and numerator < denominator:
-                        tau = -elapsed_hours / math.log(numerator / denominator)
-                        self.state.result_tau = round(tau, 1)
-                        self.logger.info(
-                            f"Thermal test timed out but got partial τ = {tau:.1f}h "
-                            f"(drop: {actual_drop:.1f}°C in {elapsed_hours:.1f}h)"
-                        )
-                        # Store partial result with lower confidence
-                        self.profile.learned.thermal_time_constant = round(tau, 1)
-                        self.profile.learned.thermal_time_constant_measured_at = \
-                            datetime.now(timezone.utc).isoformat()
-                        self.profile.learned.thermal_time_constant_source = "measured_partial"
-                        self.profile.save()
+            self.state.failure_reason = reason if reason != "success" else "invalid_data"
 
             self.logger.warning(
-                f"Thermal inertia test ended for {self.profile.customer_id}: {reason}"
+                f"Thermal inertia test ended for {self.profile.customer_id}: "
+                f"{self.state.failure_reason}"
             )
 
             if self.seq_logger:
@@ -462,13 +470,217 @@ class ThermalInertiaTest:
                     properties={
                         'EventType': 'ThermalTestEnd',
                         'HouseId': self.profile.customer_id,
-                        'Reason': reason,
+                        'Reason': self.state.failure_reason,
                         'ReadingCount': len(readings),
-                        'PartialTau': self.state.result_tau,
                     }
                 )
 
         return "restore"
+
+    def _compute_compensated_tau(self, readings: List[Dict],
+                                 t_start: float, t_end: float,
+                                 avg_outdoor: float, elapsed_hours: float,
+                                 tau_raw: float) -> float:
+        """
+        Compute energy-compensated τ using the energy balance approach.
+
+        Since heating can't be fully stopped on HomeSide systems, the raw τ
+        from Newton's cooling is inflated. This method corrects for residual
+        heating energy using:
+
+            C * (T_end - T_start) = E_input - k * ∫(T_in - T_out) dt
+            τ = C / k
+
+        Energy input estimation (in priority order):
+        1. dh_power from real-time meter (if available) — most accurate
+        2. supply-return delta_T calibrated against k-value — fallback
+
+        DHW events (supply > threshold) are filtered out so only heating
+        energy is counted.
+
+        Falls back to raw τ if k-value is unavailable or calculation fails.
+        """
+        # Get DHW threshold from profile, default 45°C
+        dhw_threshold = getattr(
+            self.profile.energy_separation, 'dhw_temp_threshold', 45.0
+        )
+
+        # Get k-value from energy separation config
+        k = getattr(self.profile.energy_separation, 'heat_loss_k', None)
+        if not k or k <= 0:
+            self.logger.info(
+                f"Thermal test: no k-value available, using raw τ={tau_raw:.1f}h"
+            )
+            return tau_raw
+
+        # Filter out DHW events: exclude readings where supply > threshold
+        # This is the energy separation step — DHW power spikes don't
+        # contribute to space heating
+        clean = [r for r in readings
+                 if r.get('supply_temp') is not None
+                 and r['supply_temp'] < dhw_threshold]
+
+        if len(clean) < 6:
+            self.logger.info(
+                f"Thermal test: too few clean readings ({len(clean)}), "
+                f"using raw τ={tau_raw:.1f}h"
+            )
+            return tau_raw
+
+        # Estimate total heating energy input during cooldown
+        total_energy_input, energy_source = self._estimate_heating_energy(
+            clean, k, dhw_threshold
+        )
+
+        if total_energy_input is None:
+            self.logger.info(
+                f"Thermal test: could not estimate energy input, "
+                f"using raw τ={tau_raw:.1f}h"
+            )
+            return tau_raw
+
+        # Integrate (T_in - T_out) over the test period (DHW-filtered)
+        integral_temp_diff = 0.0
+        for i in range(1, len(clean)):
+            dt_h = self._reading_dt_hours(clean[i-1], clean[i])
+            if dt_h is None or dt_h > 0.5:
+                continue  # Skip gaps
+            avg_diff = ((clean[i]['indoor_temp'] - clean[i]['outdoor_temp']) +
+                        (clean[i-1]['indoor_temp'] - clean[i-1]['outdoor_temp'])) / 2
+            integral_temp_diff += avg_diff * dt_h
+
+        heat_loss_total = k * integral_temp_diff
+        delta_t_indoor = t_end - t_start  # Negative (cooling)
+
+        if abs(delta_t_indoor) < 0.1:
+            self.logger.info(
+                f"Thermal test: indoor temp change too small ({delta_t_indoor:.1f}°C), "
+                f"using raw τ={tau_raw:.1f}h"
+            )
+            return tau_raw
+
+        # C * delta_T = E_input - heat_loss  →  C = (E_input - heat_loss) / delta_T
+        C = (total_energy_input - heat_loss_total) / delta_t_indoor
+        tau_compensated = C / k
+
+        self.logger.info(
+            f"Thermal test energy compensation ({energy_source}): "
+            f"E_input={total_energy_input:.2f}kWh, "
+            f"heat_loss={heat_loss_total:.2f}kWh, "
+            f"C={C:.1f}kWh/°C, "
+            f"τ_raw={tau_raw:.1f}h, τ_comp={tau_compensated:.1f}h"
+        )
+
+        # Sanity check: compensated τ should be positive and less than raw
+        if tau_compensated <= 0:
+            self.logger.warning(
+                f"Thermal test: compensated τ={tau_compensated:.1f}h is invalid, "
+                f"using raw τ={tau_raw:.1f}h"
+            )
+            return tau_raw
+
+        if tau_compensated > tau_raw:
+            self.logger.warning(
+                f"Thermal test: compensated τ={tau_compensated:.1f}h > raw τ={tau_raw:.1f}h, "
+                f"energy estimate unreliable, using raw τ"
+            )
+            return tau_raw
+
+        return tau_compensated
+
+    def _estimate_heating_energy(self, clean_readings: List[Dict],
+                                 k: float, dhw_threshold: float
+                                 ) -> tuple:
+        """
+        Estimate total heating energy input during cooldown.
+
+        Prefers real-time dh_power from the district heating meter (already
+        DHW-filtered by caller). Falls back to supply-return delta_T
+        estimation if dh_power is not available.
+
+        Returns:
+            (total_energy_kwh, source_str) or (None, None) on failure
+        """
+        # Check if we have dh_power readings
+        readings_with_power = [r for r in clean_readings
+                               if r.get('dh_power') is not None]
+
+        if len(readings_with_power) >= 6:
+            return self._energy_from_dh_power(readings_with_power)
+
+        # Fallback: estimate from supply-return delta_T
+        readings_with_temps = [r for r in clean_readings
+                               if r.get('return_temp') is not None]
+
+        if len(readings_with_temps) >= 6:
+            return self._energy_from_delta_t(readings_with_temps, k)
+
+        return None, None
+
+    def _energy_from_dh_power(self, readings: List[Dict]) -> tuple:
+        """
+        Integrate real-time dh_power readings (already DHW-filtered).
+
+        The dh_power field is total district heating power in kW. Since
+        DHW events have already been filtered out (supply > threshold),
+        the remaining readings represent heating-only power.
+        """
+        total_energy = 0.0
+        for i in range(1, len(readings)):
+            dt_h = self._reading_dt_hours(readings[i-1], readings[i])
+            if dt_h is None or dt_h > 0.5:
+                continue  # Skip gaps > 30 min
+            avg_power = (readings[i-1]['dh_power'] + readings[i]['dh_power']) / 2
+            total_energy += avg_power * dt_h
+
+        self.logger.info(
+            f"Thermal test: heating energy from dh_power = {total_energy:.2f} kWh "
+            f"({len(readings)} readings, DHW events excluded)"
+        )
+        return total_energy, "dh_power"
+
+    def _energy_from_delta_t(self, readings: List[Dict], k: float) -> tuple:
+        """
+        Estimate energy from supply-return delta_T, calibrated against k-value.
+
+        At steady state: Q = k * (T_in - T_out) = flow * cp * delta_T
+        So: kWh_per_degC_deltaT = k * (T_in - T_out) / delta_T_ref
+        """
+        # Use first few readings as calibration reference
+        ref = readings[:min(6, len(readings))]
+        ref_delta_t = sum(r['supply_temp'] - r['return_temp'] for r in ref) / len(ref)
+        ref_indoor = sum(r['indoor_temp'] for r in ref) / len(ref)
+        ref_outdoor = sum(r['outdoor_temp'] for r in ref) / len(ref)
+
+        if ref_delta_t < 0.1:
+            return None, None
+
+        kwh_per_degc = k * (ref_indoor - ref_outdoor) / ref_delta_t
+
+        total_energy = 0.0
+        for i in range(1, len(readings)):
+            dt_h = self._reading_dt_hours(readings[i-1], readings[i])
+            if dt_h is None or dt_h > 0.5:
+                continue
+            avg_delta = ((readings[i]['supply_temp'] - readings[i]['return_temp']) +
+                         (readings[i-1]['supply_temp'] - readings[i-1]['return_temp'])) / 2
+            total_energy += kwh_per_degc * avg_delta * dt_h
+
+        self.logger.info(
+            f"Thermal test: heating energy from delta_T = {total_energy:.2f} kWh "
+            f"(calibration: {kwh_per_degc:.2f} kWh/°C, ref_ΔT={ref_delta_t:.1f}°C)"
+        )
+        return total_energy, "delta_T"
+
+    @staticmethod
+    def _reading_dt_hours(r1: Dict, r2: Dict) -> Optional[float]:
+        """Time difference between two readings in hours."""
+        try:
+            t1 = datetime.fromisoformat(r1['timestamp'].replace('Z', '+00:00'))
+            t2 = datetime.fromisoformat(r2['timestamp'].replace('Z', '+00:00'))
+            return (t2 - t1).total_seconds() / 3600
+        except (KeyError, ValueError):
+            return None
 
     def _is_heating_off(self, supply_temp: Optional[float],
                         return_temp: Optional[float]) -> bool:

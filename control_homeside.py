@@ -191,8 +191,8 @@ class HomeSideControl:
 
             var_lookup = {}
             for var in raw_data['variables']:
-                path = var.get('path', '')
-                short = path.split('.')[-1] if '.' in path else path
+                variable = var.get('variable', '')
+                short = variable.split('.')[-1] if '.' in variable else variable
                 var_lookup[short] = var.get('value')
 
             curve = {}

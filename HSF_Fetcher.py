@@ -996,6 +996,21 @@ def monitor_heating_system(config):
             if customer_profile.heat_curve_control.in_control:
                 print("  Resuming ML curve control from previous session...")
                 ml_curve_control.read_baseline()  # Re-discover Cwl.Advise indices
+
+                # Restore CurveAdaptation_Y to baseline on resume — direct writes
+                # to CurveAdaptation_Y (e.g. from a failed thermal test) can leave
+                # stale values that override Yref control.
+                baseline = customer_profile.heat_curve_control.baseline
+                if baseline and baseline.get('curve') and ml_curve_control._y_advise_indices:
+                    restored = 0
+                    for pt_str, val in baseline['curve'].items():
+                        y_idx = ml_curve_control._y_advise_indices.get(int(pt_str))
+                        if y_idx is not None:
+                            api.write_value(f"Cwl.Advise.A[{y_idx}]", float(val))
+                            restored += 1
+                    if restored:
+                        logger.info(f"Restored CurveAdaptation_Y to baseline: {restored}/10 points")
+                        print(f"  Restored CurveAdaptation_Y baseline ({restored}/10 points)")
         else:
             print(f"ℹ Curve control mode: {prev_curve_mode}")
 
@@ -1319,16 +1334,43 @@ def monitor_heating_system(config):
                                 room_temp, outdoor,
                                 supply_temp=extracted_data.get('supply_temp'),
                                 return_temp=extracted_data.get('return_temp'),
+                                dh_power=extracted_data.get('dh_power'),
                             )
                             if action in ("heat", "cooldown"):
                                 # Heat: boost supply to reach setpoint
                                 # Cooldown: reduce supply to minimum
+                                # Write to BOTH Yref and CurveAdaptation_Y — with adaptation
+                                # off, HomeSide follows CurveAdaptation_Y directly, not Yref.
+                                # Note: extreme values (e.g. 15°C) cause safety mode spikes,
+                                # so MIN_SUPPLY_TEMP should stay near room temp (~22°C).
                                 supply = thermal_inertia_test.get_supply_for_phase()
-                                if supply and ml_curve_control._yref_advise_indices:
-                                    for pt in range(1, 11):
-                                        idx = ml_curve_control._yref_advise_indices.get(pt)
-                                        if idx is not None:
-                                            api.write_value(f"Cwl.Advise.A[{idx}]", supply)
+                                yref_written = 0
+                                y_written = 0
+                                for pt in range(1, 11):
+                                    idx = ml_curve_control._yref_advise_indices.get(pt)
+                                    if idx is not None:
+                                        api.write_value(f"Cwl.Advise.A[{idx}]", supply)
+                                        yref_written += 1
+                                    y_idx = ml_curve_control._y_advise_indices.get(pt)
+                                    if y_idx is not None:
+                                        api.write_value(f"Cwl.Advise.A[{y_idx}]", supply)
+                                        y_written += 1
+                                logger.info(
+                                    f"Thermal test: wrote {supply}°C to Yref={yref_written}/10 + "
+                                    f"CurveAdaptation_Y={y_written}/10 points "
+                                    f"(phase={thermal_inertia_test.state.phase}, action={action})"
+                                )
+                                # Readback: verify CurveAdaptation_Y accepted the value
+                                try:
+                                    active = ml_curve_control.read_active_curve()
+                                    if active:
+                                        sample_pts = [6, 7, 8]
+                                        readback = {p: active.get(str(p)) for p in sample_pts}
+                                        logger.info(f"Thermal test readback CurveAdaptation_Y: {readback}")
+                                    else:
+                                        logger.warning("Thermal test readback: read_active_curve() returned None")
+                                except Exception as e:
+                                    logger.warning(f"Thermal test readback failed: {e}")
                             elif action == "restore":
                                 # Test complete/failed — restore normal ML control
                                 test_state = thermal_inertia_test.state
@@ -1342,6 +1384,17 @@ def monitor_heating_system(config):
                                 customer_profile.save()
 
                                 logger.info("Thermal inertia test finished, restoring ML curve")
+                                # Restore CurveAdaptation_Y to baseline first
+                                baseline = customer_profile.heat_curve_control.baseline
+                                if baseline and baseline.get('curve') and ml_curve_control._y_advise_indices:
+                                    restored = 0
+                                    for pt_str, val in baseline['curve'].items():
+                                        y_idx = ml_curve_control._y_advise_indices.get(int(pt_str))
+                                        if y_idx is not None:
+                                            api.write_value(f"Cwl.Advise.A[{y_idx}]", float(val))
+                                            restored += 1
+                                    logger.info(f"Restored CurveAdaptation_Y to baseline: {restored}/10 points")
+                                # Then restore Yref via normal ML curve update
                                 if customer_profile.heat_curve_control.in_control:
                                     ml_curve_control.update_ml_curve(
                                         weather_model, conditions,
@@ -1908,6 +1961,26 @@ def monitor_heating_system(config):
                             phase = thermal_inertia_test.start_test(room_temp, hw_setpoint, outdoor)
                             print(f"\n🔬 Thermal inertia test STARTED (phase: {phase})")
                             logger.info(f"Thermal inertia test started after approval (phase: {phase})")
+
+                            # Immediately write both Yref + CurveAdaptation_Y
+                            # (the polling section already ran this cycle)
+                            initial_supply = thermal_inertia_test.get_supply_for_phase()
+                            if initial_supply and ml_curve_control and ml_curve_control._yref_advise_indices:
+                                yref_written = 0
+                                y_written = 0
+                                for pt in range(1, 11):
+                                    idx = ml_curve_control._yref_advise_indices.get(pt)
+                                    if idx is not None:
+                                        api.write_value(f"Cwl.Advise.A[{idx}]", initial_supply)
+                                        yref_written += 1
+                                    y_idx = ml_curve_control._y_advise_indices.get(pt)
+                                    if y_idx is not None:
+                                        api.write_value(f"Cwl.Advise.A[{y_idx}]", initial_supply)
+                                        y_written += 1
+                                logger.info(
+                                    f"Thermal test: initial {initial_supply}°C written to "
+                                    f"Yref={yref_written}/10 + CurveAdaptation_Y={y_written}/10 points"
+                                )
 
                 # Morning forecast check (~07:00 Swedish, once per day)
                 # Evaluate tonight's forecast and send email if conditions look good
