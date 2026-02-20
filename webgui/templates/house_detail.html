@@ -121,16 +121,36 @@
                            value="{{ profile.comfort.target_indoor_temp }}"
                            step="0.5" min="15" max="28"
                            {% if not can_edit %}disabled{% endif %}>
+                    {% if realtime and realtime.target_temp_setpoint %}
+                    <small class="help-text">
+                        HomeSide setpoint: {{ "%.1f"|format(realtime.target_temp_setpoint) }}°C
+                        {% if realtime.target_temp_setpoint != profile.comfort.target_indoor_temp %}
+                        <span style="color: #e67e22;">&mdash; differs from optimization target</span>
+                        {% endif %}
+                    </small>
+                    {% else %}
                     <small class="help-text">The temperature the system aims to maintain.</small>
+                    {% endif %}
                 </div>
 
                 <div class="form-group">
-                    <label for="acceptable_deviation">Acceptable Deviation (°C)</label>
-                    <input type="number" id="acceptable_deviation" name="acceptable_deviation"
+                    <label for="acceptable_deviation">
+                        Acceptable Deviation: <strong><span id="deviation-display">{{ profile.comfort.acceptable_deviation }}</span>°C</strong>
+                    </label>
+                    <input type="range" id="acceptable_deviation" name="acceptable_deviation"
                            value="{{ profile.comfort.acceptable_deviation }}"
-                           step="0.1" min="0.5" max="3"
-                           {% if not can_edit %}disabled{% endif %}>
-                    <small class="help-text">How much the temperature can vary from target.</small>
+                           step="0.1" min="0.3" max="1.0"
+                           style="width: 100%;"
+                           {% if not can_edit %}disabled{% endif %}
+                           oninput="updateDeviationDisplay(this.value)">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.75em; color: #888; margin-top: 2px;">
+                        <span>0.3°C (tight)</span>
+                        <span>1.0°C (relaxed)</span>
+                    </div>
+                    <small class="help-text" id="deviation-help">
+                        The system keeps indoor temperature within &plusmn;{{ profile.comfort.acceptable_deviation }}°C of target.
+                        Full comfort range: {{ "%.1f"|format(profile.comfort.target_indoor_temp - profile.comfort.acceptable_deviation) }}&ndash;{{ "%.1f"|format(profile.comfort.target_indoor_temp + profile.comfort.acceptable_deviation) }}°C.
+                    </small>
                 </div>
 
                 {% if can_edit %}
@@ -138,6 +158,19 @@
                 {% endif %}
             </form>
         </div>
+
+        <script>
+        function updateDeviationDisplay(val) {
+            document.getElementById('deviation-display').textContent = parseFloat(val).toFixed(1);
+            var target = parseFloat(document.getElementById('target_indoor_temp').value) || 22.0;
+            var dev = parseFloat(val);
+            var lo = (target - dev).toFixed(1);
+            var hi = (target + dev).toFixed(1);
+            document.getElementById('deviation-help').innerHTML =
+                'The system keeps indoor temperature within &plusmn;' + dev.toFixed(1) + '°C of target. ' +
+                'Full comfort range: ' + lo + '&ndash;' + hi + '°C.';
+        }
+        </script>
 
         {% if can_edit %}
         <!-- Curve Control Mode Card (admin only) -->
@@ -266,26 +299,90 @@
 
         <!-- Learned Parameters Card -->
         <div class="card">
-            <h2>Learned Parameters</h2>
-            <p class="card-description">These values are automatically learned by the system.</p>
+            <h2>Building Thermal Properties</h2>
+            <p class="card-description">Automatically learned from how your building responds to outdoor conditions.</p>
 
             <dl class="info-list">
-                <dt>Thermal Coefficient</dt>
-                <dd>{% if profile.learned.thermal_coefficient %}{{ "%.6f"|format(profile.learned.thermal_coefficient) }}{% else %}Not yet learned{% endif %}</dd>
+                {% if profile.learned.thermal_time_constant %}
+                <dt>Thermal Inertia</dt>
+                <dd>
+                    <strong>{{ profile.learned.thermal_time_constant }} hours</strong>
+                    <br>
+                    <small style="color: #666;">
+                        How quickly the building loses heat. Higher = better insulated/more thermal mass.
+                        {% if profile.learned.thermal_time_constant_source %}
+                        ({{ profile.learned.thermal_time_constant_source.replace('_', ' ') }})
+                        {% endif %}
+                    </small>
+                </dd>
+                {% endif %}
 
-                <dt>Confidence</dt>
+                {% if profile.energy_separation.heat_loss_k %}
+                <dt>Heat Loss (k-value)</dt>
+                <dd>
+                    <strong>{{ "%.3f"|format(profile.energy_separation.heat_loss_k) }} kW/°C</strong>
+                    <br>
+                    <small style="color: #666;">
+                        Energy needed per degree temperature difference to outdoors.
+                        At 0°C outdoors: {{ "%.1f"|format(profile.energy_separation.heat_loss_k * profile.comfort.target_indoor_temp * 24) }} kWh/day.
+                        At &minus;10°C: {{ "%.0f"|format(profile.energy_separation.heat_loss_k * (profile.comfort.target_indoor_temp + 10) * 24) }} kWh/day.
+                    </small>
+                </dd>
+                {% endif %}
+
+                {% if profile.learned.thermal_time_constant and profile.energy_separation.heat_loss_k %}
+                <dt>Cooling Examples</dt>
+                <dd>
+                    <small style="color: #666;">At 0°C outdoors, with heating off:</small>
+                    <table style="margin-top: 4px; font-size: 0.9em; border-collapse: collapse; width: 100%;">
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 3px 8px 3px 0;">Drop {{ profile.comfort.acceptable_deviation }}°C</td>
+                            <td style="padding: 3px 0;"><strong id="cool-time-dev"></strong></td>
+                            <td style="padding: 3px 0 3px 8px; color: #888;">{{ "%.1f"|format(profile.comfort.target_indoor_temp) }} &rarr; {{ "%.1f"|format(profile.comfort.target_indoor_temp - profile.comfort.acceptable_deviation) }}°C</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 3px 8px 3px 0;">Drop {{ "%.1f"|format(profile.comfort.acceptable_deviation * 2) }}°C</td>
+                            <td style="padding: 3px 0;"><strong id="cool-time-swing"></strong></td>
+                            <td style="padding: 3px 0 3px 8px; color: #888;">{{ "%.1f"|format(profile.comfort.target_indoor_temp) }} &rarr; {{ "%.1f"|format(profile.comfort.target_indoor_temp - profile.comfort.acceptable_deviation * 2) }}°C</td>
+                        </tr>
+                    </table>
+                    <script>
+                    (function() {
+                        var tau = {{ profile.learned.thermal_time_constant }};
+                        var target = {{ profile.comfort.target_indoor_temp }};
+                        var dev = {{ profile.comfort.acceptable_deviation }};
+                        var outdoor = 0;
+                        function coolingTime(drop) {
+                            // Newton's cooling: t = -τ * ln((T_in - drop - T_out) / (T_in - T_out))
+                            return -tau * Math.log((target - drop - outdoor) / (target - outdoor));
+                        }
+                        function formatTime(hours) {
+                            var h = Math.floor(hours);
+                            var m = Math.round((hours - h) * 60);
+                            if (h > 0 && m > 0) return h + 'h ' + m + 'min';
+                            if (h > 0) return h + 'h';
+                            return m + 'min';
+                        }
+                        document.getElementById('cool-time-dev').textContent = formatTime(coolingTime(dev));
+                        document.getElementById('cool-time-swing').textContent = formatTime(coolingTime(dev * 2));
+                    })();
+                    </script>
+                </dd>
+                {% endif %}
+
+                <dt>Learning Status</dt>
                 <dd>
                     <div class="confidence-bar">
                         <div class="confidence-fill" style="width: {{ (profile.learned.thermal_coefficient_confidence or 0) * 100 }}%"></div>
                     </div>
-                    <span>{% if profile.learned.thermal_coefficient_confidence %}{{ "%.0f"|format(profile.learned.thermal_coefficient_confidence * 100) }}%{% else %}0%{% endif %}</span>
+                    <span>
+                        {% if profile.learned.thermal_coefficient_confidence %}
+                        {{ "%.0f"|format(profile.learned.thermal_coefficient_confidence * 100) }}% confidence
+                        {% else %}0% &mdash; collecting data
+                        {% endif %}
+                        ({{ profile.learned.total_samples }} samples)
+                    </span>
                 </dd>
-
-                <dt>Total Samples</dt>
-                <dd>{{ profile.learned.total_samples }}</dd>
-
-                <dt>Last Updated</dt>
-                <dd>{{ profile.learned.updated_at or 'Never' }}</dd>
             </dl>
         </div>
 
