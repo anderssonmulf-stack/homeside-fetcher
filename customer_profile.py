@@ -178,6 +178,10 @@ class HeatCurveControlConfig:
     ml_update_interval_minutes: int = 30
     ml_last_offset: Optional[float] = None
     ml_reactive_threshold: float = 1.0
+    # PI controller state for indoor temp feedback
+    pi_integral: float = 0.0                   # Accumulated error (°C·minutes)
+    pi_last_error_sign: Optional[int] = None   # For anti-windup sign-change reset
+    pi_last_update_iso: Optional[str] = None   # ISO timestamp of last PI computation
 
     def __post_init__(self):
         # Backward compat: if ml_enabled was set in JSON but no curve_control_mode,

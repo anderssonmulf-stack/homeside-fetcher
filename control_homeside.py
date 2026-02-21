@@ -429,7 +429,7 @@ class HomeSideControl:
 
         Two components:
         1. Weather shift: accounts for wind chill and solar gain
-        2. Indoor correction: proportional feedback when indoor temp drifts
+        2. Indoor correction: PI feedback when indoor temp drifts
            from setpoint beyond the acceptable deviation (dead band)
 
         Args:
@@ -439,7 +439,7 @@ class HomeSideControl:
             setpoint: Current indoor setpoint (from HomeSide)
 
         Returns:
-            Tuple of (curve_dict {point_num: supply_temp}, parallel_shift) or None
+            Tuple of (curve_dict, parallel_shift, diagnostics_dict) or None
         """
         ctrl = self.profile.heat_curve_control
         if not ctrl.baseline or not ctrl.baseline.get('yref'):
@@ -464,23 +464,80 @@ class HomeSideControl:
 
         weather_shift = round(shifted_supply - reference_supply, 1)
 
-        # --- Component 2: Indoor temp feedback ---
+        # --- Component 2: Indoor temp PI feedback ---
         # Use profile target (not HomeSide setpoint, which may differ)
         indoor_correction = 0.0
+        p_correction = 0.0
+        i_correction = 0.0
+        error_beyond = 0.0
         target = self.profile.comfort.target_indoor_temp
         reference_temp = target if target else setpoint
+        tolerance = self.profile.comfort.acceptable_deviation
+
         if indoor_temp is not None and reference_temp is not None:
             deviation = indoor_temp - reference_temp  # positive = too warm
-            tolerance = self.profile.comfort.acceptable_deviation
+
+            # PI constants
+            K_BASE = 1.25  # Base gain (K_BASE / tolerance gives Kp)
+            TI = 90.0      # Integral time constant (minutes)
+            MAX_CORRECTION = 8.0
+
+            Kp = K_BASE / tolerance
+            Ki = Kp / TI
+
             if abs(deviation) > tolerance:
-                # Proportional correction beyond dead band
-                # K=2.5: aggressive enough that 2°C overshoot → -3.75°C supply shift
-                K = 2.5  # °C supply per °C indoor deviation
-                MAX_CORRECTION = 8.0  # Allow large corrections for persistent overshoot
+                # Error beyond dead band
                 sign = 1.0 if deviation > 0 else -1.0
-                indoor_correction = -K * (deviation - sign * tolerance)
+                error_beyond = deviation - sign * tolerance
+                current_error_sign = 1 if deviation > 0 else -1
+
+                # Anti-windup: reset integral on sign change
+                if (ctrl.pi_last_error_sign is not None and
+                        current_error_sign != ctrl.pi_last_error_sign):
+                    ctrl.pi_integral = 0.0
+
+                # Compute dt from last PI update (clamped 1-60 min)
+                now = datetime.now(timezone.utc)
+                dt = 5.0  # default minutes
+                if ctrl.pi_last_update_iso:
+                    try:
+                        last_t = datetime.fromisoformat(ctrl.pi_last_update_iso)
+                        dt = (now - last_t).total_seconds() / 60.0
+                        dt = max(1.0, min(60.0, dt))
+                    except (ValueError, TypeError):
+                        pass
+
+                # Accumulate integral
+                ctrl.pi_integral += error_beyond * dt
+
+                # Anti-windup: clamp integral so I alone can't exceed ±MAX_CORRECTION
+                max_integral = MAX_CORRECTION / Ki if Ki > 0 else 0
+                ctrl.pi_integral = max(-max_integral, min(max_integral, ctrl.pi_integral))
+
+                # P + I
+                p_correction = -Kp * error_beyond
+                i_correction = -Ki * ctrl.pi_integral
+                indoor_correction = p_correction + i_correction
                 indoor_correction = max(-MAX_CORRECTION, min(MAX_CORRECTION, indoor_correction))
                 indoor_correction = round(indoor_correction, 1)
+
+                ctrl.pi_last_error_sign = current_error_sign
+                ctrl.pi_last_update_iso = now.isoformat()
+            else:
+                # Within dead band: decay integral gradually (half-life ~65 min)
+                ctrl.pi_integral *= 0.95
+                if abs(ctrl.pi_integral) < 0.01:
+                    ctrl.pi_integral = 0.0
+                ctrl.pi_last_error_sign = None
+                ctrl.pi_last_update_iso = datetime.now(timezone.utc).isoformat()
+
+                # Still apply residual integral correction while decaying
+                if ctrl.pi_integral != 0.0:
+                    i_correction = -Ki * ctrl.pi_integral
+                    indoor_correction = max(-MAX_CORRECTION, min(MAX_CORRECTION, i_correction))
+                    indoor_correction = round(indoor_correction, 1)
+
+            ctrl.pi_integral = round(ctrl.pi_integral, 3)
 
         parallel_shift = round(weather_shift + indoor_correction, 1)
 
@@ -491,7 +548,17 @@ class HomeSideControl:
             baseline_supply = float(yref.get(str(point_num), 0))
             ml_curve[point_num] = round(baseline_supply + parallel_shift, 1)
 
-        return ml_curve, parallel_shift
+        diagnostics = {
+            'weather_shift': weather_shift,
+            'indoor_correction': indoor_correction,
+            'p_correction': round(p_correction, 2),
+            'i_correction': round(i_correction, 2),
+            'pi_integral': ctrl.pi_integral,
+            'error_beyond': round(error_beyond, 2),
+            'tolerance': tolerance,
+        }
+
+        return ml_curve, parallel_shift, diagnostics
 
     def enter_ml_control(self, weather_model, conditions) -> bool:
         """
@@ -530,7 +597,7 @@ class HomeSideControl:
             self.logger.error("Cannot enter ML control: failed to compute ML curve")
             return False
 
-        ml_curve, parallel_shift = result
+        ml_curve, parallel_shift, _ = result
 
         # 3. Write to Yref indices
         if not self._yref_advise_indices:
@@ -661,6 +728,9 @@ class HomeSideControl:
         ctrl.entered_at = None
         ctrl.reason = None
         ctrl.ml_last_offset = None
+        ctrl.pi_integral = 0.0
+        ctrl.pi_last_error_sign = None
+        ctrl.pi_last_update_iso = None
         self.profile.save()
 
         msg = (
@@ -710,11 +780,14 @@ class HomeSideControl:
         if result is None:
             return False
 
-        ml_curve, parallel_shift = result
+        ml_curve, parallel_shift, diagnostics = result
         ctrl = self.profile.heat_curve_control
 
         # Check if shift changed enough to justify a write
-        if ctrl.ml_last_offset is not None:
+        # Bypass when indoor correction or integral is active (PI needs every update)
+        pi_active = (diagnostics.get('indoor_correction', 0) != 0 or
+                     diagnostics.get('pi_integral', 0) != 0)
+        if ctrl.ml_last_offset is not None and not pi_active:
             if abs(parallel_shift - ctrl.ml_last_offset) < 0.3:
                 self.logger.debug(
                     f"ML curve shift {parallel_shift:+.1f}°C unchanged from last "
@@ -778,9 +851,16 @@ class HomeSideControl:
                 props['IndoorTemp'] = round(indoor_temp, 1)
             if setpoint is not None:
                 props['SetPoint'] = round(setpoint, 1)
+            # PI controller diagnostics
+            props['P_Correction'] = diagnostics.get('p_correction', 0)
+            props['I_Correction'] = diagnostics.get('i_correction', 0)
+            props['PI_Integral'] = diagnostics.get('pi_integral', 0)
+            props['ErrorBeyond'] = diagnostics.get('error_beyond', 0)
+            props['WeatherShift'] = diagnostics.get('weather_shift', 0)
+            props['IndoorCorrection'] = diagnostics.get('indoor_correction', 0)
 
             self.seq_logger.log(
-                "ML curve update for {HouseId}: shift {ParallelShift:+.1f}°C supply ({PreviousShift} -> {ParallelShift}), {PointsWritten}/10 points",
+                "ML curve update for {HouseId}: shift {ParallelShift:+.1f}°C supply ({PreviousShift} -> {ParallelShift}), {PointsWritten}/10 points, P={P_Correction:+.1f} I={I_Correction:+.1f}",
                 level='Information',
                 properties=props,
             )

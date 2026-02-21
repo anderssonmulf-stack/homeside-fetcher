@@ -1291,14 +1291,24 @@ def monitor_heating_system(config):
 
                                 # Periodic ML curve update
                                 if ctrl.in_control:
-                                    interval = ctrl.ml_update_interval_minutes
+                                    # Dynamic interval: 5 min when deviating, 30 min when stable
+                                    room_temp = extracted_data.get('room_temperature')
+                                    target_temp = customer_profile.comfort.target_indoor_temp
+                                    tolerance = customer_profile.comfort.acceptable_deviation
+                                    is_deviating = (
+                                        room_temp is not None and target_temp is not None and
+                                        abs(room_temp - target_temp) > tolerance
+                                    )
+                                    pi_active = abs(ctrl.pi_integral) > 0.5
+                                    interval = 5 if (is_deviating or pi_active) else ctrl.ml_update_interval_minutes
+
                                     should_update = (
                                         last_ml_curve_update is None or
                                         (now - last_ml_curve_update).total_seconds() >= interval * 60
                                     )
 
                                     # Reactive update: rewrite early if conditions changed significantly
-                                    # Check 1: weather shift changed
+                                    # Check: weather shift changed
                                     current_outdoor_offset = effective_temp - outdoor_temp
                                     estimated_shift = -0.7 * current_outdoor_offset  # approx curve slope
                                     if ctrl.ml_last_offset is not None:
@@ -1306,19 +1316,10 @@ def monitor_heating_system(config):
                                         if shift_change >= ctrl.ml_reactive_threshold:
                                             should_update = True
 
-                                    # Check 2: indoor temp drifting beyond tolerance
-                                    # Use profile target (more accurate than HomeSide setpoint)
-                                    room_temp = extracted_data.get('room_temperature')
-                                    target_temp = customer_profile.comfort.target_indoor_temp
-                                    if room_temp is not None and target_temp is not None:
-                                        tolerance = customer_profile.comfort.acceptable_deviation
-                                        if abs(room_temp - target_temp) > tolerance:
-                                            should_update = True
-
                                     if should_update:
                                         if ml_curve_control.update_ml_curve(
                                             weather_model, conditions,
-                                            indoor_temp=extracted_data.get('room_temperature'),
+                                            indoor_temp=room_temp,
                                             setpoint=extracted_data.get('target_temp_setpoint'),
                                         ):
                                             last_ml_curve_update = now
