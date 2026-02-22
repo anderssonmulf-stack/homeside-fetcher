@@ -35,6 +35,13 @@ class ComfortConfig:
 
 
 @dataclass
+class CostConfig:
+    """District heating cost configuration."""
+    price_per_kwh: float = 1.20       # SEK/kWh variable energy price
+    monthly_fee: float = 0.0          # SEK fixed monthly fee (fast avgift)
+
+
+@dataclass
 class HeatingSystemConfig:
     """Heating system characteristics."""
     response_time_minutes: int = 30
@@ -207,6 +214,7 @@ class CustomerProfile:
     meter_ids: list = field(default_factory=list)  # Energy meter IDs mapped to this house
     building: BuildingConfig = field(default_factory=BuildingConfig)
     comfort: ComfortConfig = field(default_factory=ComfortConfig)
+    cost: CostConfig = field(default_factory=CostConfig)
     heating_system: HeatingSystemConfig = field(default_factory=HeatingSystemConfig)
     learned: LearnedParameters = field(default_factory=LearnedParameters)
     energy_separation: EnergySeparationConfig = field(default_factory=EnergySeparationConfig)
@@ -292,6 +300,7 @@ class CustomerProfile:
             meter_ids=meter_ids,
             building=BuildingConfig(**data.get("building", {})),
             comfort=ComfortConfig(**data.get("comfort", {})),
+            cost=CostConfig(**data.get("cost", {})),
             heating_system=HeatingSystemConfig(**data.get("heating_system", {})),
             learned=learned,
             energy_separation=EnergySeparationConfig(**data.get("energy_separation", {})),
@@ -311,6 +320,7 @@ class CustomerProfile:
             "meter_ids": self.meter_ids,
             "building": asdict(self.building),
             "comfort": asdict(self.comfort),
+            "cost": asdict(self.cost),
             "heating_system": asdict(self.heating_system),
             "learned": asdict(self.learned),
             "energy_separation": asdict(self.energy_separation),
@@ -322,6 +332,10 @@ class CustomerProfile:
         # Omit thermal_test from JSON if status is "none" (keep profiles clean)
         if data["thermal_test"]["status"] == "none":
             del data["thermal_test"]
+
+        # Omit cost from JSON if all defaults (keep profiles clean)
+        if data["cost"] == asdict(CostConfig()):
+            del data["cost"]
 
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=2)
@@ -337,6 +351,7 @@ class CustomerProfile:
             "meter_ids": self.meter_ids,
             "building": asdict(self.building),
             "comfort": asdict(self.comfort),
+            "cost": asdict(self.cost),
             "heating_system": asdict(self.heating_system),
             "learned": asdict(self.learned),
             "energy_separation": asdict(self.energy_separation),

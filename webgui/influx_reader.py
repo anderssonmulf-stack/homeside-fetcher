@@ -954,18 +954,32 @@ class InfluxReader:
                         })
                         totals[energy_type] += value
 
-            # If imported data found, return it
+            # If imported data found, return it (with gap-filling from live data)
             if data_by_type:
                 totals = {k: round(v, 1) for k, v in totals.items()}
-                return {
+                # Tag entries as imported
+                for entries in data_by_type.values():
+                    for entry in entries:
+                        entry['data_source'] = 'imported'
+                result = {
                     'data': data_by_type,
                     'totals': totals,
                     'aggregation': aggregation,
                     'days': days,
                     'data_source': 'imported'
                 }
+                # Fill gaps with live power data for recent days
+                self._fill_gaps_with_live_power(result, house_id, days, aggregation, query_api)
+                return result
 
-            # Fall back to calculating energy from live power data
+            # Step 2: Try energy_meter measurement (Dropbox-imported hourly data)
+            meter_result = self._get_energy_from_meter(house_id, days, aggregation, query_api)
+            if meter_result and meter_result.get('data'):
+                # Fill gaps with live power data for recent days
+                self._fill_gaps_with_live_power(meter_result, house_id, days, aggregation, query_api)
+                return meter_result
+
+            # Step 3: Fall back to calculating energy from live power data
             result = self._get_energy_from_live_power(house_id, days, aggregation, query_api)
             return result
 
@@ -1020,7 +1034,8 @@ class InfluxReader:
                             'timestamp': timestamp.isoformat(),
                             'timestamp_display': swedish_time.strftime('%Y-%m-%d' if aggregation != 'hourly' else '%Y-%m-%d %H:%M'),
                             'value': round(kwh, 2),
-                            'energy_type': 'fjv_total'
+                            'energy_type': 'fjv_total',
+                            'data_source': 'live'
                         })
                         total_kwh += kwh
 
@@ -1044,6 +1059,136 @@ class InfluxReader:
         except Exception as e:
             print(f"Failed to calculate energy from live power: {e}")
             return {'data': {}, 'totals': {}, 'data_source': None}
+
+    def _get_energy_from_meter(self, house_id: str, days: int,
+                                aggregation: str, query_api) -> dict:
+        """
+        Get energy consumption from energy_meter measurement (Dropbox imports).
+
+        The energy_meter measurement has hourly 'consumption' values in kWh.
+        Aggregates them into daily/monthly windows as requested.
+        """
+        try:
+            # Fetch hourly data, group by Swedish date in Python
+            query = f'''
+                import "timezone"
+                option location = timezone.location(name: "Europe/Stockholm")
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "energy_meter")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> filter(fn: (r) => r["_field"] == "consumption")
+                |> aggregateWindow(every: 1h, fn: sum, createEmpty: false)
+                |> sort(columns: ["_time"])
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            # Group hourly data by Swedish date
+            daily_totals = {}
+            for table in tables:
+                for record in table.records:
+                    timestamp = record.get_time()
+                    value = record.get_value()
+                    if timestamp and value is not None:
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                        date_key = swedish_time.strftime('%Y-%m-%d')
+                        if date_key not in daily_totals:
+                            daily_totals[date_key] = 0
+                        daily_totals[date_key] += value
+
+            if not daily_totals:
+                return None
+
+            # Build result based on aggregation
+            data_list = []
+            total_kwh = 0
+
+            if aggregation == 'monthly':
+                monthly = {}
+                for date_str, kwh in daily_totals.items():
+                    month_key = date_str[:7]  # YYYY-MM
+                    if month_key not in monthly:
+                        monthly[month_key] = 0
+                    monthly[month_key] += kwh
+                for month_key in sorted(monthly):
+                    kwh = monthly[month_key]
+                    data_list.append({
+                        'timestamp': f'{month_key}-01T00:00:00+00:00',
+                        'timestamp_display': month_key,
+                        'value': round(kwh, 2),
+                        'energy_type': 'fjv_total',
+                        'data_source': 'imported'
+                    })
+                    total_kwh += kwh
+            else:
+                # Daily (or hourly falls back to daily for meter data)
+                for date_str in sorted(daily_totals):
+                    kwh = daily_totals[date_str]
+                    data_list.append({
+                        'timestamp': f'{date_str}T00:00:00+00:00',
+                        'timestamp_display': date_str,
+                        'value': round(kwh, 2),
+                        'energy_type': 'fjv_total',
+                        'data_source': 'imported'
+                    })
+                    total_kwh += kwh
+
+            return {
+                'data': {'fjv_total': data_list},
+                'totals': {'fjv_total': round(total_kwh, 1)},
+                'aggregation': aggregation,
+                'days': days,
+                'data_source': 'imported'
+            }
+
+        except Exception as e:
+            print(f"Failed to query energy_meter data: {e}")
+            return None
+
+    def _fill_gaps_with_live_power(self, result: dict, house_id: str, days: int,
+                                    aggregation: str, query_api) -> None:
+        """
+        Fill gaps in imported energy data with live dh_power readings.
+
+        Looks for dates covered by live power data but missing from imported data,
+        and appends them. Modifies the result dict in place.
+        """
+        if aggregation != 'daily':
+            return  # Only fill daily gaps
+
+        try:
+            live_result = self._get_energy_from_live_power(house_id, days, aggregation, query_api)
+            live_data = live_result.get('data', {}).get('fjv_total', [])
+            if not live_data:
+                return
+
+            # Get existing dates from imported data
+            existing = result.get('data', {}).get('fjv_total', [])
+            existing_dates = {e['timestamp_display'].split(' ')[0] for e in existing}
+
+            # Add live days that are missing from imported
+            added = 0
+            for entry in live_data:
+                date_key = entry['timestamp_display'].split(' ')[0]
+                if date_key not in existing_dates:
+                    entry['data_source'] = 'live'
+                    existing.append(entry)
+                    existing_dates.add(date_key)
+                    result['totals']['fjv_total'] = round(
+                        result['totals'].get('fjv_total', 0) + entry['value'], 1
+                    )
+                    added += 1
+
+            if added:
+                # Re-sort by date
+                existing.sort(key=lambda x: x['timestamp_display'])
+                result['data_source'] = 'mixed'
+
+        except Exception as e:
+            print(f"Failed to fill gaps with live power: {e}")
 
     def get_efficiency_metrics(self, house_id: str, hours: int = 168) -> list:
         """
@@ -1164,7 +1309,8 @@ class InfluxReader:
 
     def get_realtime_power(self, house_id: str, hours: int = 168) -> list:
         """
-        Get real-time power and flow from MBus meter (via heating_system measurement).
+        Get real-time power and flow from MBus meter (via heating_system measurement),
+        plus predicted power from energy_forecast measurement.
 
         Only available for houses with an MBus-connected energy meter.
         Returns empty list if no dh_power data exists.
@@ -1213,6 +1359,40 @@ class InfluxReader:
                             'dh_power': round(power, 2) if power is not None else None,
                             'dh_flow': round(flow, 0) if flow is not None else None,
                         })
+
+            # Query predicted power from energy_forecast (past predictions only)
+            predicted = {}
+            try:
+                forecast_query = f'''
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -{hours}h, stop: now())
+                    |> filter(fn: (r) => r["_measurement"] == "energy_forecast")
+                    |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                    |> filter(fn: (r) => r["_field"] == "heating_power_kw")
+                    |> sort(columns: ["_time"])
+                '''
+                forecast_tables = query_api.query(forecast_query, org=self.org)
+                for table in forecast_tables:
+                    for record in table.records:
+                        timestamp = record.get_time()
+                        value = record.get_value()
+                        if timestamp and value is not None:
+                            if timestamp.tzinfo is None:
+                                timestamp = timestamp.replace(tzinfo=timezone.utc)
+                            swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                            # Key by hour-rounded display string for matching
+                            hour_key = swedish_time.strftime('%Y-%m-%d %H:00')
+                            predicted[hour_key] = round(value, 3)
+            except Exception as e:
+                print(f"Failed to query forecast power for overlay: {e}")
+
+            # Merge predicted power into results by matching hour
+            if predicted:
+                for row in results:
+                    # Round timestamp_display to hour for matching
+                    hour_key = row['timestamp_display'][:13] + ':00'
+                    if hour_key in predicted:
+                        row['predicted_power'] = predicted[hour_key]
 
             return results
 
@@ -2869,6 +3049,85 @@ class InfluxReader:
         except Exception as e:
             print(f"Failed to query building efficiency metrics: {e}")
             return []
+
+    def get_control_mode_hit_rate(self, house_id: str, days: int = 30, tolerance: float = 1.0) -> dict:
+        """
+        Calculate temperature comfort hit rate by control mode.
+        A "hit" = |room_temp - setpoint| <= tolerance.
+        Returns {'modes': [...], 'tolerance': tolerance}
+        Each mode: mode_id, mode_name, hit_rate, hours, avg_deviation, total_points, hit_points
+        """
+        self._ensure_connection()
+        if not self.client:
+            return {'modes': [], 'tolerance': tolerance, 'error': 'No InfluxDB connection'}
+
+        MODE_NAMES = {0: 'Manual', 1: 'Adaptive', 2: 'Intelligent'}
+
+        try:
+            query_api = self.client.query_api()
+
+            query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{days}d)
+                |> filter(fn: (r) => r["_measurement"] == "heating_system")
+                |> filter(fn: (r) => r["house_id"] == "{house_id}")
+                |> filter(fn: (r) => r["_field"] == "room_temperature" or r["_field"] == "target_temp_setpoint" or r["_field"] == "curve_control_mode")
+                |> aggregateWindow(every: 15m, fn: mean, createEmpty: false)
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+            '''
+
+            tables = query_api.query(query, org=self.org)
+
+            # Collect per-mode stats
+            mode_stats = {}  # mode_id -> {'deviations': [], 'hits': 0, 'total': 0}
+
+            for table in tables:
+                for record in table.records:
+                    values = record.values
+                    room_temp = values.get('room_temperature')
+                    setpoint = values.get('target_temp_setpoint')
+                    mode = values.get('curve_control_mode')
+
+                    if room_temp is None or setpoint is None or mode is None:
+                        continue
+
+                    mode_id = int(round(mode))
+                    deviation = abs(room_temp - setpoint)
+
+                    if mode_id not in mode_stats:
+                        mode_stats[mode_id] = {'deviations': [], 'hits': 0, 'total': 0}
+
+                    stats = mode_stats[mode_id]
+                    stats['total'] += 1
+                    stats['deviations'].append(deviation)
+                    if deviation <= tolerance:
+                        stats['hits'] += 1
+
+            # Build result
+            modes = []
+            for mode_id in sorted(mode_stats.keys()):
+                stats = mode_stats[mode_id]
+                total = stats['total']
+                hits = stats['hits']
+                avg_dev = sum(stats['deviations']) / len(stats['deviations']) if stats['deviations'] else None
+                # Each point represents 15 minutes
+                hours = round(total * 15 / 60, 1)
+
+                modes.append({
+                    'mode_id': mode_id,
+                    'mode_name': MODE_NAMES.get(mode_id, f'Unknown ({mode_id})'),
+                    'hit_rate': round(hits / total, 4) if total > 0 else None,
+                    'hours': hours,
+                    'avg_deviation': round(avg_dev, 2) if avg_dev is not None else None,
+                    'total_points': total,
+                    'hit_points': hits,
+                })
+
+            return {'modes': modes, 'tolerance': tolerance}
+
+        except Exception as e:
+            print(f"Failed to query control mode hit rate: {e}")
+            return {'modes': [], 'tolerance': tolerance, 'error': str(e)}
 
     def close(self):
         """Close the connection"""

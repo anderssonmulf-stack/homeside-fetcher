@@ -6,6 +6,8 @@ Main entry point for the heating system settings interface.
 
 import os
 import sys
+import time
+import logging
 import secrets
 
 # Add parent directory to path for customer_profile module
@@ -495,6 +497,9 @@ def house_graphs(house_id):
         flash('Access denied.', 'error')
         return redirect(url_for('dashboard'))
 
+    cost_price_per_kwh = 1.20
+    cost_monthly_fee = 0.0
+
     if is_aggregate:
         friendly_name = 'All houses'
         availability = {'categories': []}
@@ -506,6 +511,8 @@ def house_graphs(house_id):
         try:
             profile = CustomerProfile.load(house_id, profiles_dir)
             friendly_name = profile.friendly_name or house_id
+            cost_price_per_kwh = profile.cost.price_per_kwh
+            cost_monthly_fee = profile.cost.monthly_fee
         except FileNotFoundError:
             friendly_name = house_id
 
@@ -618,7 +625,9 @@ def house_graphs(house_id):
         availability=availability,
         realtime=realtime_data,
         current_house_name=friendly_name,
-        is_aggregate=is_aggregate
+        is_aggregate=is_aggregate,
+        cost_price_per_kwh=cost_price_per_kwh,
+        cost_monthly_fee=cost_monthly_fee
     )
 
 
@@ -1123,6 +1132,37 @@ def api_k_value_history(house_id):
     return jsonify(result)
 
 
+@app.route('/api/house/<house_id>/hit-rate')
+@require_login
+def api_hit_rate(house_id):
+    """
+    API endpoint for temperature comfort hit rate by control mode.
+    Returns per-mode hit rate, hours, and average deviation.
+    """
+    if not user_manager.can_access_house(session.get('user_id'), house_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 7), 365)
+
+    # Load profile for comfort tolerance
+    tolerance = 1.0
+    try:
+        from customer_profile import CustomerProfile
+        profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+        profile = CustomerProfile.load(house_id, profiles_dir)
+        if profile and profile.comfort and profile.comfort.acceptable_deviation:
+            tolerance = profile.comfort.acceptable_deviation
+    except Exception:
+        pass
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    result = influx.get_control_mode_hit_rate(house_id, days=days, tolerance=tolerance)
+
+    return jsonify(result)
+
+
 @app.route('/api/house/<house_id>/efficiency-metrics')
 @require_login
 def api_efficiency_metrics(house_id):
@@ -1223,9 +1263,19 @@ def api_cost_estimate(house_id):
     days = request.args.get('days', 30, type=int)
     days = min(max(days, 7), 365)
 
-    # Default district heating price in SEK/kWh (typical Swedish price)
-    # Can be made configurable per house in the future
-    price_per_kwh = request.args.get('price', 1.20, type=float)
+    # Load saved price from profile, allow override via query param
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    monthly_fee = 0.0
+    default_price = 1.20
+    try:
+        profile = CustomerProfile.load(house_id, profiles_dir)
+        default_price = profile.cost.price_per_kwh
+        monthly_fee = profile.cost.monthly_fee
+    except Exception:
+        pass
+
+    price_per_kwh = request.args.get('price', default_price, type=float)
 
     from influx_reader import get_influx_reader
     influx = get_influx_reader()
@@ -1257,8 +1307,9 @@ def api_cost_estimate(house_id):
     daily_avg_kwh = total_kwh / days if days > 0 else 0
     daily_avg_cost = total_cost / days if days > 0 else 0
 
-    # Project monthly cost
-    monthly_projection = daily_avg_cost * 30
+    # Project monthly cost (energy + fixed fee)
+    monthly_energy = daily_avg_cost * 30
+    monthly_projection = monthly_energy + monthly_fee
 
     return jsonify({
         'data': cost_data,
@@ -1268,6 +1319,7 @@ def api_cost_estimate(house_id):
             'daily_avg_kwh': round(daily_avg_kwh, 1),
             'daily_avg_cost': round(daily_avg_cost, 2),
             'monthly_projection': round(monthly_projection, 2),
+            'monthly_fee': monthly_fee,
             'price_per_kwh': price_per_kwh,
             'currency': 'SEK'
         },
@@ -1569,70 +1621,89 @@ def update_house_settings(house_id):
     # Track changes
     changes = {}
 
-    # Update friendly name
-    new_friendly_name = request.form.get('friendly_name', '').strip()
-    if new_friendly_name and new_friendly_name != profile.friendly_name:
-        changes['friendly_name'] = {
-            'old': profile.friendly_name,
-            'new': new_friendly_name
-        }
-        profile.friendly_name = new_friendly_name
+    # Determine which form section was submitted
+    form_section = request.form.get('form_section', 'all')
 
-    # Update building description
-    new_description = request.form.get('building_description', '').strip()
-    if new_description != profile.building.description:
-        changes['building_description'] = {
-            'old': profile.building.description,
-            'new': new_description
-        }
-        profile.building.description = new_description
-
-    # Update heating system settings
-    new_dist_type = request.form.get('distribution_type', '').strip()
-    if new_dist_type and new_dist_type != profile.heating_system.distribution_type:
-        changes['distribution_type'] = {
-            'old': profile.heating_system.distribution_type,
-            'new': new_dist_type
-        }
-        profile.heating_system.distribution_type = new_dist_type
-
-    new_has_power = request.form.get('has_power_meter') == 'true'
-    if new_has_power != profile.heating_system.has_power_meter:
-        changes['has_power_meter'] = {
-            'old': profile.heating_system.has_power_meter,
-            'new': new_has_power
-        }
-        profile.heating_system.has_power_meter = new_has_power
-
-    # Update comfort settings
-    new_target = request.form.get('target_indoor_temp', type=float)
-    if new_target and new_target != profile.comfort.target_indoor_temp:
-        changes['target_indoor_temp'] = {
-            'old': profile.comfort.target_indoor_temp,
-            'new': new_target
-        }
-        profile.comfort.target_indoor_temp = new_target
-
-    new_deviation = request.form.get('acceptable_deviation', type=float)
-    if new_deviation and new_deviation != profile.comfort.acceptable_deviation:
-        changes['acceptable_deviation'] = {
-            'old': profile.comfort.acceptable_deviation,
-            'new': new_deviation
-        }
-        profile.comfort.acceptable_deviation = new_deviation
-
-    # Update meter_ids (comma-separated input)
-    new_meter_ids_str = request.form.get('meter_ids', '').strip()
-    if new_meter_ids_str is not None:
-        # Parse comma-separated meter IDs, strip whitespace, filter empty
-        new_meter_ids = [m.strip() for m in new_meter_ids_str.split(',') if m.strip()]
-        old_meter_ids = profile.meter_ids or []
-        if set(new_meter_ids) != set(old_meter_ids):
-            changes['meter_ids'] = {
-                'old': old_meter_ids,
-                'new': new_meter_ids
+    # --- Building info fields (only from building form) ---
+    if form_section in ('building', 'all'):
+        new_friendly_name = request.form.get('friendly_name', '').strip()
+        if new_friendly_name and new_friendly_name != profile.friendly_name:
+            changes['friendly_name'] = {
+                'old': profile.friendly_name,
+                'new': new_friendly_name
             }
-            profile.meter_ids = new_meter_ids
+            profile.friendly_name = new_friendly_name
+
+        new_description = request.form.get('building_description', '').strip()
+        if new_description != (profile.building.description or ''):
+            changes['building_description'] = {
+                'old': profile.building.description,
+                'new': new_description
+            }
+            profile.building.description = new_description
+
+        new_dist_type = request.form.get('distribution_type', '').strip()
+        if new_dist_type and new_dist_type != profile.heating_system.distribution_type:
+            changes['distribution_type'] = {
+                'old': profile.heating_system.distribution_type,
+                'new': new_dist_type
+            }
+            profile.heating_system.distribution_type = new_dist_type
+
+        new_has_power = request.form.get('has_power_meter') == 'true'
+        if new_has_power != profile.heating_system.has_power_meter:
+            changes['has_power_meter'] = {
+                'old': profile.heating_system.has_power_meter,
+                'new': new_has_power
+            }
+            profile.heating_system.has_power_meter = new_has_power
+
+        new_meter_ids_str = request.form.get('meter_ids', '').strip()
+        if new_meter_ids_str is not None:
+            new_meter_ids = [m.strip() for m in new_meter_ids_str.split(',') if m.strip()]
+            old_meter_ids = profile.meter_ids or []
+            if set(new_meter_ids) != set(old_meter_ids):
+                changes['meter_ids'] = {
+                    'old': old_meter_ids,
+                    'new': new_meter_ids
+                }
+                profile.meter_ids = new_meter_ids
+
+    # --- Comfort fields (only from comfort form) ---
+    if form_section in ('comfort', 'all'):
+        new_target = request.form.get('target_indoor_temp', type=float)
+        if new_target and new_target != profile.comfort.target_indoor_temp:
+            changes['target_indoor_temp'] = {
+                'old': profile.comfort.target_indoor_temp,
+                'new': new_target
+            }
+            profile.comfort.target_indoor_temp = new_target
+
+        new_deviation = request.form.get('acceptable_deviation', type=float)
+        if new_deviation and new_deviation != profile.comfort.acceptable_deviation:
+            changes['acceptable_deviation'] = {
+                'old': profile.comfort.acceptable_deviation,
+                'new': new_deviation
+            }
+            profile.comfort.acceptable_deviation = new_deviation
+
+    # --- Cost fields (only from cost form) ---
+    if form_section in ('cost', 'all'):
+        new_price = request.form.get('price_per_kwh', type=float)
+        if new_price is not None and new_price != profile.cost.price_per_kwh:
+            changes['price_per_kwh'] = {
+                'old': profile.cost.price_per_kwh,
+                'new': new_price
+            }
+            profile.cost.price_per_kwh = new_price
+
+        new_monthly_fee = request.form.get('monthly_fee', type=float)
+        if new_monthly_fee is not None and new_monthly_fee != profile.cost.monthly_fee:
+            changes['monthly_fee'] = {
+                'old': profile.cost.monthly_fee,
+                'new': new_monthly_fee
+            }
+            profile.cost.monthly_fee = new_monthly_fee
 
     if changes:
         profile.save()
@@ -1661,6 +1732,166 @@ def update_house_settings(house_id):
         flash('No changes made.', 'info')
 
     return redirect(url_for('house_detail', house_id=house_id))
+
+
+@app.route('/house/<house_id>/set-setpoint', methods=['POST'])
+@require_login
+def set_homeside_setpoint(house_id):
+    """Write target temperature setpoint to HomeSide with read-back verification.
+
+    Flow: authenticate → discover setpoint path → write → wait 2s → readback
+    → if mismatch wait 1s → readback again → return result.
+    Updates the profile only if the write is confirmed.
+    """
+    if not user_manager.can_edit_house(session.get('user_id'), house_id):
+        return jsonify({'success': False, 'error': 'Permission denied'}), 403
+
+    data = request.get_json()
+    if not data or 'target_temp' not in data:
+        return jsonify({'success': False, 'error': 'Missing target_temp'}), 400
+
+    new_setpoint = float(data['target_temp'])
+    if not (15.0 <= new_setpoint <= 28.0):
+        return jsonify({'success': False, 'error': 'Temperature must be between 15 and 28°C'}), 400
+
+    # Load credentials from .env
+    username = os.getenv(f'HOUSE_{house_id}_USERNAME')
+    password = os.getenv(f'HOUSE_{house_id}_PASSWORD')
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'HomeSide credentials not configured'}), 500
+
+    logger = logging.getLogger(f'setpoint.{house_id}')
+
+    try:
+        from homeside_api import HomeSideAPI
+
+        # Create temporary HomeSide session
+        api = HomeSideAPI(
+            session_token='',
+            clientid='',
+            logger=logger,
+            username=username,
+            password=password,
+        )
+
+        # Authenticate
+        if not api.refresh_session_token():
+            return jsonify({'success': False, 'error': 'Failed to authenticate with HomeSide'}), 502
+
+        if not api.get_bms_token():
+            return jsonify({'success': False, 'error': 'Failed to get BMS token'}), 502
+
+        # Get current data to discover setpoint path
+        raw_data = api.get_heating_data()
+        if not raw_data or 'variables' not in raw_data:
+            return jsonify({'success': False, 'error': 'Failed to read heating data'}), 502
+
+        # Find the setpoint variable's Cwl.Advise path
+        setpoint_path = None
+        current_setpoint = None
+        for var in raw_data.get('variables', []):
+            short_name = var.get('variable', '').split('.')[-1]
+            if short_name == 'KU_VS1_GT_TILL_1_SetPoint':
+                setpoint_path = var.get('path', '')
+                current_setpoint = var.get('value')
+                break
+
+        if not setpoint_path:
+            return jsonify({'success': False, 'error': 'Could not find setpoint variable path'}), 502
+
+        # Check if already at desired value
+        if current_setpoint is not None and abs(float(current_setpoint) - new_setpoint) < 0.05:
+            # Already correct, just update profile
+            _update_profile_setpoint(house_id, new_setpoint)
+            return jsonify({
+                'success': True,
+                'confirmed_value': float(current_setpoint),
+                'message': 'Setpoint already at target value',
+            })
+
+        # Write the new setpoint
+        if not api.write_value(setpoint_path, new_setpoint):
+            return jsonify({'success': False, 'error': 'Write command failed'}), 502
+
+        # Wait 2 seconds, then read back
+        time.sleep(2)
+
+        raw_data = api.get_heating_data()
+        readback_value = None
+        if raw_data and 'variables' in raw_data:
+            for var in raw_data.get('variables', []):
+                short_name = var.get('variable', '').split('.')[-1]
+                if short_name == 'KU_VS1_GT_TILL_1_SetPoint':
+                    readback_value = var.get('value')
+                    break
+
+        # Check if confirmed
+        if readback_value is not None and abs(float(readback_value) - new_setpoint) < 0.05:
+            _update_profile_setpoint(house_id, new_setpoint)
+            audit_logger.log('SetpointChanged', session.get('user_id'), {
+                'house_id': house_id,
+                'old_value': current_setpoint,
+                'new_value': new_setpoint,
+                'confirmed': True,
+                'attempt': 1,
+            })
+            return jsonify({
+                'success': True,
+                'confirmed_value': float(readback_value),
+                'message': 'Setpoint confirmed',
+            })
+
+        # Not confirmed — wait 1 more second and retry readback
+        time.sleep(1)
+
+        raw_data = api.get_heating_data()
+        if raw_data and 'variables' in raw_data:
+            for var in raw_data.get('variables', []):
+                short_name = var.get('variable', '').split('.')[-1]
+                if short_name == 'KU_VS1_GT_TILL_1_SetPoint':
+                    readback_value = var.get('value')
+                    break
+
+        if readback_value is not None and abs(float(readback_value) - new_setpoint) < 0.05:
+            _update_profile_setpoint(house_id, new_setpoint)
+            audit_logger.log('SetpointChanged', session.get('user_id'), {
+                'house_id': house_id,
+                'old_value': current_setpoint,
+                'new_value': new_setpoint,
+                'confirmed': True,
+                'attempt': 2,
+            })
+            return jsonify({
+                'success': True,
+                'confirmed_value': float(readback_value),
+                'message': 'Setpoint confirmed (second readback)',
+            })
+
+        # Failed to confirm
+        actual = float(readback_value) if readback_value is not None else None
+        return jsonify({
+            'success': False,
+            'error': f'Readback mismatch: wrote {new_setpoint}, read back {actual}',
+            'readback_value': actual,
+        })
+
+    except Exception as e:
+        logger.exception(f"Setpoint write failed for {house_id}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _update_profile_setpoint(house_id, new_setpoint):
+    """Helper to update the profile's target_indoor_temp after confirmed write."""
+    from customer_profile import CustomerProfile
+    profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+    try:
+        profile = CustomerProfile.load(house_id, profiles_dir)
+        old_value = profile.comfort.target_indoor_temp
+        if old_value != new_setpoint:
+            profile.comfort.target_indoor_temp = new_setpoint
+            profile.save()
+    except Exception:
+        pass  # Profile save failure is non-critical; HomeSide is the source of truth
 
 
 @app.route('/house/<house_id>/curve-control-mode', methods=['POST'])

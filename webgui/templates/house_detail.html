@@ -112,25 +112,18 @@
         <!-- Comfort Settings Card (only shown for own house) -->
         <div class="card">
             <h2>Comfort Settings</h2>
-            <p class="card-description">These settings control the heating optimization algorithm.</p>
+            <p class="card-description">Target temperature is written directly to the heating system.</p>
 
-            <form method="POST" action="{{ url_for('update_house_settings', house_id=house_id) }}">
+            <form id="comfort-form" method="POST" action="{{ url_for('update_house_settings', house_id=house_id) }}">
+                <input type="hidden" name="form_section" value="comfort">
                 <div class="form-group">
                     <label for="target_indoor_temp">Target Indoor Temperature (°C)</label>
                     <input type="number" id="target_indoor_temp" name="target_indoor_temp"
                            value="{{ profile.comfort.target_indoor_temp }}"
+                           data-original="{{ profile.comfort.target_indoor_temp }}"
                            step="0.5" min="15" max="28"
                            {% if not can_edit %}disabled{% endif %}>
-                    {% if realtime and realtime.target_temp_setpoint %}
-                    <small class="help-text">
-                        HomeSide setpoint: {{ "%.1f"|format(realtime.target_temp_setpoint) }}°C
-                        {% if realtime.target_temp_setpoint != profile.comfort.target_indoor_temp %}
-                        <span style="color: #e67e22;">&mdash; differs from optimization target</span>
-                        {% endif %}
-                    </small>
-                    {% else %}
-                    <small class="help-text">The temperature the system aims to maintain.</small>
-                    {% endif %}
+                    <small class="help-text">This value is the actual setpoint in the heating system.</small>
                 </div>
 
                 <div class="form-group">
@@ -153,8 +146,41 @@
                     </small>
                 </div>
 
+                <div id="setpoint-status" style="display:none; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 0.9rem;"></div>
+
                 {% if can_edit %}
-                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <button type="submit" id="comfort-save-btn" class="btn btn-primary">Save Changes</button>
+                {% endif %}
+            </form>
+        </div>
+
+        <!-- Cost & Pricing Card (only shown for own house) -->
+        <div class="card">
+            <h2>Cost &amp; Pricing</h2>
+            <p class="card-description">District heating price used for cost estimates on graphs.</p>
+
+            <form method="POST" action="{{ url_for('update_house_settings', house_id=house_id) }}">
+                <input type="hidden" name="form_section" value="cost">
+                <div class="form-group">
+                    <label for="price_per_kwh">Energy Price (SEK/kWh)</label>
+                    <input type="number" id="price_per_kwh" name="price_per_kwh"
+                           value="{{ profile.cost.price_per_kwh }}"
+                           step="0.01" min="0"
+                           {% if not can_edit %}disabled{% endif %}>
+                    <small class="help-text">Variable energy cost per kWh from your district heating provider.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="monthly_fee">Fixed Monthly Fee (SEK)</label>
+                    <input type="number" id="monthly_fee" name="monthly_fee"
+                           value="{{ profile.cost.monthly_fee|int if profile.cost.monthly_fee == profile.cost.monthly_fee|int else profile.cost.monthly_fee }}"
+                           step="1" min="0"
+                           {% if not can_edit %}disabled{% endif %}>
+                    <small class="help-text">Fixed monthly charge (fast avgift) regardless of consumption.</small>
+                </div>
+
+                {% if can_edit %}
+                <button type="submit" class="btn btn-primary btn-small">Save Pricing</button>
                 {% endif %}
             </form>
         </div>
@@ -170,6 +196,67 @@
                 'The system keeps indoor temperature within &plusmn;' + dev.toFixed(1) + '°C of target. ' +
                 'Full comfort range: ' + lo + '&ndash;' + hi + '°C.';
         }
+
+        (function() {
+            var form = document.getElementById('comfort-form');
+            if (!form) return;
+
+            form.addEventListener('submit', function(e) {
+                var input = document.getElementById('target_indoor_temp');
+                var newVal = parseFloat(input.value);
+                var origVal = parseFloat(input.dataset.original);
+                var statusDiv = document.getElementById('setpoint-status');
+                var btn = document.getElementById('comfort-save-btn');
+
+                // If setpoint hasn't changed, just submit the form normally (for deviation save)
+                if (Math.abs(newVal - origVal) < 0.05) {
+                    return; // normal submit
+                }
+
+                // Setpoint changed — intercept and write to HomeSide first
+                e.preventDefault();
+
+                statusDiv.style.display = 'block';
+                statusDiv.style.background = '#eef6ff';
+                statusDiv.style.color = '#333';
+                statusDiv.innerHTML = 'Writing setpoint to heating system&hellip; <small>(this takes a few seconds)</small>';
+                btn.disabled = true;
+                btn.textContent = 'Writing\u2026';
+
+                fetch('{{ url_for("set_homeside_setpoint", house_id=house_id) }}', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({target_temp: newVal})
+                })
+                .then(function(resp) { return resp.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        statusDiv.style.background = '#e8f5e9';
+                        statusDiv.style.color = '#2e7d32';
+                        statusDiv.textContent = 'Setpoint confirmed: ' + data.confirmed_value.toFixed(1) + '\u00b0C';
+                        // Update the original value so future saves don't re-trigger
+                        input.dataset.original = String(data.confirmed_value);
+                        // Now submit the form normally to save deviation to profile
+                        btn.disabled = false;
+                        btn.textContent = 'Save Changes';
+                        form.submit();
+                    } else {
+                        statusDiv.style.background = '#fce4ec';
+                        statusDiv.style.color = '#c62828';
+                        statusDiv.textContent = 'Failed: ' + (data.error || 'Unknown error');
+                        btn.disabled = false;
+                        btn.textContent = 'Save Changes';
+                    }
+                })
+                .catch(function(err) {
+                    statusDiv.style.background = '#fce4ec';
+                    statusDiv.style.color = '#c62828';
+                    statusDiv.textContent = 'Network error: ' + err.message;
+                    btn.disabled = false;
+                    btn.textContent = 'Save Changes';
+                });
+            });
+        })();
         </script>
 
         {% if can_edit %}
@@ -225,6 +312,7 @@
             <h2>Building Information</h2>
 
             <form method="POST" action="{{ url_for('update_house_settings', house_id=house_id) }}">
+                <input type="hidden" name="form_section" value="building">
                 <div class="form-group">
                     <label for="friendly_name">Friendly Name</label>
                     <input type="text" id="friendly_name" name="friendly_name"

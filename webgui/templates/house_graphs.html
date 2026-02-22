@@ -86,14 +86,28 @@
         </div>
         <p class="card-description">
             Supply and return water temperatures with heat curve comparison.
-            <span class="legend-inline">
-                <span class="legend-item"><span class="legend-color supply-temp"></span> Supply</span>
-                <span class="legend-item"><span class="legend-color return-temp"></span> Return</span>
-                <span class="legend-item"><span class="legend-color heat-curve"></span> Heat Curve</span>
-                <span class="legend-item"><span class="legend-color heat-curve-ml"></span> Heat Curve (ML)</span>
-            </span>
+            Click legend entries to toggle, double-click to isolate.
         </p>
         <div id="supply-return-chart" class="chart-container"></div>
+    </div>
+
+    <!-- Temperature Comfort Hit Rate -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Temperature Comfort Hit Rate</h2>
+            <div class="chart-controls">
+                <select id="hit-rate-days-select" class="role-select" onchange="updateHitRateChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Percentage of time indoor temperature stays within the comfort band (target &plusmn; tolerance) per control mode.
+        </p>
+        <div id="hit-rate-metrics" style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px;"></div>
+        <div id="hit-rate-chart" class="chart-container"></div>
     </div>
 
     <!-- Data Availability Chart -->
@@ -170,13 +184,6 @@
         <p class="card-description">
             Compares <strong>District Heating</strong> (primary side from utility) with
             <strong>House Heating</strong> (secondary side to radiators).
-            <span class="legend-inline">
-                <span class="legend-item"><span class="legend-color dh-supply"></span> DH Supply</span>
-                <span class="legend-item"><span class="legend-color dh-return"></span> DH Return</span>
-                <span class="legend-item"><span class="legend-color house-supply"></span> House Supply</span>
-                <span class="legend-item"><span class="legend-color house-return"></span> House Return</span>
-                <span class="legend-item"><span class="legend-color" style="background: #9b59b6;"></span> Predicted Supply</span>
-            </span>
         </p>
         <div id="temp-history-chart" class="chart-container"></div>
     </div>
@@ -218,10 +225,6 @@
         </div>
         <p class="card-description">
             Instantaneous power and flow from the MBus energy meter, sampled every 5 minutes.
-            <span class="legend-inline">
-                <span class="legend-item"><span class="legend-color" style="background: #e74c3c;"></span> Power (kW)</span>
-                <span class="legend-item"><span class="legend-color" style="background: #3498db;"></span> Flow (l/h)</span>
-            </span>
         </p>
         <div id="realtime-power-chart" class="chart-container"></div>
     </div>
@@ -242,10 +245,6 @@
         <p class="card-description">
             Predicted <strong>hourly heating energy</strong> based on weather forecast and learned building model.
             Uses ML2 calibrated coefficients for accurate solar/wind effects.
-            <span class="legend-inline">
-                <span class="legend-item"><span class="legend-color" style="background:#FF6B6B;"></span> Energy (kWh/h)</span>
-                <span class="legend-item"><span class="legend-color" style="background:#4ECDC4; opacity:0.5;"></span> Outdoor Temp</span>
-            </span>
         </p>
         <div id="energy-forecast-chart" class="chart-container"></div>
         <div id="energy-forecast-summary" class="metric-summary"></div>
@@ -294,11 +293,6 @@
         <p class="card-description">
             Separates total energy into <strong>space heating</strong> and <strong>domestic hot water (DHW)</strong>
             using calibrated building heat loss model. <strong>Dashed line</strong> shows predicted heating.
-            <span class="legend-inline">
-                <span class="legend-item"><span class="legend-color heating-energy"></span> Heating</span>
-                <span class="legend-item"><span class="legend-color dhw-energy"></span> Hot Water</span>
-                <span class="legend-item"><span class="legend-color" style="background:#9b59b6;"></span> Predicted</span>
-            </span>
         </p>
         <div id="separation-chart" class="chart-container"></div>
         <div id="separation-summary" class="metric-summary"></div>
@@ -384,7 +378,7 @@
             <div class="chart-controls">
                 <label class="price-label">
                     Price (SEK/kWh):
-                    <input type="number" id="price-input" class="price-input" value="1.20" step="0.01" min="0" onchange="updateCostChart()">
+                    <input type="number" id="price-input" class="price-input" value="{{ cost_price_per_kwh }}" step="0.01" min="0" onchange="updateCostChart()">
                 </label>
                 <select id="cost-days-select" class="role-select" onchange="updateCostChart()">
                     <option value="7">Last 7 days</option>
@@ -396,7 +390,7 @@
         </div>
         <p class="card-description">
             Estimated heating costs based on energy consumption and price per kWh.
-            Default price is typical Swedish district heating rate.
+            Price and monthly fee are configured in house settings.
         </p>
         <div id="cost-chart" class="chart-container"></div>
         <div id="cost-summary" class="cost-summary-box"></div>
@@ -526,38 +520,6 @@
 .data-source-badge.imported {
     background: #3498db;
     color: white;
-}
-/* Temperature legend colors */
-.legend-color.dh-supply {
-    background: #e74c3c;
-}
-.legend-color.dh-return {
-    background: #c0392b;
-}
-.legend-color.house-supply {
-    background: #3498db;
-}
-.legend-color.house-return {
-    background: #2980b9;
-}
-.legend-color.heating-energy {
-    background: #3498db;
-}
-.legend-color.dhw-energy {
-    background: #e67e22;
-}
-/* Supply/Return chart colors */
-.legend-color.supply-temp {
-    background: #e74c3c;
-}
-.legend-color.return-temp {
-    background: #3498db;
-}
-.legend-color.heat-curve {
-    background: #27ae60;
-}
-.legend-color.heat-curve-ml {
-    background: #9b59b6;
 }
 /* Metric summary boxes */
 .metric-summary {
@@ -804,6 +766,97 @@
             .catch(error => {
                 console.error('Failed to load supply/return data:', error);
                 chartDiv.innerHTML = '<div class="no-data-message">Failed to load supply/return data.</div>';
+            });
+    }
+
+    // Temperature Comfort Hit Rate Chart
+    function updateHitRateChart() {
+        const days = document.getElementById('hit-rate-days-select')?.value || 30;
+        const chartDiv = document.getElementById('hit-rate-chart');
+        const metricsDiv = document.getElementById('hit-rate-metrics');
+        if (!chartDiv) return;
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading hit rate data...</div>';
+        metricsDiv.innerHTML = '';
+
+        fetch(`/api/house/${houseId}/hit-rate?days=${days}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.error || !data.modes || data.modes.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No control mode data available.</div>';
+                    return;
+                }
+
+                const tolerance = data.tolerance || 1.0;
+
+                // Build metric cards
+                let cardsHtml = '';
+                data.modes.forEach(m => {
+                    const pct = m.hit_rate !== null ? (m.hit_rate * 100).toFixed(1) : null;
+                    let color = '#95a5a6';
+                    if (pct !== null) {
+                        color = pct >= 90 ? '#27ae60' : pct >= 70 ? '#f39c12' : '#e74c3c';
+                    }
+                    cardsHtml += `
+                        <div style="flex:1; min-width:140px; padding:12px 16px; border-radius:8px; border-left:4px solid ${color}; background:#f8f9fa;">
+                            <div style="font-size:0.85em; color:#666; margin-bottom:4px;">${m.mode_name}</div>
+                            <div style="font-size:1.6em; font-weight:600; color:${color};">${pct !== null ? pct + '%' : 'N/A'}</div>
+                            <div style="font-size:0.8em; color:#888; margin-top:2px;">${m.hours}h &middot; &plusmn;${m.avg_deviation !== null ? m.avg_deviation + '°C avg' : '—'}</div>
+                        </div>`;
+                });
+                metricsDiv.innerHTML = cardsHtml;
+
+                // Bar chart
+                const modeNames = data.modes.map(m => m.mode_name);
+                const hitRates = data.modes.map(m => m.hit_rate !== null ? m.hit_rate * 100 : 0);
+                const barColors = hitRates.map(v => v >= 90 ? '#27ae60' : v >= 70 ? '#f39c12' : '#e74c3c');
+                const hoverTexts = data.modes.map(m =>
+                    `${m.mode_name}<br>Hit rate: ${m.hit_rate !== null ? (m.hit_rate * 100).toFixed(1) + '%' : 'N/A'}<br>Hours: ${m.hours}<br>Avg deviation: ${m.avg_deviation !== null ? m.avg_deviation + '°C' : '—'}`
+                );
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot(chartDiv, [
+                    {
+                        x: modeNames,
+                        y: hitRates,
+                        type: 'bar',
+                        marker: { color: barColors },
+                        text: hitRates.map(v => v > 0 ? v.toFixed(1) + '%' : ''),
+                        textposition: 'outside',
+                        hovertext: hoverTexts,
+                        hoverinfo: 'text'
+                    }
+                ], {
+                    height: 300,
+                    margin: { t: 20, b: 40, l: 50, r: 20 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    dragmode: 'pan',
+                    yaxis: {
+                        title: 'Hit Rate (%)',
+                        range: [0, 105],
+                        gridcolor: '#eee'
+                    },
+                    xaxis: { gridcolor: '#eee' },
+                    shapes: [{
+                        type: 'line',
+                        x0: -0.5, x1: modeNames.length - 0.5,
+                        y0: 90, y1: 90,
+                        line: { color: '#27ae60', width: 2, dash: 'dash' }
+                    }],
+                    annotations: [{
+                        x: modeNames.length - 0.5,
+                        y: 90,
+                        text: '90%',
+                        showarrow: false,
+                        font: { size: 11, color: '#27ae60' },
+                        xanchor: 'right',
+                        yshift: 10
+                    }]
+                }, { responsive: true, displayModeBar: false }).catch(() => {});
+            })
+            .catch(() => {
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load hit rate data.</div>';
             });
     }
 
@@ -1642,6 +1695,7 @@
                 }
 
                 const timestamps = data.map(d => d.timestamp_display);
+                const hasPredicted = data.some(d => d.predicted_power != null);
                 const traces = [
                     {
                         x: timestamps,
@@ -1652,6 +1706,16 @@
                         line: { color: '#e74c3c', width: 1.5 },
                         yaxis: 'y'
                     },
+                    ...(hasPredicted ? [{
+                        x: timestamps,
+                        y: data.map(d => d.predicted_power != null ? d.predicted_power : null),
+                        name: 'Predicted (kW)',
+                        type: 'scatter',
+                        mode: 'lines',
+                        line: { color: '#f39c12', width: 2, dash: 'dot' },
+                        yaxis: 'y',
+                        connectgaps: false
+                    }] : []),
                     {
                         x: timestamps,
                         y: data.map(d => d.dh_flow),
@@ -1744,25 +1808,31 @@
                     costState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
                 }
 
-                // Group by date for daily costs
+                // Group by date for daily costs, tracking data source
                 const dailyCosts = {};
+                const dailySource = {};
                 data.forEach(d => {
                     const date = d.timestamp_display.split(' ')[0];
                     if (!dailyCosts[date]) dailyCosts[date] = 0;
                     dailyCosts[date] += d.cost;
+                    if (d.data_source) dailySource[date] = d.data_source;
                 });
 
                 const dates = Object.keys(dailyCosts).sort();
                 const costs = dates.map(d => Math.round(dailyCosts[d] * 100) / 100);
+
+                // Color bars: imported = green, live = blue-ish, high-cost = red
+                const barColors = dates.map((d, i) => {
+                    if (costs[i] > summary.daily_avg_cost * 1.5) return '#e74c3c';
+                    return dailySource[d] === 'live' ? '#3498db' : '#27ae60';
+                });
 
                 const traces = [{
                     x: dates,
                     y: costs,
                     type: 'bar',
                     name: 'Daily Cost',
-                    marker: {
-                        color: costs.map(c => c > summary.daily_avg_cost * 1.5 ? '#e74c3c' : '#27ae60')
-                    },
+                    marker: { color: barColors },
                     hovertemplate: '%{x}<br>%{y} SEK<extra></extra>'
                 }];
 
@@ -1809,6 +1879,10 @@
 
                 // Update summary
                 if (!extendDays) {
+                    const monthlyFee = summary.monthly_fee || 0;
+                    const feeNote = monthlyFee > 0
+                        ? `<div class="cost-item"><div class="cost-value">${monthlyFee} SEK</div><div class="cost-label">Monthly Fee (incl.)</div></div>`
+                        : '';
                     summaryDiv.innerHTML = `
                         <div class="cost-item">
                             <div class="cost-value">${summary.total_kwh || 0} kWh</div>
@@ -1826,9 +1900,10 @@
                             <div class="cost-value">${summary.daily_avg_cost || 0} SEK</div>
                             <div class="cost-label">Daily Avg Cost</div>
                         </div>
+                        ${feeNote}
                         <div class="cost-item highlight">
                             <div class="cost-value projection">${summary.monthly_projection || 0} SEK</div>
-                            <div class="cost-label">Monthly Projection</div>
+                            <div class="cost-label">Monthly Projection${monthlyFee > 0 ? ' (energy + fee)' : ''}</div>
                         </div>
                     `;
                 }
@@ -3021,6 +3096,7 @@
 
         // Supply & Return chart (top priority - shown first)
         updateSupplyReturnChart();
+        setTimeout(() => updateHitRateChart(), 25);
 
         // Existing charts
         if (document.getElementById('availability-chart')) {
