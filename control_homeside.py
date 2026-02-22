@@ -524,8 +524,8 @@ class HomeSideControl:
                 ctrl.pi_last_error_sign = current_error_sign
                 ctrl.pi_last_update_iso = now.isoformat()
             else:
-                # Within dead band: decay integral gradually (half-life ~65 min)
-                ctrl.pi_integral *= 0.95
+                # Within dead band: decay integral fast (half-life ~15 min at 5-min cycles)
+                ctrl.pi_integral *= 0.8
                 if abs(ctrl.pi_integral) < 0.01:
                     ctrl.pi_integral = 0.0
                 ctrl.pi_last_error_sign = None

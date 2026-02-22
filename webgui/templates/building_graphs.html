@@ -553,13 +553,15 @@
                     yaxis: {
                         title: 'Temperature (°C)',
                         showgrid: true,
-                        gridcolor: 'rgba(0,0,0,0.1)'
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        fixedrange: true
                     },
                     yaxis2: {
                         title: 'Outdoor (°C)',
                         overlaying: 'y',
                         side: 'right',
-                        showgrid: false
+                        showgrid: false,
+                        fixedrange: true
                     },
                     height: 400,
                     margin: { l: 60, r: 60, t: 30, b: 60 },
@@ -648,7 +650,8 @@
                     },
                     yaxis: {
                         title: null,
-                        autorange: 'reversed'
+                        autorange: 'reversed',
+                        fixedrange: true
                     },
                     height: Math.max(300, availability.categories.length * 40 + 150),
                     margin: { l: 130, r: 80, t: 20, b: 80 },
@@ -763,7 +766,7 @@
 
                 const layout = {
                     xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
-                    yaxis: { title: 'Temperature (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Temperature (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', fixedrange: true },
                     height: 400,
                     margin: { l: 60, r: 30, t: 30, b: 60 },
                     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -945,7 +948,7 @@
 
                 const layout = {
                     xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
-                    yaxis: { title: 'Delta T (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Delta T (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', fixedrange: true },
                     height: 350,
                     margin: { l: 60, r: 30, t: 30, b: 60 },
                     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -1062,7 +1065,7 @@
 
                 const layout = {
                     xaxis: { title: 'Date', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
-                    yaxis: { title: 'Energy (kWh)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', rangemode: 'tozero' },
+                    yaxis: { title: 'Energy (kWh)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', rangemode: 'tozero', fixedrange: true },
                     height: 350,
                     margin: { l: 60, r: 30, t: 30, b: 80 },
                     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -1192,7 +1195,7 @@
 
                 const layout = {
                     xaxis: { title: 'Date', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
-                    yaxis: { title: 'Cost (SEK)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', rangemode: 'tozero' },
+                    yaxis: { title: 'Cost (SEK)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', rangemode: 'tozero', fixedrange: true },
                     height: 350,
                     margin: { l: 60, r: 30, t: 30, b: 80 },
                     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -1351,7 +1354,8 @@
                         title: 'Energy (kWh)',
                         showgrid: true,
                         gridcolor: 'rgba(0,0,0,0.1)',
-                        rangemode: 'tozero'
+                        rangemode: 'tozero',
+                        fixedrange: true
                     },
                     barmode: 'stack',
                     height: 400,
