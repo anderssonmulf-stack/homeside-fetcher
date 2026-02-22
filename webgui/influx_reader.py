@@ -2049,15 +2049,16 @@ class InfluxReader:
             tables = query_api.query(query, org=self.org)
 
             # Collect all points, then deduplicate: keep only the latest
-            # point per day. Multiple recalibration triggers (startup,
-            # Dropbox import, daily pipeline) and different method tags
-            # can produce duplicate points for the same day.
-            by_day = {}
+            # point per (day, method). Multiple recalibration triggers
+            # (startup, Dropbox import, daily pipeline) can produce
+            # duplicate points for the same day.
+            by_day_method = {}
             for table in tables:
                 for record in table.records:
                     ts = record.get_time()
                     ts_swedish = ts.astimezone(ZoneInfo('Europe/Stockholm'))
                     day_key = ts_swedish.strftime('%Y-%m-%d')
+                    method = record.values.get('method', 'heating_only_15pct')
 
                     entry = {
                         'timestamp': ts.isoformat(),
@@ -2068,13 +2069,22 @@ class InfluxReader:
                         'confidence': record.values.get('confidence'),
                         'days_used': record.values.get('days_used'),
                         'avg_outdoor_temp': record.values.get('avg_outdoor_temp'),
+                        'method': method,
                     }
 
-                    # Keep the latest point for each day
-                    if day_key not in by_day or ts > by_day[day_key][0]:
-                        by_day[day_key] = (ts, entry)
+                    dedup_key = (day_key, method)
+                    if dedup_key not in by_day_method or ts > by_day_method[dedup_key][0]:
+                        by_day_method[dedup_key] = (ts, entry)
 
-            results = [v[1] for v in sorted(by_day.values(), key=lambda x: x[0])]
+            # Split into outdoor-temp k and effective-temp k series
+            results = []
+            results_effective = []
+            for v in sorted(by_day_method.values(), key=lambda x: x[0]):
+                entry = v[1]
+                if 'effective' in entry.get('method', ''):
+                    results_effective.append(entry)
+                else:
+                    results.append(entry)
 
             # Get current k from profile if available
             current_k = None
@@ -2083,6 +2093,7 @@ class InfluxReader:
 
             return {
                 'data': results,
+                'data_effective': results_effective,
                 'current_k': current_k,
                 'days': days
             }

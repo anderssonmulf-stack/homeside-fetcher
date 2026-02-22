@@ -53,6 +53,7 @@ class CalibrationResult:
     avg_outdoor_temp: float
     confidence: float  # 0-1 based on data quality
     method: str = "heating_only_15pct"
+    avg_effective_outdoor_temp: Optional[float] = None
 
 
 class KRecalibrator:
@@ -95,7 +96,7 @@ class KRecalibrator:
             |> range(start: -{days}d)
             |> filter(fn: (r) => r["_measurement"] == "energy_separated")
             |> filter(fn: (r) => r["{self.entity_tag}"] == "{house_id}")
-            |> filter(fn: (r) => r["_field"] == "heating_energy_kwh" or r["_field"] == "total_energy_kwh" or r["_field"] == "confidence")
+            |> filter(fn: (r) => r["_field"] == "heating_energy_kwh" or r["_field"] == "total_energy_kwh" or r["_field"] == "confidence" or r["_field"] == "avg_effective_outdoor_temp" or r["_field"] == "avg_outdoor_temp" or r["_field"] == "avg_indoor_temp")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
             |> sort(columns: ["_time"])
         '''
@@ -111,6 +112,9 @@ class KRecalibrator:
                         'heating_kwh': record.values.get('heating_energy_kwh', 0),
                         'total_kwh': record.values.get('total_energy_kwh', 0),
                         'confidence': record.values.get('confidence', 0.5),
+                        'avg_effective_outdoor_temp': record.values.get('avg_effective_outdoor_temp'),
+                        'avg_outdoor_temp': record.values.get('avg_outdoor_temp'),
+                        'avg_indoor_temp': record.values.get('avg_indoor_temp'),
                     })
             return results
         except Exception as e:
@@ -266,6 +270,90 @@ class KRecalibrator:
             confidence=confidence,
         )
 
+    def calculate_k_effective(
+        self,
+        house_id: str,
+        days: int = 30
+    ) -> Optional[CalibrationResult]:
+        """
+        Calculate k-value using effective outdoor temp (wind chill + solar).
+
+        Same 15th-percentile logic as calculate_k() but uses avg_effective_outdoor_temp
+        and avg_indoor_temp already stored in energy_separated by the calibrator.
+        """
+        energy_data = self.fetch_separated_energy(house_id, days)
+
+        if not energy_data:
+            logger.warning(f"No separated energy data for {house_id} (effective)")
+            return None
+
+        daily_k_values = []
+        effective_temps = []
+
+        for day in energy_data:
+            effective_outdoor = day.get('avg_effective_outdoor_temp')
+            indoor = day.get('avg_indoor_temp')
+            heating_kwh = day.get('heating_kwh', 0)
+
+            if effective_outdoor is None or indoor is None or heating_kwh <= 0:
+                continue
+
+            delta_t = indoor - effective_outdoor
+            if delta_t <= 0:
+                continue
+
+            degree_hours = delta_t * 24
+            k_implied = heating_kwh / degree_hours
+
+            if k_implied > 0 and k_implied < 1.0:
+                daily_k_values.append({
+                    'date': day['date'],
+                    'k': k_implied,
+                    'heating_kwh': heating_kwh,
+                    'delta_t': delta_t,
+                    'effective_outdoor': effective_outdoor,
+                    'confidence': day.get('confidence', 0.5),
+                })
+                effective_temps.append(effective_outdoor)
+
+        if len(daily_k_values) < MIN_DAYS_FOR_CALIBRATION:
+            logger.warning(f"Insufficient effective-temp data: {len(daily_k_values)} days (need {MIN_DAYS_FOR_CALIBRATION})")
+            return None
+
+        k_values = [d['k'] for d in daily_k_values]
+        sorted_k = sorted(k_values)
+
+        percentile_idx = max(0, int(len(sorted_k) * K_PERCENTILE / 100))
+        k_calibrated = sorted_k[percentile_idx]
+
+        k_median = statistics.median(k_values)
+        k_stddev = statistics.stdev(k_values) if len(k_values) > 1 else 0
+        avg_effective = sum(effective_temps) / len(effective_temps)
+
+        confidence = min(1.0, len(daily_k_values) / 14)
+        if k_stddev > 0:
+            cv = k_stddev / k_median
+            confidence *= max(0.5, 1.0 - cv)
+
+        logger.info(f"Effective-temp calibration for {house_id}:")
+        logger.info(f"  k_eff (15th pct): {k_calibrated:.4f} kW/°C")
+        logger.info(f"  k_eff (median):   {k_median:.4f} kW/°C")
+        logger.info(f"  Days used:        {len(daily_k_values)}")
+
+        return CalibrationResult(
+            house_id=house_id,
+            timestamp=datetime.now(timezone.utc),
+            k_value=k_calibrated,
+            k_median=k_median,
+            k_stddev=k_stddev,
+            days_used=len(daily_k_values),
+            total_days=len(energy_data),
+            avg_outdoor_temp=avg_effective,
+            confidence=confidence,
+            method="heating_only_15pct_effective",
+            avg_effective_outdoor_temp=avg_effective,
+        )
+
     def write_k_history(self, result: CalibrationResult) -> bool:
         """Write k-value to history for tracking convergence.
 
@@ -278,7 +366,8 @@ class KRecalibrator:
             return True
 
         from write_throttle import WriteThrottle
-        if not WriteThrottle.get().allow("k_calibration_history", result.house_id, 3600):
+        throttle_key = f"k_calibration_history:{result.method}"
+        if not WriteThrottle.get().allow(throttle_key, result.house_id, 3600):
             logger.info(f"Throttled k-history write for {result.house_id}")
             return True
 
@@ -287,7 +376,7 @@ class KRecalibrator:
             # to prevent duplicate points from multiple recalibration triggers
             day_start = result.timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
-            predicate = f'_measurement="k_calibration_history" AND {self.entity_tag}="{result.house_id}"'
+            predicate = f'_measurement="k_calibration_history" AND {self.entity_tag}="{result.house_id}" AND method="{result.method}"'
             try:
                 self.client.delete_api().delete(
                     start=day_start,
@@ -371,7 +460,12 @@ class KRecalibrator:
         # Write to history
         self.write_k_history(result)
 
-        # Update profile if requested
+        # Also compute and write effective-temp k (for comparison only)
+        result_eff = self.calculate_k_effective(house_id, days)
+        if result_eff:
+            self.write_k_history(result_eff)
+
+        # Update profile if requested (only with outdoor-temp k)
         if update_profile:
             self.update_profile(profile, result)
 
@@ -446,6 +540,11 @@ def recalibrate_entity(
             return None
 
         recalibrator.write_k_history(result)
+
+        # Also compute and write effective-temp k (for comparison only)
+        result_eff = recalibrator.calculate_k_effective(entity_id, days)
+        if result_eff:
+            recalibrator.write_k_history(result_eff)
 
         if update_config and not dry_run:
             _update_building_config(config_path, config, result)

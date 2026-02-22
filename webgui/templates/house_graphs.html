@@ -2857,9 +2857,10 @@
             .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
             .then(result => {
                 const data = result.data || [];
+                const dataEff = result.data_effective || [];
                 const currentK = result.current_k;
 
-                if (data.length === 0) {
+                if (data.length === 0 && dataEff.length === 0) {
                     chartDiv.innerHTML = '<div class="no-data-message">No k-value history yet. Recalibration runs every 72 hours.</div>';
                     return;
                 }
@@ -2869,6 +2870,9 @@
                 const kMedians = data.map(d => d.k_median * 1000);
                 const kStddevUpper = data.map(d => (d.k_median + d.k_stddev) * 1000);
                 const kStddevLower = data.map(d => (d.k_median - d.k_stddev) * 1000);
+
+                const timestampsEff = dataEff.map(d => d.timestamp_display);
+                const kValuesEff = dataEff.map(d => d.k_value * 1000);
 
                 const traces = [
                     // Stddev band (shaded area)
@@ -2888,13 +2892,27 @@
                         y: kValues,
                         type: 'scatter',
                         mode: 'lines+markers',
-                        name: 'k (15th pct)',
+                        name: 'k outdoor (15th pct)',
                         line: { color: '#e74c3c', width: 3 },
                         marker: {
                             size: data.map((_, i) => i === data.length - 1 ? 12 : 6),
                             color: '#e74c3c'
                         },
-                        hovertemplate: '%{x}<br>k: %{y:.1f} W/°C<extra></extra>'
+                        hovertemplate: '%{x}<br>k outdoor: %{y:.1f} W/°C<extra></extra>'
+                    },
+                    // K-value effective (15th percentile) - green line
+                    {
+                        x: timestampsEff,
+                        y: kValuesEff,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: 'k effective (15th pct)',
+                        line: { color: '#27ae60', width: 3 },
+                        marker: {
+                            size: dataEff.map((_, i) => i === dataEff.length - 1 ? 12 : 6),
+                            color: '#27ae60'
+                        },
+                        hovertemplate: '%{x}<br>k effective: %{y:.1f} W/°C<extra></extra>'
                     },
                     // K-median line
                     {
@@ -2949,11 +2967,19 @@
                         const changeStr = change >= 0 ? `+${change.toFixed(1)}` : `${change.toFixed(1)}`;
                         const changeColor = Math.abs(change) < 5 ? '#27ae60' : '#e67e22';  // Green if stable
 
+                        const latestEff = dataEff.length > 0 ? dataEff[dataEff.length - 1] : null;
+                        const effHtml = latestEff ? `
+                            <div class="metric-item">
+                                <div class="metric-value" style="color: #27ae60">${(latestEff.k_value * 1000).toFixed(1)} W/°C</div>
+                                <div class="metric-label">k effective (15th pct)</div>
+                            </div>` : '';
+
                         summaryDiv.innerHTML = `
                             <div class="metric-item">
                                 <div class="metric-value" style="color: #e74c3c">${(latest.k_value * 1000).toFixed(1)} W/°C</div>
-                                <div class="metric-label">Current k (15th pct)</div>
+                                <div class="metric-label">k outdoor (15th pct)</div>
                             </div>
+                            ${effHtml}
                             <div class="metric-item">
                                 <div class="metric-value" style="color: #3498db">${(latest.k_median * 1000).toFixed(1)} W/°C</div>
                                 <div class="metric-label">Median k</div>
