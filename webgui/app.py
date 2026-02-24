@@ -388,10 +388,20 @@ def dashboard():
                 import json as _json
                 with open(filepath, 'r') as f:
                     bdata = _json.load(f)
+                # Check onboarding completeness
+                onboarding_issues = []
+                if not bdata.get('meter_ids'):
+                    onboarding_issues.append('No meter ID configured')
+                energy_sep = bdata.get('energy_separation', {})
+                if not energy_sep.get('enabled'):
+                    onboarding_issues.append('Energy separation disabled')
+                if not energy_sep.get('heat_loss_k'):
+                    onboarding_issues.append('No k-value (needs energy data)')
                 buildings.append({
                     'id': building_id,
                     'name': bdata.get('friendly_name') or building_id,
                     'type': bdata.get('building_type', 'commercial'),
+                    'onboarding_issues': onboarding_issues,
                 })
             except Exception:
                 buildings.append({'id': building_id, 'name': building_id, 'type': 'commercial'})

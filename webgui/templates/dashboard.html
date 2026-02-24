@@ -61,7 +61,12 @@
                 </div>
                 {% else %}
                 <a href="{{ url_for('building_graphs', building_id=building.id) }}" class="house-card">
-                    <div class="house-icon">🏢</div>
+                    <div class="house-icon">
+                        🏢
+                        {% if building.onboarding_issues %}
+                        <span class="onboarding-badge" title="{{ building.onboarding_issues | join(', ') }}">{{ building.onboarding_issues | length }}</span>
+                        {% endif %}
+                    </div>
                     <div class="house-name">{{ building.name }}</div>
                     <div class="house-id">{{ building.id }}</div>
                 </a>

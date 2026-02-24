@@ -545,6 +545,25 @@ a:hover {
 .house-icon {
     font-size: 3rem;
     margin-bottom: 10px;
+    position: relative;
+    display: inline-block;
+}
+
+.onboarding-badge {
+    position: absolute;
+    top: -4px;
+    right: -12px;
+    background: #e74c3c;
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 700;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
 }
 
 .house-name {
