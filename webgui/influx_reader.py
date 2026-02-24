@@ -404,6 +404,99 @@ class InfluxReader:
             print(f"Failed to query weather history: {e}")
             return []
 
+    def get_building_weather_history(self, building_id: str, hours: int = 168) -> list:
+        """
+        Get historical weather data for a building's effective temperature chart.
+
+        Uses building_system outdoor_temp_fvc as actual temperature,
+        paired with SMHI weather observation data for wind/humidity.
+
+        Falls back to weather_observation if building sensor data isn't available.
+        """
+        self._ensure_connection()
+        if not self.client:
+            return []
+
+        try:
+            query_api = self.client.query_api()
+
+            # Get cloud cover from weather forecast history
+            cloud_data = self.get_cloud_cover_history(building_id, hours)
+
+            # Query outdoor temp from building_system
+            outdoor_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "building_system")
+                |> filter(fn: (r) => r["building_id"] == "{building_id}")
+                |> filter(fn: (r) => r["_field"] == "outdoor_temp_fvc")
+                |> aggregateWindow(every: 1h, fn: mean)
+                |> yield(name: "outdoor")
+            '''
+
+            # Query SMHI weather observations for wind/humidity
+            smhi_query = f'''
+                from(bucket: "{self.bucket}")
+                |> range(start: -{hours}h)
+                |> filter(fn: (r) => r["_measurement"] == "weather_observation")
+                |> filter(fn: (r) => r["house_id"] == "{building_id}")
+                |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> yield(name: "smhi")
+            '''
+
+            # Run both queries
+            outdoor_tables = query_api.query(outdoor_query, org=self.org)
+            smhi_tables = query_api.query(smhi_query, org=self.org)
+
+            # Build SMHI lookup by hour for wind/humidity
+            smhi_by_hour = {}
+            for table in smhi_tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    if ts:
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        hour_key = ts.replace(minute=0, second=0, microsecond=0).isoformat()
+                        smhi_by_hour[hour_key] = {
+                            'wind_speed': record.values.get('wind_speed', 0),
+                            'humidity': record.values.get('humidity', 50),
+                        }
+
+            results = []
+            last_cloud_cover = 4.0
+
+            for table in outdoor_tables:
+                for record in table.records:
+                    ts = record.get_time()
+                    temp = record.get_value()
+                    if ts and temp is not None:
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        swedish_time = ts.astimezone(SWEDISH_TZ)
+
+                        hour_key = ts.replace(minute=0, second=0, microsecond=0).isoformat()
+                        cloud_cover = cloud_data.get(hour_key, last_cloud_cover)
+                        if hour_key in cloud_data:
+                            last_cloud_cover = cloud_cover
+
+                        smhi = smhi_by_hour.get(hour_key, {})
+
+                        results.append({
+                            'timestamp': ts.isoformat(),
+                            'timestamp_swedish': swedish_time.strftime('%Y-%m-%d %H:%M'),
+                            'temperature': round(temp, 1),
+                            'wind_speed': smhi.get('wind_speed', 3.0),
+                            'humidity': smhi.get('humidity', 60),
+                            'cloud_cover': cloud_cover,
+                        })
+
+            results.sort(key=lambda x: x['timestamp'])
+            return results
+
+        except Exception as e:
+            print(f"Failed to query building weather history: {e}")
+            return []
+
     def get_historical_forecast_weather(self, house_id: str, hours: int = 168) -> list:
         """
         Get historical forecast weather data from weather_forecast_hourly measurement.
@@ -1445,31 +1538,72 @@ class InfluxReader:
                             days_with_predictions += 1
 
             elif results and is_building:
-                # Buildings: Query daily prediction_backtest measurement (k × degree_hours)
-                backtest_query = f'''
+                # Buildings: First try hourly energy_forecast (same as houses),
+                # then fall back to daily prediction_backtest from bootstrap
+                forecast_query = f'''
                     from(bucket: "{self.bucket}")
                     |> range(start: -{days}d)
-                    |> filter(fn: (r) => r["_measurement"] == "prediction_backtest")
+                    |> filter(fn: (r) => r["_measurement"] == "energy_forecast")
                     |> filter(fn: (r) => r["{entity_tag}"] == "{entity_id}")
-                    |> filter(fn: (r) => r["_field"] == "predicted_energy")
+                    |> filter(fn: (r) => r["_field"] == "heating_energy_kwh")
                 '''
 
-                backtest_tables = query_api.query(backtest_query, org=self.org)
+                forecast_tables = query_api.query(forecast_query, org=self.org)
 
-                for table in backtest_tables:
+                # Aggregate hourly forecasts by Swedish day
+                predicted_by_day = {}
+                for table in forecast_tables:
                     for record in table.records:
                         timestamp = record.get_time()
-                        predicted = record.get_value()
-                        if timestamp and predicted is not None:
+                        energy = record.get_value()
+                        if timestamp and energy is not None:
                             swedish_time = timestamp.astimezone(SWEDISH_TZ)
                             date_str = swedish_time.strftime('%Y-%m-%d')
-                            idx = date_to_idx.get(date_str)
-                            if idx is not None:
-                                results[idx]['predicted_kwh'] = round(predicted, 1)
-                                totals['predicted'] += predicted
-                                if not results[idx].get('no_breakdown'):
-                                    heating_with_predictions += results[idx]['heating_kwh']
-                                days_with_predictions += 1
+                            if date_str not in predicted_by_day:
+                                predicted_by_day[date_str] = {'sum': 0, 'count': 0}
+                            predicted_by_day[date_str]['sum'] += energy
+                            predicted_by_day[date_str]['count'] += 1
+
+                MIN_HOURLY_FORECASTS = 20
+
+                for date_str, idx in date_to_idx.items():
+                    forecast_data = predicted_by_day.get(date_str)
+                    if forecast_data and forecast_data['count'] >= MIN_HOURLY_FORECASTS:
+                        predicted = forecast_data['sum']
+                        results[idx]['predicted_kwh'] = round(predicted, 1)
+                        totals['predicted'] += predicted
+                        if not results[idx].get('no_breakdown'):
+                            heating_with_predictions += results[idx]['heating_kwh']
+                            days_with_predictions += 1
+
+                # Fall back to prediction_backtest for days without hourly forecasts
+                days_missing = [d for d, idx in date_to_idx.items()
+                                if results[idx]['predicted_kwh'] is None]
+                if days_missing:
+                    backtest_query = f'''
+                        from(bucket: "{self.bucket}")
+                        |> range(start: -{days}d)
+                        |> filter(fn: (r) => r["_measurement"] == "prediction_backtest")
+                        |> filter(fn: (r) => r["{entity_tag}"] == "{entity_id}")
+                        |> filter(fn: (r) => r["_field"] == "predicted_energy")
+                    '''
+
+                    backtest_tables = query_api.query(backtest_query, org=self.org)
+
+                    for table in backtest_tables:
+                        for record in table.records:
+                            timestamp = record.get_time()
+                            predicted = record.get_value()
+                            if timestamp and predicted is not None:
+                                swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                                date_str = swedish_time.strftime('%Y-%m-%d')
+                                idx = date_to_idx.get(date_str)
+                                if idx is not None and results[idx]['predicted_kwh'] is None:
+                                    results[idx]['predicted_kwh'] = round(predicted, 1)
+                                    totals['predicted'] += predicted
+                                    if not results[idx].get('no_breakdown'):
+                                        heating_with_predictions += results[idx]['heating_kwh']
+                                        days_with_predictions += 1
 
             # Query outdoor temps for display (group by Swedish day)
             if results:
@@ -1662,6 +1796,47 @@ class InfluxReader:
                         avg_outdoor = outdoor_data['sum'] / outdoor_data['count']
                         results[idx]['avg_outdoor'] = round(avg_outdoor, 1)
 
+            # Aggregate hourly energy_forecast into daily predictions
+            heating_with_predictions = 0
+            days_with_predictions = 0
+            if results:
+                forecast_query = f'''
+                    from(bucket: "{self.bucket}")
+                    |> range(start: -{days}d)
+                    |> filter(fn: (r) => r["_measurement"] == "energy_forecast")
+                    |> filter(fn: (r) => exists r["building_id"])
+                    |> filter(fn: (r) => r["_field"] == "heating_energy_kwh")
+                '''
+
+                forecast_tables = query_api.query(forecast_query, org=self.org)
+
+                # Aggregate hourly forecasts by Swedish day across all buildings
+                predicted_by_day = {}
+                for table in forecast_tables:
+                    for record in table.records:
+                        timestamp = record.get_time()
+                        energy = record.get_value()
+                        if timestamp and energy is not None:
+                            swedish_time = timestamp.astimezone(SWEDISH_TZ)
+                            date_str = swedish_time.strftime('%Y-%m-%d')
+                            if date_str not in predicted_by_day:
+                                predicted_by_day[date_str] = {'sum': 0, 'count': 0}
+                            predicted_by_day[date_str]['sum'] += energy
+                            predicted_by_day[date_str]['count'] += 1
+
+                MIN_HOURLY_FORECASTS = 20
+                totals['predicted'] = 0
+
+                for date_str, idx in date_to_idx.items():
+                    forecast_data = predicted_by_day.get(date_str)
+                    if forecast_data and forecast_data['count'] >= MIN_HOURLY_FORECASTS:
+                        predicted = forecast_data['sum']
+                        results[idx]['predicted_kwh'] = round(predicted, 1)
+                        totals['predicted'] += predicted
+                        if not results[idx].get('no_breakdown'):
+                            heating_with_predictions += results[idx]['heating_kwh']
+                            days_with_predictions += 1
+
             totals = {k: round(v, 1) for k, v in totals.items()}
             if totals['actual'] > 0:
                 totals['heating_pct'] = round(100 * totals['heating'] / totals['actual'], 1)
@@ -1670,8 +1845,12 @@ class InfluxReader:
                 totals['heating_pct'] = 0
                 totals['dhw_pct'] = 0
 
-            totals['prediction_accuracy'] = None
-            totals['days_with_predictions'] = 0
+            if heating_with_predictions > 0 and totals.get('predicted', 0) > 0:
+                totals['prediction_accuracy'] = round(100 * totals['predicted'] / heating_with_predictions, 1)
+                totals['days_with_predictions'] = days_with_predictions
+            else:
+                totals['prediction_accuracy'] = None
+                totals['days_with_predictions'] = 0
 
             return {
                 'data': results,
@@ -2058,10 +2237,8 @@ class InfluxReader:
                                       k_value: float = None, assumed_indoor_temp: float = 21.0,
                                       latitude: float = None, longitude: float = None) -> dict:
         """
-        Compute hourly energy forecast for a building using k-value model + SMHI weather forecast.
-
-        Unlike houses (which pre-compute forecasts), buildings compute on-the-fly:
-        heating_power_kw = k × max(0, indoor_temp - outdoor_temp)
+        Compute hourly energy forecast for a building using EnergyForecaster
+        (k-value model with effective temperature from wind/solar/humidity).
 
         Args:
             building_id: Building identifier
@@ -2080,6 +2257,7 @@ class InfluxReader:
             import sys, os
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
             from smhi_weather import SMHIWeather
+            from energy_forecaster import EnergyForecaster
             import logging
 
             client = SMHIWeather(latitude, longitude, logging.getLogger('smhi_forecast'))
@@ -2088,43 +2266,43 @@ class InfluxReader:
             if not weather:
                 return {'forecast': [], 'summary': {}, 'error': 'Failed to fetch weather forecast'}
 
+            forecaster = EnergyForecaster(
+                heat_loss_k=k_value,
+                target_indoor_temp=assumed_indoor_temp,
+                latitude=latitude,
+                longitude=longitude,
+            )
+            energy_points = forecaster.generate_forecast(weather_forecast=weather)
+
+            if not energy_points:
+                return {'forecast': [], 'summary': {}, 'error': 'Forecast generation returned empty'}
+
             forecast = []
             total_energy = 0
             peak_power = 0
             peak_hour = None
 
-            for point in weather:
-                outdoor_temp = point.get('temp')
-                if outdoor_temp is None:
-                    continue
-
-                timestamp_str = point.get('time', '')
-                try:
-                    ts = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                except (ValueError, TypeError):
-                    continue
-
+            for fp in energy_points:
+                ts = fp.timestamp
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
                 swedish_time = ts.astimezone(SWEDISH_TZ)
-
-                # Simple k-value model: power = k × degree_difference
-                degree_diff = max(0, assumed_indoor_temp - outdoor_temp)
-                heating_power_kw = k_value * degree_diff
-                heating_energy_kwh = heating_power_kw  # 1 hour interval
 
                 forecast.append({
                     'timestamp': ts.isoformat(),
                     'timestamp_display': swedish_time.strftime('%H:%M'),
                     'timestamp_date': swedish_time.strftime('%Y-%m-%d'),
                     'hour': swedish_time.hour,
-                    'heating_energy_kwh': round(heating_energy_kwh, 2),
-                    'heating_power_kw': round(heating_power_kw, 3),
-                    'outdoor_temp': round(outdoor_temp, 1),
-                    'lead_time_hours': round(point.get('hour', 0), 1),
+                    'heating_energy_kwh': round(fp.heating_energy_kwh, 2),
+                    'heating_power_kw': round(fp.heating_power_kw, 3),
+                    'outdoor_temp': round(fp.outdoor_temp, 1),
+                    'effective_temp': round(fp.effective_temp, 1),
+                    'lead_time_hours': round(fp.lead_time_hours, 1),
                 })
 
-                total_energy += heating_energy_kwh
-                if heating_power_kw > peak_power:
-                    peak_power = heating_power_kw
+                total_energy += fp.heating_energy_kwh
+                if fp.heating_power_kw > peak_power:
+                    peak_power = fp.heating_power_kw
                     peak_hour = swedish_time.strftime('%H:%M')
 
             summary = {
@@ -2152,13 +2330,14 @@ class InfluxReader:
     def get_building_energy_forecast_all(self, hours: int = 24) -> dict:
         """
         Get aggregated energy forecast across ALL buildings.
-        Loads building configs, fetches SMHI weather per unique location,
-        computes k-value forecasts, and sums by hour.
+        Uses EnergyForecaster per building (effective temperature model),
+        fetches SMHI weather per unique location, and sums by hour.
         """
         try:
             import sys, os, json, glob, logging
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
             from smhi_weather import SMHIWeather
+            from energy_forecaster import EnergyForecaster
 
             buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
             config_files = glob.glob(os.path.join(buildings_dir, '*.json'))
@@ -2193,33 +2372,30 @@ class InfluxReader:
                     location_groups[loc_key] = {'lat': b['lat'], 'lon': b['lon'], 'buildings': []}
                 location_groups[loc_key]['buildings'].append(b)
 
-            # Fetch weather per unique location and compute forecasts
+            # Fetch weather per unique location and run EnergyForecaster per building
             hour_data = {}  # iso_key -> {energy, power, outdoor_temps, building_ids}
 
             for loc_key, group in location_groups.items():
-                client = SMHIWeather(group['lat'], group['lon'], logging.getLogger('smhi_forecast'))
-                weather = client.get_forecast(hours_ahead=hours)
+                weather_client = SMHIWeather(group['lat'], group['lon'], logging.getLogger('smhi_forecast'))
+                weather = weather_client.get_forecast(hours_ahead=hours)
                 if not weather:
                     continue
 
                 for b in group['buildings']:
-                    for point in weather:
-                        outdoor_temp = point.get('temp')
-                        if outdoor_temp is None:
-                            continue
+                    forecaster = EnergyForecaster(
+                        heat_loss_k=b['k'],
+                        target_indoor_temp=b['indoor'],
+                        latitude=b['lat'],
+                        longitude=b['lon'],
+                    )
+                    energy_points = forecaster.generate_forecast(weather_forecast=weather)
 
-                        timestamp_str = point.get('time', '')
-                        try:
-                            ts = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                        except (ValueError, TypeError):
-                            continue
-
+                    for fp in energy_points:
+                        ts = fp.timestamp
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
                         hour_key = ts.replace(minute=0, second=0, microsecond=0)
                         key = hour_key.isoformat()
-
-                        degree_diff = max(0, b['indoor'] - outdoor_temp)
-                        power_kw = b['k'] * degree_diff
-                        energy_kwh = power_kw  # 1 hour interval
 
                         if key not in hour_data:
                             hour_data[key] = {
@@ -2228,11 +2404,10 @@ class InfluxReader:
                                 'outdoor_temps': [], 'building_ids': set()
                             }
 
-                        hour_data[key]['energy'] += energy_kwh
-                        hour_data[key]['power'] += power_kw
+                        hour_data[key]['energy'] += fp.heating_energy_kwh
+                        hour_data[key]['power'] += fp.heating_power_kw
                         hour_data[key]['building_ids'].add(b['id'])
-                        if outdoor_temp is not None:
-                            hour_data[key]['outdoor_temps'].append(outdoor_temp)
+                        hour_data[key]['outdoor_temps'].append(fp.outdoor_temp)
 
             # Build results
             forecast = []

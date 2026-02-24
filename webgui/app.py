@@ -1589,6 +1589,234 @@ def api_building_energy_forecast(building_id):
     return jsonify(result)
 
 
+@app.route('/api/building/<building_id>/effective-temperature')
+@require_login
+def api_building_effective_temperature(building_id):
+    """Historical effective temperature for a building (actual vs effective outdoor temp)."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)
+
+    # Load building config for location
+    buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+    try:
+        import json
+        with open(os.path.join(buildings_dir, f'{building_id}.json'), 'r') as f:
+            config = json.load(f)
+        latitude = config.get('location', {}).get('latitude')
+        longitude = config.get('location', {}).get('longitude')
+    except (FileNotFoundError, json.JSONDecodeError):
+        latitude = None
+        longitude = None
+
+    if not latitude or not longitude:
+        return jsonify({'error': 'Building location not configured', 'data': []})
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+
+    # Use building_system outdoor sensor + SMHI wind/humidity
+    weather_data = influx.get_building_weather_history(building_id, hours=hours)
+
+    if not weather_data:
+        return jsonify({'error': 'No weather data available', 'data': []})
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
+    from datetime import datetime
+
+    model = SimpleWeatherModel()
+
+    results = []
+    for w in weather_data:
+        if w.get('temperature') is None:
+            continue
+        try:
+            timestamp = datetime.fromisoformat(w['timestamp'].replace('Z', '+00:00'))
+            conditions = WeatherConditions(
+                timestamp=timestamp,
+                temperature=w['temperature'],
+                wind_speed=w.get('wind_speed') or 0,
+                humidity=w.get('humidity') or 50,
+                cloud_cover=w.get('cloud_cover', 4.0),
+                latitude=latitude,
+                longitude=longitude
+            )
+            eff = model.effective_temperature(conditions)
+            results.append({
+                'timestamp': w['timestamp'],
+                'timestamp_display': w['timestamp_swedish'],
+                'actual_temp': round(w['temperature'], 1),
+                'effective_temp': round(eff.effective_temp, 1),
+                'wind_effect': round(eff.wind_effect, 2),
+                'humidity_effect': round(eff.humidity_effect, 2),
+                'solar_effect': round(eff.solar_effect, 2),
+                'sun_elevation': round(eff.sun_elevation, 1) if eff.sun_elevation else None,
+                'wind_speed': w.get('wind_speed'),
+                'humidity': w.get('humidity'),
+                'cloud_cover': w.get('cloud_cover'),
+            })
+        except Exception:
+            continue
+
+    return jsonify({
+        'data': results,
+        'model_version': model.model_version,
+        'location': {'latitude': latitude, 'longitude': longitude}
+    })
+
+
+@app.route('/api/building/<building_id>/forecast-effective-temperature')
+@require_login
+def api_building_forecast_effective_temperature(building_id):
+    """Forecast effective temperature for a building (12h ahead from SMHI)."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours_ahead = request.args.get('hours', 12, type=int)
+    hours_ahead = min(max(hours_ahead, 1), 48)
+
+    buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+    try:
+        import json
+        with open(os.path.join(buildings_dir, f'{building_id}.json'), 'r') as f:
+            config = json.load(f)
+        latitude = config.get('location', {}).get('latitude')
+        longitude = config.get('location', {}).get('longitude')
+    except (FileNotFoundError, json.JSONDecodeError):
+        latitude = None
+        longitude = None
+
+    if not latitude or not longitude:
+        return jsonify({'error': 'Building location not configured', 'data': []})
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    forecast_data = influx.get_smhi_forecast(latitude, longitude, hours_ahead=hours_ahead)
+
+    if not forecast_data:
+        return jsonify({'error': 'No forecast data available', 'data': []})
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
+    from datetime import datetime
+
+    model = SimpleWeatherModel()
+
+    results = []
+    for f in forecast_data:
+        if f.get('temperature') is None:
+            continue
+        try:
+            timestamp = datetime.fromisoformat(f['timestamp'].replace('Z', '+00:00'))
+            conditions = WeatherConditions(
+                timestamp=timestamp,
+                temperature=f['temperature'],
+                wind_speed=f.get('wind_speed', 3.0),
+                humidity=f.get('humidity', 60.0),
+                cloud_cover=f.get('cloud_cover', 4.0),
+                latitude=latitude,
+                longitude=longitude
+            )
+            eff = model.effective_temperature(conditions)
+            results.append({
+                'timestamp': f['timestamp'],
+                'timestamp_display': f['timestamp_swedish'],
+                'forecast_temp': round(f['temperature'], 1),
+                'effective_temp': round(eff.effective_temp, 1),
+                'wind_effect': round(eff.wind_effect, 2),
+                'humidity_effect': round(eff.humidity_effect, 2),
+                'solar_effect': round(eff.solar_effect, 2),
+                'sun_elevation': round(eff.sun_elevation, 1) if eff.sun_elevation else None,
+                'wind_speed': f.get('wind_speed'),
+                'humidity': f.get('humidity'),
+                'cloud_cover': f.get('cloud_cover'),
+                'is_forecast': True
+            })
+        except Exception:
+            continue
+
+    return jsonify({
+        'data': results,
+        'model_version': model.model_version,
+        'hours_ahead': hours_ahead
+    })
+
+
+@app.route('/api/building/<building_id>/historical-forecast-effective-temperature')
+@require_login
+def api_building_historical_forecast_effective_temperature(building_id):
+    """Historical forecast effective temperature for a building (what was predicted for past hours)."""
+    if not user_manager.can_access_building(session.get('user_id'), building_id):
+        return jsonify({'error': 'Access denied'}), 403
+
+    hours = request.args.get('hours', 168, type=int)
+    hours = min(max(hours, 24), 720)
+
+    buildings_dir = os.path.join(os.path.dirname(__file__), '..', 'buildings')
+    try:
+        import json
+        with open(os.path.join(buildings_dir, f'{building_id}.json'), 'r') as f:
+            config = json.load(f)
+        latitude = config.get('location', {}).get('latitude')
+        longitude = config.get('location', {}).get('longitude')
+    except (FileNotFoundError, json.JSONDecodeError):
+        latitude = None
+        longitude = None
+
+    if not latitude or not longitude:
+        return jsonify({'data': []})
+
+    from influx_reader import get_influx_reader
+    influx = get_influx_reader()
+    forecast_data = influx.get_historical_forecast_weather(building_id, hours=hours)
+
+    if not forecast_data:
+        return jsonify({'data': []})
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from energy_models.weather_energy_model import SimpleWeatherModel, WeatherConditions
+    from datetime import datetime
+
+    model = SimpleWeatherModel()
+
+    results = []
+    for f in forecast_data:
+        if f.get('temperature') is None:
+            continue
+        try:
+            timestamp = datetime.fromisoformat(f['timestamp'].replace('Z', '+00:00'))
+            conditions = WeatherConditions(
+                timestamp=timestamp,
+                temperature=f['temperature'],
+                wind_speed=f.get('wind_speed', 3.0),
+                humidity=f.get('humidity', 60.0),
+                cloud_cover=f.get('cloud_cover', 4.0),
+                latitude=latitude,
+                longitude=longitude
+            )
+            eff = model.effective_temperature(conditions)
+            results.append({
+                'timestamp': f['timestamp'],
+                'timestamp_display': f['timestamp_swedish'],
+                'forecast_temp': round(f['temperature'], 1),
+                'effective_temp': round(eff.effective_temp, 1),
+                'wind_effect': round(eff.wind_effect, 2),
+                'humidity_effect': round(eff.humidity_effect, 2),
+                'solar_effect': round(eff.solar_effect, 2),
+                'is_historical_forecast': True
+            })
+        except Exception:
+            continue
+
+    return jsonify({
+        'data': results,
+        'model_version': model.model_version,
+    })
+
+
 @app.route('/building/<building_id>/info')
 @require_login
 def building_info(building_id):

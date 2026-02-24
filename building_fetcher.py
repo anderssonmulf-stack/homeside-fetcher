@@ -223,6 +223,88 @@ class BuildingInfluxWriter:
             self.logger.error(f"InfluxDB alarm write failed: {e}")
             return False
 
+    def write_energy_forecast(self, forecast_points: list) -> bool:
+        """Write hourly energy forecast points to InfluxDB.
+
+        Args:
+            forecast_points: List of dicts with keys:
+                timestamp, heating_power_kw, heating_energy_kwh,
+                outdoor_temp, lead_time_hours
+
+        Returns:
+            True if write succeeded
+        """
+        if not self._should_write() or not forecast_points:
+            return False
+
+        try:
+            points = []
+            for fp in forecast_points:
+                point = Point("energy_forecast") \
+                    .tag("building_id", self.building_id) \
+                    .field("heating_power_kw", round(float(fp['heating_power_kw']), 3)) \
+                    .field("heating_energy_kwh", round(float(fp['heating_energy_kwh']), 3)) \
+                    .field("outdoor_temp", round(float(fp['outdoor_temp']), 1)) \
+                    .field("lead_time_hours", round(float(fp['lead_time_hours']), 1)) \
+                    .time(fp['timestamp'], WritePrecision.S)
+                points.append(point)
+
+            if points:
+                self.write_api.write(bucket=self.bucket, org=self.org, record=points)
+                self.logger.info(f"Wrote {len(points)} energy forecast points to InfluxDB")
+                return True
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Failed to write energy forecast: {e}")
+            return False
+
+    def delete_future_energy_forecasts(self) -> bool:
+        """Delete future energy forecast points to avoid accumulation."""
+        if not self._should_write():
+            return False
+        try:
+            delete_api = self.client.delete_api()
+            start = datetime.now(timezone.utc)
+            stop = datetime.now(timezone.utc) + timedelta(days=7)
+            predicate = f'_measurement="energy_forecast" AND building_id="{self.building_id}"'
+            delete_api.delete(start=start, stop=stop, predicate=predicate,
+                              bucket=self.bucket, org=self.org)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to delete future energy forecasts: {e}")
+            return False
+
+    def write_weather_observation(self, observation) -> bool:
+        """Write current SMHI weather observation to InfluxDB (weather_observation measurement).
+
+        Uses house_id tag (not building_id) for consistency with the shared
+        weather_observation schema used across houses and buildings.
+        """
+        if not self._should_write() or not observation:
+            return False
+
+        try:
+            point = Point("weather_observation") \
+                .tag("house_id", self.building_id) \
+                .tag("station_name", observation.station.name) \
+                .tag("station_id", str(observation.station.id)) \
+                .field("temperature", round(float(observation.temperature), 2)) \
+                .field("distance_km", round(float(observation.station.distance_km), 2)) \
+                .time(observation.timestamp, WritePrecision.S)
+
+            if observation.wind_speed is not None:
+                point.field("wind_speed", round(float(observation.wind_speed), 2))
+            if observation.humidity is not None:
+                point.field("humidity", round(float(observation.humidity), 2))
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write weather observation: {e}")
+            return False
+
     def write_event(self, event_type, message, detail=""):
         """Write an operational event to InfluxDB for technician visibility."""
         if not self._should_write():
@@ -552,6 +634,7 @@ def main():
     SWEDISH_TZ = ZoneInfo('Europe/Stockholm')
     last_pipeline_date = None  # Swedish date string of last energy separation run
     last_recalibration_time = None  # datetime of last k recalibration
+    last_forecast_time = None  # datetime of last energy forecast write
 
     try:
         while True:
@@ -696,6 +779,61 @@ def main():
                         )
                 else:
                     logger.info("K recalibration: insufficient data")
+
+            # Every 2 hours: generate energy forecast from SMHI weather + k-value
+            if influx and (last_forecast_time is None
+                           or (now - last_forecast_time).total_seconds() >= 2 * 3600):
+                k_value = config.get('energy_separation', {}).get('heat_loss_k')
+                lat = config.get('location', {}).get('latitude')
+                lon = config.get('location', {}).get('longitude')
+                assumed_indoor = config.get('energy_separation', {}).get('assumed_indoor_temp', 21.0)
+
+                if lat and lon:
+                    try:
+                        from smhi_weather import SMHIWeather
+
+                        weather_client = SMHIWeather(lat, lon, logger)
+
+                        # Always write current weather observation
+                        obs = weather_client.get_current_weather()
+                        if obs and obs.temperature is not None:
+                            influx.write_weather_observation(obs)
+
+                        weather = weather_client.get_forecast(hours_ahead=48)
+
+                        if weather and k_value:
+                            from energy_forecaster import EnergyForecaster
+                            forecaster = EnergyForecaster(
+                                heat_loss_k=k_value,
+                                target_indoor_temp=assumed_indoor,
+                                latitude=lat,
+                                longitude=lon,
+                                logger=logger,
+                            )
+                            energy_points = forecaster.generate_forecast(
+                                weather_forecast=weather,
+                            )
+                            if energy_points:
+                                influx.delete_future_energy_forecasts()
+                                forecast_dicts = [{
+                                    'timestamp': fp.timestamp,
+                                    'heating_power_kw': fp.heating_power_kw,
+                                    'heating_energy_kwh': fp.heating_energy_kwh,
+                                    'outdoor_temp': fp.outdoor_temp,
+                                    'lead_time_hours': fp.lead_time_hours,
+                                } for fp in energy_points]
+                                influx.write_energy_forecast(forecast_dicts)
+                                logger.info(f"Energy forecast: {len(energy_points)} points written (k={k_value:.4f})")
+                        elif not k_value:
+                            logger.info("Energy forecast: skipped (no k-value yet)")
+                        else:
+                            logger.warning("Energy forecast: SMHI weather fetch returned empty")
+                        last_forecast_time = now
+                    except Exception as e:
+                        logger.error(f"Energy forecast generation failed: {e}")
+                        last_forecast_time = now  # Don't retry immediately
+                else:
+                    last_forecast_time = now  # No k-value yet, skip until recalibrated
 
             # Re-read interval from building config (live reload — no restart needed)
             refreshed_config = load_building_config(args.building)

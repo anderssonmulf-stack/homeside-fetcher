@@ -204,6 +204,37 @@
         <div id="efficiency-chart" class="chart-container"></div>
         <div id="efficiency-summary" class="metric-summary"></div>
     </div>
+
+    <!-- Effective Temperature Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Effective Temperature</h2>
+            <div class="chart-controls">
+                <select id="eff-temp-days-select" class="role-select" onchange="updateEffectiveTempChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Compares actual outdoor temperature with "effective" temperature
+            that accounts for wind chill, humidity, and solar effects.
+            <strong>Dotted</strong> = effective temp. <strong>Dashed</strong> = 12h forecast.
+        </p>
+        <div id="effective-temp-chart" class="chart-container"></div>
+    </div>
+
+    <!-- Weather Effect Breakdown Chart -->
+    <div class="card">
+        <h2>Weather Effect Breakdown</h2>
+        <p class="card-description">
+            Shows how wind, humidity, and solar radiation affect the effective temperature.
+            Negative values = colder, Positive = warmer.
+        </p>
+        <div id="effect-breakdown-chart" class="chart-container"></div>
+    </div>
     {% endif %}{# not is_aggregate: single-building charts #}
 
     <!-- Energy Forecast (Next 24h) — shown for both aggregate and single -->
@@ -2169,7 +2200,7 @@
 
         // Slider: before/after split
         const sliderEl = document.getElementById('flex-split-slider');
-        const beforePct = sliderEl ? parseInt(sliderEl.value) / 100 : 0.5;
+        const beforePct = sliderEl ? (100 - parseInt(sliderEl.value)) / 100 : 0.5;
 
         // Max compensation bars per capped bar (window minus the bar itself)
         const compPerBar = Math.max(0, flexRoofMaxWindow - 1);
@@ -2562,7 +2593,7 @@
         }
 
         const sliderEl = document.getElementById('flex-split-slider');
-        const beforePct = sliderEl ? parseInt(sliderEl.value) : 50;
+        const beforePct = sliderEl ? (100 - parseInt(sliderEl.value)) : 50;
 
         summaryDiv.innerHTML = `
             <div class="metric-item">
@@ -2601,8 +2632,8 @@
     }
 
     function onFlexSplitChange(val) {
-        const before = parseInt(val);
-        const after = 100 - before;
+        const after = parseInt(val);
+        const before = 100 - after;
         const label = document.getElementById('flex-split-label');
         if (label) label.textContent = `${before}/${after}`;
 
@@ -2748,6 +2779,257 @@
             });
     }
 
+    // Insert null entries at time gaps to break connecting lines
+    function insertGapNulls(data, timestampKey, maxGapMs) {
+        if (data.length < 2) return data;
+        const result = [data[0]];
+        for (let i = 1; i < data.length; i++) {
+            const prev = new Date(data[i - 1][timestampKey]).getTime();
+            const curr = new Date(data[i][timestampKey]).getTime();
+            if (curr - prev > maxGapMs) {
+                const midTime = new Date((prev + curr) / 2);
+                const midDisplay = midTime.toISOString();
+                const nullEntry = {};
+                for (const key of Object.keys(data[i])) {
+                    nullEntry[key] = null;
+                }
+                nullEntry['timestamp_display'] = midDisplay;
+                nullEntry['timestamp'] = midTime.toISOString();
+                result.push(nullEntry);
+            }
+            result.push(data[i]);
+        }
+        return result;
+    }
+
+    // Effective Temperature Chart (actual vs effective outdoor, with forecast)
+    function updateEffectiveTempChart() {
+        const hours = document.getElementById('eff-temp-days-select').value;
+        const chartDiv = document.getElementById('effective-temp-chart');
+        const breakdownDiv = document.getElementById('effect-breakdown-chart');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading weather data...</div>';
+        breakdownDiv.innerHTML = '';
+
+        const historyUrl = `/api/building/${buildingId}/effective-temperature?hours=${hours}`;
+        const forecastUrl = `/api/building/${buildingId}/forecast-effective-temperature?hours=12`;
+        const histForecastUrl = `/api/building/${buildingId}/historical-forecast-effective-temperature?hours=${hours}`;
+
+        Promise.all([
+            fetch(historyUrl).then(r => r.ok ? r.json() : { data: [] }),
+            fetch(forecastUrl).then(r => r.ok ? r.json() : { data: [] }),
+            fetch(histForecastUrl).then(r => r.ok ? r.json() : { data: [] })
+        ])
+        .then(([historyResult, forecastResult, histForecastResult]) => {
+            const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+            const histData = insertGapNulls(historyResult.data || [], 'timestamp', TWO_HOURS_MS);
+            const forecastData = forecastResult.data || [];
+            const histForecastData = insertGapNulls(histForecastResult.data || [], 'timestamp', TWO_HOURS_MS);
+
+            if (histData.length === 0 && forecastData.length === 0) {
+                chartDiv.innerHTML = '<div class="no-data-message">No weather data available.</div>';
+                breakdownDiv.innerHTML = '';
+                return;
+            }
+
+            const histTimestamps = histData.map(d => d.timestamp_display || d.timestamp);
+            const forecastTimestamps = forecastData.map(d => d.timestamp_display || d.timestamp);
+            const histForecastTimestamps = histForecastData.map(d => d.timestamp_display || d.timestamp);
+
+            // Find "now" line position
+            let nowTime = null;
+            for (let i = histData.length - 1; i >= 0; i--) {
+                if (histData[i].actual_temp != null) {
+                    nowTime = histData[i].timestamp_display || histData[i].timestamp;
+                    break;
+                }
+            }
+
+            const tempTraces = [
+                {
+                    x: histTimestamps,
+                    y: histData.map(d => d.actual_temp),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Actual Outdoor',
+                    line: { color: '#3498db', width: 2 },
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Actual: %{y}°C<extra></extra>'
+                },
+                {
+                    x: histTimestamps,
+                    y: histData.map(d => d.effective_temp),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Effective Temp',
+                    line: { color: '#e74c3c', width: 2, dash: 'dot' },
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Effective: %{y}°C<extra></extra>'
+                }
+            ];
+
+            if (histForecastData.length > 0) {
+                tempTraces.push({
+                    x: histForecastTimestamps,
+                    y: histForecastData.map(d => d.forecast_temp),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Forecast Outdoor (hist)',
+                    line: { color: '#85c1e9', width: 1.5, dash: 'dash' },
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Fcst Outdoor: %{y}°C<extra></extra>'
+                });
+                tempTraces.push({
+                    x: histForecastTimestamps,
+                    y: histForecastData.map(d => d.effective_temp),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Forecast Effective (hist)',
+                    line: { color: '#f0b27a', width: 1.5, dash: 'dash' },
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Fcst Effective: %{y}°C<extra></extra>'
+                });
+            }
+
+            if (forecastData.length > 0) {
+                tempTraces.push({
+                    x: forecastTimestamps,
+                    y: forecastData.map(d => d.forecast_temp),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Forecast Outdoor',
+                    line: { color: '#3498db', width: 2, dash: 'dash' },
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Forecast: %{y}°C<extra></extra>'
+                });
+                tempTraces.push({
+                    x: forecastTimestamps,
+                    y: forecastData.map(d => d.effective_temp),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Forecast Effective',
+                    line: { color: '#e74c3c', width: 2, dash: 'dashdot' },
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Forecast Eff: %{y}°C<extra></extra>'
+                });
+            }
+
+            const tempLayout = {
+                xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                yaxis: { title: 'Temperature (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                height: 350,
+                margin: { l: 60, r: 30, t: 30, b: 60 },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: '#ffffff',
+                font: { family: 'system-ui, -apple-system, sans-serif' },
+                legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                dragmode: 'pan',
+                hovermode: 'x unified',
+                shapes: nowTime ? [{
+                    type: 'line', x0: nowTime, x1: nowTime, y0: 0, y1: 1, yref: 'paper',
+                    line: { color: 'rgba(0,0,0,0.3)', width: 2, dash: 'dot' }
+                }] : [],
+                annotations: nowTime ? [{
+                    x: nowTime, y: 1, yref: 'paper', text: 'Now', showarrow: false,
+                    font: { size: 10, color: 'rgba(0,0,0,0.5)' }, yanchor: 'bottom'
+                }] : []
+            };
+
+            chartDiv.innerHTML = '';
+            Plotly.newPlot('effective-temp-chart', tempTraces, tempLayout, chartConfig);
+
+            // Weather Effect Breakdown chart
+            const breakdownTraces = [
+                {
+                    x: histTimestamps,
+                    y: histData.map(d => d.wind_effect),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Wind Effect',
+                    fill: 'tozeroy',
+                    line: { color: '#9b59b6', width: 1 },
+                    fillcolor: 'rgba(155, 89, 182, 0.3)',
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Wind: %{y}°C<extra></extra>'
+                },
+                {
+                    x: histTimestamps,
+                    y: histData.map(d => d.humidity_effect),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Humidity Effect',
+                    fill: 'tozeroy',
+                    line: { color: '#3498db', width: 1 },
+                    fillcolor: 'rgba(52, 152, 219, 0.3)',
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Humidity: %{y}°C<extra></extra>'
+                },
+                {
+                    x: histTimestamps,
+                    y: histData.map(d => d.solar_effect),
+                    type: 'scatter', mode: 'lines',
+                    name: 'Solar Effect',
+                    fill: 'tozeroy',
+                    line: { color: '#f39c12', width: 1 },
+                    fillcolor: 'rgba(243, 156, 18, 0.3)',
+                    connectgaps: false,
+                    hovertemplate: '%{x}<br>Solar: %{y}°C<extra></extra>'
+                }
+            ];
+
+            if (forecastData.length > 0) {
+                breakdownTraces.push(
+                    {
+                        x: forecastTimestamps,
+                        y: forecastData.map(d => d.wind_effect),
+                        type: 'scatter', mode: 'lines',
+                        name: 'Wind (forecast)',
+                        line: { color: '#9b59b6', width: 2, dash: 'dash' },
+                        connectgaps: false,
+                        hovertemplate: '%{x}<br>Wind (fcst): %{y}°C<extra></extra>'
+                    },
+                    {
+                        x: forecastTimestamps,
+                        y: forecastData.map(d => d.humidity_effect),
+                        type: 'scatter', mode: 'lines',
+                        name: 'Humidity (forecast)',
+                        line: { color: '#3498db', width: 2, dash: 'dash' },
+                        connectgaps: false,
+                        hovertemplate: '%{x}<br>Humidity (fcst): %{y}°C<extra></extra>'
+                    },
+                    {
+                        x: forecastTimestamps,
+                        y: forecastData.map(d => d.solar_effect),
+                        type: 'scatter', mode: 'lines',
+                        name: 'Solar (forecast)',
+                        line: { color: '#f39c12', width: 2, dash: 'dash' },
+                        connectgaps: false,
+                        hovertemplate: '%{x}<br>Solar (fcst): %{y}°C<extra></extra>'
+                    }
+                );
+            }
+
+            const breakdownLayout = {
+                xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                yaxis: {
+                    title: 'Effect (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)',
+                    zeroline: true, zerolinecolor: 'rgba(0,0,0,0.3)', zerolinewidth: 1
+                },
+                height: 280,
+                margin: { l: 60, r: 30, t: 30, b: 60 },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: '#ffffff',
+                font: { family: 'system-ui, -apple-system, sans-serif' },
+                legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                dragmode: 'pan',
+                hovermode: 'x unified',
+                shapes: nowTime ? [{
+                    type: 'line', x0: nowTime, x1: nowTime, y0: 0, y1: 1, yref: 'paper',
+                    line: { color: 'rgba(0,0,0,0.3)', width: 2, dash: 'dot' }
+                }] : []
+            };
+
+            Plotly.newPlot('effect-breakdown-chart', breakdownTraces, breakdownLayout, chartConfig);
+        })
+        .catch(error => {
+            console.error('Failed to load effective temperature data:', error);
+            chartDiv.innerHTML = '<div class="no-data-message">Failed to load weather data.</div>';
+            breakdownDiv.innerHTML = '';
+        });
+    }
+
     // Initialize charts on page load
     document.addEventListener('DOMContentLoaded', function() {
         if (isAggregate) {
@@ -2768,11 +3050,12 @@
             // Other charts - stagger loading
             setTimeout(() => updateTemperatureHistoryChart(), 100);
             setTimeout(() => updateEfficiencyChart(), 200);
-            setTimeout(() => updateCostChart(), 300);
-            setTimeout(() => updateEnergySeparationChart(), 400);
-            setTimeout(() => updateAccuracyChart(), 500);
-            setTimeout(() => updateEnergyForecastChart(), 600);
-            setTimeout(() => updateKValueChart(), 700);
+            setTimeout(() => updateEffectiveTempChart(), 300);
+            setTimeout(() => updateCostChart(), 400);
+            setTimeout(() => updateEnergySeparationChart(), 500);
+            setTimeout(() => updateAccuracyChart(), 600);
+            setTimeout(() => updateEnergyForecastChart(), 700);
+            setTimeout(() => updateKValueChart(), 800);
         }
     });
 </script>
