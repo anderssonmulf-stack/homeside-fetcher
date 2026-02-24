@@ -245,6 +245,9 @@ class BuildingInfluxWriter:
                     .field("heating_power_kw", round(float(fp['heating_power_kw']), 3)) \
                     .field("heating_energy_kwh", round(float(fp['heating_energy_kwh']), 3)) \
                     .field("outdoor_temp", round(float(fp['outdoor_temp']), 1)) \
+                    .field("effective_temp", round(float(fp['effective_temp']), 1)) \
+                    .field("wind_effect", round(float(fp['wind_effect']), 2)) \
+                    .field("solar_effect", round(float(fp['solar_effect']), 2)) \
                     .field("lead_time_hours", round(float(fp['lead_time_hours']), 1)) \
                     .time(fp['timestamp'], WritePrecision.S)
                 points.append(point)
@@ -820,6 +823,9 @@ def main():
                                     'heating_power_kw': fp.heating_power_kw,
                                     'heating_energy_kwh': fp.heating_energy_kwh,
                                     'outdoor_temp': fp.outdoor_temp,
+                                    'effective_temp': fp.effective_temp,
+                                    'wind_effect': fp.wind_effect,
+                                    'solar_effect': fp.solar_effect,
                                     'lead_time_hours': fp.lead_time_hours,
                                 } for fp in energy_points]
                                 influx.write_energy_forecast(forecast_dicts)

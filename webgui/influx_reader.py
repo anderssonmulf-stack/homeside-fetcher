@@ -1539,10 +1539,12 @@ class InfluxReader:
 
             elif results and is_building:
                 # Buildings: First try hourly energy_forecast (same as houses),
-                # then fall back to daily prediction_backtest from bootstrap
+                # then fall back to daily prediction_backtest from bootstrap.
+                # Include +2d future to capture today/tomorrow predictions.
                 forecast_query = f'''
+                    import "experimental"
                     from(bucket: "{self.bucket}")
-                    |> range(start: -{days}d)
+                    |> range(start: -{days}d, stop: experimental.addDuration(d: 2d, to: now()))
                     |> filter(fn: (r) => r["_measurement"] == "energy_forecast")
                     |> filter(fn: (r) => r["{entity_tag}"] == "{entity_id}")
                     |> filter(fn: (r) => r["_field"] == "heating_energy_kwh")
@@ -1575,6 +1577,27 @@ class InfluxReader:
                         if not results[idx].get('no_breakdown'):
                             heating_with_predictions += results[idx]['heating_kwh']
                             days_with_predictions += 1
+
+                # Add prediction-only rows for future days with forecasts but no actuals
+                for date_str, forecast_data in sorted(predicted_by_day.items()):
+                    if date_str not in date_to_idx and forecast_data['count'] >= MIN_HOURLY_FORECASTS:
+                        predicted = round(forecast_data['sum'], 1)
+                        results.append({
+                            'timestamp': f'{date_str}T00:00:00+00:00',
+                            'timestamp_display': date_str,
+                            'actual_kwh': 0,
+                            'heating_kwh': 0,
+                            'dhw_kwh': 0,
+                            'no_breakdown': True,
+                            'predicted_kwh': predicted,
+                            'avg_outdoor': None,
+                            'avg_temp_diff': None,
+                            'dhw_events': None,
+                            'avg_effective_outdoor': None,
+                            'forecast_only': True,
+                        })
+                        totals['predicted'] += predicted
+                        days_with_predictions += 1
 
                 # Fall back to prediction_backtest for days without hourly forecasts
                 days_missing = [d for d, idx in date_to_idx.items()
@@ -1801,8 +1824,9 @@ class InfluxReader:
             days_with_predictions = 0
             if results:
                 forecast_query = f'''
+                    import "experimental"
                     from(bucket: "{self.bucket}")
-                    |> range(start: -{days}d)
+                    |> range(start: -{days}d, stop: experimental.addDuration(d: 2d, to: now()))
                     |> filter(fn: (r) => r["_measurement"] == "energy_forecast")
                     |> filter(fn: (r) => exists r["building_id"])
                     |> filter(fn: (r) => r["_field"] == "heating_energy_kwh")
@@ -1836,6 +1860,25 @@ class InfluxReader:
                         if not results[idx].get('no_breakdown'):
                             heating_with_predictions += results[idx]['heating_kwh']
                             days_with_predictions += 1
+
+                # Add prediction-only rows for future days with forecasts but no actuals
+                for date_str, forecast_data in sorted(predicted_by_day.items()):
+                    if date_str not in date_to_idx and forecast_data['count'] >= MIN_HOURLY_FORECASTS:
+                        predicted = round(forecast_data['sum'], 1)
+                        results.append({
+                            'timestamp': f'{date_str}T00:00:00+00:00',
+                            'timestamp_display': date_str,
+                            'actual_kwh': 0,
+                            'heating_kwh': 0,
+                            'dhw_kwh': 0,
+                            'no_breakdown': True,
+                            'predicted_kwh': predicted,
+                            'avg_outdoor': None,
+                            'avg_temp_diff': None,
+                            'forecast_only': True,
+                        })
+                        totals['predicted'] += predicted
+                        days_with_predictions += 1
 
             totals = {k: round(v, 1) for k, v in totals.items()}
             if totals['actual'] > 0:

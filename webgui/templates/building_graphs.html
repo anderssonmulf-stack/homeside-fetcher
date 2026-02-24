@@ -221,7 +221,7 @@
         <p class="card-description">
             Compares actual outdoor temperature with "effective" temperature
             that accounts for wind chill, humidity, and solar effects.
-            <strong>Dotted</strong> = effective temp. <strong>Dashed</strong> = 12h forecast.
+            <strong>Dotted</strong> = effective temp. <strong>Dashed</strong> = 48h forecast.
         </p>
         <div id="effective-temp-chart" class="chart-container"></div>
     </div>
@@ -2812,7 +2812,7 @@
         breakdownDiv.innerHTML = '';
 
         const historyUrl = `/api/building/${buildingId}/effective-temperature?hours=${hours}`;
-        const forecastUrl = `/api/building/${buildingId}/forecast-effective-temperature?hours=12`;
+        const forecastUrl = `/api/building/${buildingId}/forecast-effective-temperature?hours=48`;
         const histForecastUrl = `/api/building/${buildingId}/historical-forecast-effective-temperature?hours=${hours}`;
 
         Promise.all([
