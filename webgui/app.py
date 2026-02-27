@@ -1803,8 +1803,9 @@ def set_homeside_setpoint(house_id):
 
         # Check if already at desired value
         if current_setpoint is not None and abs(float(current_setpoint) - new_setpoint) < 0.05:
-            # Already correct, just update profile
+            # Already correct, just update profile and InfluxDB
             _update_profile_setpoint(house_id, new_setpoint)
+            _write_setpoint_to_influx(house_id, new_setpoint)
             return jsonify({
                 'success': True,
                 'confirmed_value': float(current_setpoint),
@@ -1830,6 +1831,7 @@ def set_homeside_setpoint(house_id):
         # Check if confirmed
         if readback_value is not None and abs(float(readback_value) - new_setpoint) < 0.05:
             _update_profile_setpoint(house_id, new_setpoint)
+            _write_setpoint_to_influx(house_id, new_setpoint)
             audit_logger.log('SetpointChanged', session.get('user_id'), {
                 'house_id': house_id,
                 'old_value': current_setpoint,
@@ -1856,6 +1858,7 @@ def set_homeside_setpoint(house_id):
 
         if readback_value is not None and abs(float(readback_value) - new_setpoint) < 0.05:
             _update_profile_setpoint(house_id, new_setpoint)
+            _write_setpoint_to_influx(house_id, new_setpoint)
             audit_logger.log('SetpointChanged', session.get('user_id'), {
                 'house_id': house_id,
                 'old_value': current_setpoint,
@@ -1894,6 +1897,30 @@ def _update_profile_setpoint(house_id, new_setpoint):
             profile.save()
     except Exception:
         pass  # Profile save failure is non-critical; HomeSide is the source of truth
+
+
+def _write_setpoint_to_influx(house_id, setpoint_value):
+    """Write the confirmed setpoint to InfluxDB so the GUI shows the current value immediately."""
+    try:
+        from influxdb_client import InfluxDBClient, Point, WritePrecision
+        from influxdb_client.client.write_api import SYNCHRONOUS
+        from datetime import datetime, timezone
+
+        url = os.getenv('INFLUXDB_URL', 'http://localhost:8086')
+        token = os.getenv('INFLUXDB_TOKEN')
+        org = os.getenv('INFLUXDB_ORG', 'homeside')
+        bucket = os.getenv('INFLUXDB_BUCKET', 'heating')
+
+        client = InfluxDBClient(url=url, token=token, org=org)
+        point = (Point("heating_system")
+                 .tag("house_id", house_id)
+                 .field("target_temp_setpoint", round(float(setpoint_value), 2))
+                 .time(datetime.now(timezone.utc), WritePrecision.S))
+        write_api = client.write_api(write_options=SYNCHRONOUS)
+        write_api.write(bucket=bucket, org=org, record=point)
+        client.close()
+    except Exception:
+        pass  # Non-critical; next fetcher poll will update it anyway
 
 
 @app.route('/house/<house_id>/curve-control-mode', methods=['POST'])

@@ -243,7 +243,7 @@
                         statusDiv.textContent = 'Setpoint confirmed: ' + data.confirmed_value.toFixed(1) + '\u00b0C';
                         // Update the original value so future saves don't re-trigger
                         input.dataset.original = String(data.confirmed_value);
-                        // Now submit the form normally to save deviation to profile
+                        // Submit the form to save all comfort settings to profile
                         btn.disabled = false;
                         btn.textContent = 'Save Changes';
                         form.submit();
