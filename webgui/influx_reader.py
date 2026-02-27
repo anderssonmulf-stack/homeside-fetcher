@@ -2160,9 +2160,11 @@ class InfluxReader:
                 if d['outdoor_temps']:
                     avg_outdoor = sum(d['outdoor_temps']) / len(d['outdoor_temps'])
 
+                # Include date in display when spanning multiple days
+                display_fmt = '%a %H:%M' if hours > 24 else '%H:%M'
                 forecast.append({
                     'timestamp': ts.isoformat(),
-                    'timestamp_display': swedish_time.strftime('%H:%M'),
+                    'timestamp_display': swedish_time.strftime(display_fmt),
                     'timestamp_date': swedish_time.strftime('%Y-%m-%d'),
                     'hour': swedish_time.hour,
                     'heating_energy_kwh': round(d['energy'], 2),
@@ -2500,9 +2502,11 @@ class InfluxReader:
                         power_kw = record.values.get('heating_power_kw', 0) or 0
                         lead_time = record.values.get('lead_time_hours', 0) or 0
 
+                        # Include date in display when spanning multiple days
+                        display_fmt = '%a %H:%M' if hours > 24 else '%H:%M'
                         forecast.append({
                             'timestamp': timestamp.isoformat(),
-                            'timestamp_display': swedish_time.strftime('%H:%M'),
+                            'timestamp_display': swedish_time.strftime(display_fmt),
                             'timestamp_date': swedish_time.strftime('%Y-%m-%d'),
                             'hour': swedish_time.hour,
                             'heating_energy_kwh': round(energy_kwh, 2),
