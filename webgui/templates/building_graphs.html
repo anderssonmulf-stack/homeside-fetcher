@@ -1770,10 +1770,36 @@
                         `Energy: ${d.heating_energy_kwh.toFixed(2)} kWh<br>` +
                         `Power: ${d.heating_power_kw.toFixed(2)} kW<br>` +
                         `Outdoor: ${d.outdoor_temp?.toFixed(1) || '-'}°C`;
+                    if (!isAggregate) {
+                        text += `<br>Effective: ${d.effective_temp?.toFixed(1) || '-'}°C` +
+                            `<br>Lead time: ${d.lead_time_hours?.toFixed(0) || '-'}h`;
+                    }
                     if (hasBuildingCount) {
                         text += `<br>Buildings: ${d.building_count}`;
                     }
                     return text;
+                });
+
+                // Color bars on a green-to-red scale relative to min/max
+                const minE = Math.min(...energyKwh);
+                const maxE = Math.max(...energyKwh);
+                const rangeE = maxE - minE || 1;
+                const barColors = energyKwh.map(e => {
+                    const t = (e - minE) / rangeE;  // 0 = lowest, 1 = highest
+                    // Green (#27ae60) → Orange (#f39c12) → Red (#FF6B6B)
+                    let r, g, b;
+                    if (t <= 0.5) {
+                        const s = t / 0.5;
+                        r = Math.round(39 + (243 - 39) * s);
+                        g = Math.round(174 + (156 - 174) * s);
+                        b = Math.round(96 + (18 - 96) * s);
+                    } else {
+                        const s = (t - 0.5) / 0.5;
+                        r = Math.round(243 + (255 - 243) * s);
+                        g = Math.round(156 + (107 - 156) * s);
+                        b = Math.round(18 + (107 - 18) * s);
+                    }
+                    return `rgb(${r},${g},${b})`;
                 });
 
                 const energyTrace = {
@@ -1781,7 +1807,7 @@
                     y: energyKwh,
                     type: 'bar',
                     name: 'Energy (kWh)',
-                    marker: { color: '#FF6B6B' },
+                    marker: { color: barColors },
                     text: hoverText,
                     hoverinfo: 'text'
                 };

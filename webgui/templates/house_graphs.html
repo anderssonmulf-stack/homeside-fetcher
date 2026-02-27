@@ -1734,8 +1734,6 @@
                 const timestamps = forecast.map(d => d.timestamp_display);
                 const energyKwh = forecast.map(d => d.heating_energy_kwh);
                 const outdoorTemp = forecast.map(d => d.outdoor_temp);
-                const solarEffect = forecast.map(d => d.solar_effect);
-
                 // Create hover text with details
                 const hoverText = forecast.map(d => {
                     let text = `${d.timestamp_display}<br>` +
@@ -1744,7 +1742,6 @@
                         `Outdoor: ${d.outdoor_temp?.toFixed(1) || '-'}°C`;
                     if (!isAggregate) {
                         text += `<br>Effective: ${d.effective_temp?.toFixed(1) || '-'}°C` +
-                            `<br>Solar effect: ${d.solar_effect?.toFixed(2) || '-'}°C` +
                             `<br>Lead time: ${d.lead_time_hours?.toFixed(0) || '-'}h`;
                     }
                     if (isAggregate && d.house_count != null) {
@@ -1753,21 +1750,35 @@
                     return text;
                 });
 
+                // Color bars on a green-to-red scale relative to min/max
+                const minE = Math.min(...energyKwh);
+                const maxE = Math.max(...energyKwh);
+                const rangeE = maxE - minE || 1;
+                const barColors = energyKwh.map(e => {
+                    const t = (e - minE) / rangeE;  // 0 = lowest, 1 = highest
+                    // Green (#27ae60) → Orange (#f39c12) → Red (#FF6B6B)
+                    let r, g, b;
+                    if (t <= 0.5) {
+                        const s = t / 0.5;
+                        r = Math.round(39 + (243 - 39) * s);
+                        g = Math.round(174 + (156 - 174) * s);
+                        b = Math.round(96 + (18 - 96) * s);
+                    } else {
+                        const s = (t - 0.5) / 0.5;
+                        r = Math.round(243 + (255 - 243) * s);
+                        g = Math.round(156 + (107 - 156) * s);
+                        b = Math.round(18 + (107 - 18) * s);
+                    }
+                    return `rgb(${r},${g},${b})`;
+                });
+
                 // Energy bar chart
                 const energyTrace = {
                     x: timestamps,
                     y: energyKwh,
                     type: 'bar',
                     name: 'Energy (kWh)',
-                    marker: {
-                        color: energyKwh.map((e, i) => {
-                            // Color by solar effect - more green when solar is helping
-                            const solar = solarEffect[i] || 0;
-                            if (solar > 2) return '#27ae60';  // Strong solar - green
-                            if (solar > 1) return '#f39c12';  // Moderate solar - orange
-                            return '#FF6B6B';  // Little/no solar - red
-                        })
-                    },
+                    marker: { color: barColors },
                     text: hoverText,
                     hoverinfo: 'text'
                 };
