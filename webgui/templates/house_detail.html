@@ -33,7 +33,7 @@
                 <span class="status-value large">{{ "%.1f"|format(realtime.room_temperature) }}°C</span>
             </div>
             <div class="status-item">
-                <span class="status-label">Target (HomeSide)</span>
+                <span class="status-label">Setpoint</span>
                 <span class="status-value">{{ "%.1f"|format(realtime.target_temp_setpoint) if realtime.target_temp_setpoint else 'N/A' }}°C</span>
             </div>
             <div class="status-item">
@@ -112,18 +112,24 @@
         <!-- Comfort Settings Card (only shown for own house) -->
         <div class="card">
             <h2>Comfort Settings</h2>
-            <p class="card-description">Target temperature is written directly to the heating system.</p>
+            <p class="card-description">Setpoint is read from and written to the HomeSide heating system.</p>
 
             <form id="comfort-form" method="POST" action="{{ url_for('update_house_settings', house_id=house_id) }}">
                 <input type="hidden" name="form_section" value="comfort">
                 <div class="form-group">
-                    <label for="target_indoor_temp">Target Indoor Temperature (°C)</label>
+                    <label for="target_indoor_temp">Setpoint (°C)</label>
+                    {% set live_setpoint = realtime.target_temp_setpoint if realtime and realtime.target_temp_setpoint else None %}
                     <input type="number" id="target_indoor_temp" name="target_indoor_temp"
-                           value="{{ profile.comfort.target_indoor_temp }}"
-                           data-original="{{ profile.comfort.target_indoor_temp }}"
+                           value="{{ "%.1f"|format(live_setpoint) if live_setpoint else profile.comfort.target_indoor_temp }}"
+                           data-original="{{ "%.1f"|format(live_setpoint) if live_setpoint else profile.comfort.target_indoor_temp }}"
                            step="0.5" min="15" max="28"
                            {% if not can_edit %}disabled{% endif %}>
-                    <small class="help-text">This value is the actual setpoint in the heating system.</small>
+                    <small class="help-text">
+                        Current HomeSide setpoint.
+                        {% if live_setpoint and ("%.1f"|format(live_setpoint)) != ("%.1f"|format(profile.comfort.target_indoor_temp)) %}
+                        <span style="color: #e67e22;">Profile has {{ profile.comfort.target_indoor_temp }}°C — saving will sync both.</span>
+                        {% endif %}
+                    </small>
                 </div>
 
                 <div class="form-group">
@@ -141,8 +147,9 @@
                         <span>1.0°C (relaxed)</span>
                     </div>
                     <small class="help-text" id="deviation-help">
-                        The system keeps indoor temperature within &plusmn;{{ profile.comfort.acceptable_deviation }}°C of target.
-                        Full comfort range: {{ "%.1f"|format(profile.comfort.target_indoor_temp - profile.comfort.acceptable_deviation) }}&ndash;{{ "%.1f"|format(profile.comfort.target_indoor_temp + profile.comfort.acceptable_deviation) }}°C.
+                        The system keeps indoor temperature within &plusmn;{{ profile.comfort.acceptable_deviation }}°C of setpoint.
+                        {% set sp = live_setpoint if live_setpoint else profile.comfort.target_indoor_temp %}
+                        Full comfort range: {{ "%.1f"|format(sp - profile.comfort.acceptable_deviation) }}&ndash;{{ "%.1f"|format(sp + profile.comfort.acceptable_deviation) }}°C.
                     </small>
                 </div>
 
@@ -193,7 +200,7 @@
             var lo = (target - dev).toFixed(1);
             var hi = (target + dev).toFixed(1);
             document.getElementById('deviation-help').innerHTML =
-                'The system keeps indoor temperature within &plusmn;' + dev.toFixed(1) + '°C of target. ' +
+                'The system keeps indoor temperature within &plusmn;' + dev.toFixed(1) + '°C of setpoint. ' +
                 'Full comfort range: ' + lo + '&ndash;' + hi + '°C.';
         }
 
