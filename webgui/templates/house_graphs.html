@@ -1958,21 +1958,43 @@
                     return text;
                 });
 
+                // Color bars by relative energy level (green=low, red=high)
+                // Only differentiate if spread >= 20% between min and max
+                const COLOR_SPREAD_THRESHOLD = 0.20;
+                const maxE = Math.max(...energyKwh);
+                const minE = Math.min(...energyKwh);
+                const spread = maxE > 0 ? (maxE - minE) / maxE : 0;
+
+                function energyToColor(val) {
+                    if (spread < COLOR_SPREAD_THRESHOLD || maxE === minE) {
+                        return '#f39c12';  // Uniform yellow when spread is small
+                    }
+                    // 0 (green/low) to 1 (red/high)
+                    const t = (val - minE) / (maxE - minE);
+                    let r, g, b;
+                    if (t <= 0.5) {
+                        // Green to yellow (low to mid)
+                        const s = t / 0.5;
+                        r = Math.round(39 + (241 - 39) * s);
+                        g = Math.round(174 + (196 - 174) * s);
+                        b = Math.round(96 + (15 - 96) * s);
+                    } else {
+                        // Yellow to red (mid to high)
+                        const s = (t - 0.5) / 0.5;
+                        r = Math.round(241 + (231 - 241) * s);
+                        g = Math.round(196 + (76 - 196) * s);
+                        b = Math.round(15 + (60 - 15) * s);
+                    }
+                    return `rgb(${r},${g},${b})`;
+                }
+
                 // Energy bar chart
                 const energyTrace = {
                     x: timestamps,
                     y: energyKwh,
                     type: 'bar',
                     name: 'Energy (kWh)',
-                    marker: {
-                        color: energyKwh.map((e, i) => {
-                            // Color by solar effect - more green when solar is helping
-                            const solar = solarEffect[i] || 0;
-                            if (solar > 2) return '#27ae60';  // Strong solar - green
-                            if (solar > 1) return '#f39c12';  // Moderate solar - orange
-                            return '#FF6B6B';  // Little/no solar - red
-                        })
-                    },
+                    marker: { color: energyKwh.map(energyToColor) },
                     text: hoverText,
                     hoverinfo: 'text'
                 };
@@ -2004,8 +2026,6 @@
                     },
                     yaxis: {
                         title: 'Energy (kWh)',
-                        titlefont: { color: '#FF6B6B' },
-                        tickfont: { color: '#FF6B6B' },
                         gridcolor: '#e8e8e8',
                         rangemode: 'tozero',
                         fixedrange: true
