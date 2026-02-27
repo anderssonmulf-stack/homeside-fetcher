@@ -17,8 +17,10 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from functools import wraps
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env files
+# Root .env has house/building credentials, webgui/.env has Flask/SMTP config
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+load_dotenv()  # webgui/.env (overrides root for shared keys)
 
 from auth import UserManager, require_login, require_role
 from audit import AuditLogger
