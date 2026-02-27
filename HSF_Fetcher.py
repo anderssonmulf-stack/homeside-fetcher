@@ -1171,6 +1171,8 @@ def monitor_heating_system(config):
                             cached_obs = influx.read_shared_weather_observation(lat, lon)
                             if cached_obs:
                                 weather_obs_data = cached_obs
+                                # Write to this house's weather_observation even from cache
+                                influx.write_weather_observation(cached_obs)
                                 print(f"\n📦 Weather: {cached_obs['temperature']:.1f}°C (shared cache from {cached_obs['station_name']})")
 
                         # If no cache, fetch from SMHI
