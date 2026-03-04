@@ -1,0 +1,3129 @@
+{% extends "base.html" %}
+{% block title %}Graphs - {{ friendly_name }}{% endblock %}
+
+{% block content %}
+<div class="house-detail">
+    <div class="page-header">
+        {% if is_aggregate %}
+        <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to Dashboard</a>
+        <h1 class="friendly-name">&#127970; All Buildings - Aggregated View</h1>
+        <p class="subtitle">Combined energy data across all buildings</p>
+        {% else %}
+        <a href="{{ url_for('dashboard') }}" class="back-link">&larr; Back to Dashboard</a>
+        <h1 class="friendly-name">Data Overview</h1>
+        <p class="subtitle">{{ friendly_name }}</p>
+        {% endif %}
+    </div>
+
+    {% if not is_aggregate %}
+    <!-- Current Status Widgets -->
+    <div class="status-widgets">
+        {% if realtime %}
+        {% set sm = signal_map or {} %}
+        <div class="stat-widget" title="{{ sm.get('outdoor_temp_fvc', {}).get('signal_id', '') }}">
+            <div class="stat-value {% if realtime.outdoor_temp_fvc and realtime.outdoor_temp_fvc >= 5 %}mild{% elif realtime.outdoor_temp_fvc and realtime.outdoor_temp_fvc >= 0 %}cool{% else %}cold{% endif %}">
+                {{ "%.1f"|format(realtime.outdoor_temp_fvc) if realtime.outdoor_temp_fvc else '--' }}°C
+            </div>
+            <div class="stat-label">Outdoor</div>
+            {% if sm.get('outdoor_temp_fvc') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['outdoor_temp_fvc'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['outdoor_temp_fvc'].signal_id }}</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="stat-widget" title="{{ sm.get('vs1_supply_temp', {}).get('signal_id', '') }}">
+            <div class="stat-value {% if realtime.vs1_supply_temp and realtime.vs1_supply_temp >= 25 and realtime.vs1_supply_temp <= 50 %}good{% elif realtime.vs1_supply_temp and realtime.vs1_supply_temp > 50 %}warm{% else %}neutral{% endif %}">
+                {{ "%.1f"|format(realtime.vs1_supply_temp) if realtime.vs1_supply_temp else '--' }}°C
+            </div>
+            <div class="stat-label">Supply</div>
+            {% if sm.get('vs1_supply_temp') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['vs1_supply_temp'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['vs1_supply_temp'].signal_id }}</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="stat-widget" title="{{ sm.get('vs1_return_temp', {}).get('signal_id', '') }}">
+            <div class="stat-value neutral">
+                {{ "%.1f"|format(realtime.vs1_return_temp) if realtime.vs1_return_temp else '--' }}°C
+            </div>
+            <div class="stat-label">Return</div>
+            {% if sm.get('vs1_return_temp') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['vs1_return_temp'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['vs1_return_temp'].signal_id }}</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="stat-widget" title="{{ sm.get('vv1_hot_water_temp', {}).get('signal_id', '') }}">
+            <div class="stat-value {% if realtime.vv1_hot_water_temp and realtime.vv1_hot_water_temp >= 50 %}good{% elif realtime.vv1_hot_water_temp and realtime.vv1_hot_water_temp >= 40 %}warm{% else %}cold{% endif %}">
+                {{ "%.1f"|format(realtime.vv1_hot_water_temp) if realtime.vv1_hot_water_temp else '--' }}°C
+            </div>
+            <div class="stat-label">Hot Water</div>
+            {% if sm.get('vv1_hot_water_temp') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['vv1_hot_water_temp'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['vv1_hot_water_temp'].signal_id }}</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="stat-widget" title="{{ sm.get('dh_power_total', {}).get('signal_id', '') }}">
+            <div class="stat-value neutral">
+                {{ "%.1f"|format(realtime.dh_power_total) if realtime.dh_power_total else '--' }} kW
+            </div>
+            <div class="stat-label">DH Power</div>
+            {% if sm.get('dh_power_total') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['dh_power_total'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['dh_power_total'].signal_id }}</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="stat-widget" title="{{ sm.get('system_pressure', {}).get('signal_id', '') }}">
+            <div class="stat-value {% if realtime.system_pressure and realtime.system_pressure >= 100 and realtime.system_pressure <= 200 %}good{% elif realtime.system_pressure and realtime.system_pressure < 80 %}cold{% else %}neutral{% endif %}">
+                {{ "%.0f"|format(realtime.system_pressure) if realtime.system_pressure else '--' }} kPa
+            </div>
+            <div class="stat-label">Pressure</div>
+            {% if sm.get('system_pressure') %}
+            <div class="stat-tooltip">
+                <strong>{{ sm['system_pressure'].key }}</strong><br>
+                <span class="tooltip-path">{{ sm['system_pressure'].signal_id }}</span>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        <div class="stat-widget wide">
+            <div class="stat-value neutral">No data</div>
+            <div class="stat-label">Building system offline</div>
+        </div>
+        {% endif %}
+    </div>
+    {% if realtime and realtime.timestamp_friendly %}
+    <p class="status-timestamp {% if realtime.age_minutes and realtime.age_minutes <= 6 %}fresh{% else %}stale{% endif %}">
+        Last updated: {{ realtime.timestamp_friendly }}
+        {% if realtime.age_minutes %}({{ realtime.age_minutes|int }} min ago){% endif %}
+    </p>
+    {% endif %}
+    {% endif %}{# not is_aggregate #}
+
+    {% if not is_aggregate %}
+    <!-- Supply & Return Temperatures Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Supply & Return Temperatures</h2>
+            <div class="chart-controls">
+                <select id="supply-return-days-select" class="role-select" onchange="updateSupplyReturnChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Heating circuit supply and return water temperatures with setpoint.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color supply-temp"></span> Supply</span>
+                <span class="legend-item"><span class="legend-color return-temp"></span> Return</span>
+                <span class="legend-item"><span class="legend-color heat-curve"></span> Setpoint</span>
+                <span class="legend-item"><span class="legend-color" style="background: #95a5a6;"></span> Outdoor</span>
+            </span>
+        </p>
+        <div id="supply-return-chart" class="chart-container"></div>
+    </div>
+
+    <!-- Data Availability Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Data Availability</h2>
+            <div class="chart-controls">
+                <select id="days-select" class="role-select" onchange="updateChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Shows data coverage per category. Darker blue = more data points.
+        </p>
+
+        {% if availability.categories %}
+        <div id="availability-chart" class="chart-container"></div>
+        {% else %}
+        <p class="muted">No data available for this building yet.</p>
+        {% endif %}
+    </div>
+
+    <!-- Primary vs Secondary Temperature Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Primary vs Secondary Temperatures</h2>
+            <div class="chart-controls">
+                <select id="temp-history-days-select" class="role-select" onchange="updateTemperatureHistoryChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Compares <strong>District Heating</strong> (primary side from utility) with
+            <strong>Building Heating</strong> (secondary side to radiators).
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color dh-supply"></span> DH Supply</span>
+                <span class="legend-item"><span class="legend-color dh-return"></span> DH Return</span>
+                <span class="legend-item"><span class="legend-color house-supply"></span> Bld Supply</span>
+                <span class="legend-item"><span class="legend-color house-return"></span> Bld Return</span>
+            </span>
+        </p>
+        <div id="temp-history-chart" class="chart-container"></div>
+    </div>
+
+    <!-- Efficiency Metrics Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Efficiency Metrics (Delta T)</h2>
+            <div class="chart-controls">
+                <select id="efficiency-days-select" class="role-select" onchange="updateEfficiencyChart()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="72">Last 3 days</option>
+                    <option value="168" selected>Last 7 days</option>
+                    <option value="336">Last 14 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            <strong>Delta T</strong> shows temperature difference between supply and return.
+            Higher DH delta T = more heat extracted from district heating.
+            Good values: DH 25-40°C, Building 5-15°C.
+        </p>
+        <div id="efficiency-chart" class="chart-container"></div>
+        <div id="efficiency-summary" class="metric-summary"></div>
+    </div>
+    {% endif %}{# not is_aggregate: single-building charts #}
+
+    <!-- Energy Forecast (Next 24h) — shown for both aggregate and single -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Energy Forecast (Next 24h)</h2>
+            <div class="chart-controls">
+                <select id="energy-forecast-hours-select" class="role-select" onchange="updateEnergyForecastChart()">
+                    <option value="12">Next 12h</option>
+                    <option value="24" selected>Next 24h</option>
+                    <option value="48">Next 48h</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Predicted <strong>hourly heating energy</strong> based on SMHI weather forecast and calibrated k-value model.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color" style="background:#FF6B6B;"></span> Energy (kWh/h)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#4ECDC4; opacity:0.5;"></span> Outdoor Temp</span>
+            </span>
+        </p>
+        <div id="energy-forecast-chart" class="chart-container"></div>
+        <div id="energy-forecast-summary" class="metric-summary"></div>
+    </div>
+
+    {% if is_aggregate %}
+    <!-- Flexibility Chart (aggregate only) -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Flexibility</h2>
+            <div class="chart-controls">
+                <select id="flexibility-hours-select" class="role-select" onchange="updateFlexibilityChart()">
+                    <option value="12">Next 12h</option>
+                    <option value="24" selected>Next 24h</option>
+                    <option value="48">Next 48h</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Potential to <strong>reduce heating</strong> based on outdoor temperature trend.
+            <strong style="color:#27ae60;">Green</strong> = temperature rising (safe to cut).
+            <strong style="color:#e74c3c;">Red</strong> = temperature dropping (avoid cutting).
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color" style="background:#27ae60;"></span> Rising (+2°C/h)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#f1c40f;"></span> Stable (0°C/h)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#e74c3c;"></span> Dropping (-2°C/h)</span>
+            </span>
+        </p>
+        <div id="flexibility-chart" class="chart-container"></div>
+        <div id="flexibility-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- Flexibility Control Chart (aggregate only — interactive demand shifting) -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Flexibility Control</h2>
+            <div class="chart-controls">
+                <select id="flex-ctrl-hours-select" class="role-select" onchange="updateFlexControlChart()">
+                    <option value="12">Next 12h</option>
+                    <option value="24" selected>Next 24h</option>
+                </select>
+                <button id="flex-ctrl-reset-btn" class="role-select" onclick="resetFlexControl()" style="cursor:pointer;" disabled>Reset</button>
+            </div>
+        </div>
+        <p class="card-description">
+            <strong>Drag the Y-axis</strong> to set a power ceiling.
+            <strong>Click+drag bars</strong> to select a range.
+            Use the toolbar to flatten, cut, or shift energy to green hours.
+        </p>
+        <div style="display:flex; align-items:center; gap:12px; margin:8px 0 4px 0; font-size:0.85rem; color:#555;">
+            <span style="white-space:nowrap;">Before</span>
+            <input type="range" id="flex-split-slider" min="0" max="100" value="{{ (flex_settings.get('split_before_after', [0.5, 0.5])[0] * 100) | int }}"
+                   style="flex:1; max-width:220px; cursor:pointer; accent-color:#044680;"
+                   oninput="onFlexSplitChange(this.value)">
+            <span style="white-space:nowrap;">After</span>
+            <span id="flex-split-label" style="min-width:50px; font-weight:600; color:#044680;">{{ (flex_settings.get('split_before_after', [0.5, 0.5])[0] * 100) | int }}/{{ (flex_settings.get('split_before_after', [0.5, 0.5])[1] * 100) | int }}</span>
+        </div>
+        <div class="flex-cmd-toolbar">
+            <button class="flex-cmd-btn" id="flex-cmd-flatten" onclick="flexCmdFlatten()" disabled>Flatten</button>
+            <button class="flex-cmd-btn" id="flex-cmd-reduce" onclick="flexCmdReduceNext()">
+                Reduce next <input type="number" id="flex-cmd-reduce-hours" value="3" min="1" max="12"
+                    style="width:36px; text-align:center; border:1px solid #ccc; border-radius:3px; font-size:0.8rem;"
+                    onclick="event.stopPropagation()">h
+            </button>
+            <button class="flex-cmd-btn" id="flex-cmd-cut" onclick="flexCmdCutRange()" disabled>Cut range</button>
+            <button class="flex-cmd-btn" id="flex-cmd-green" onclick="flexCmdShiftToGreen()">Shift to green</button>
+            <label style="display:inline-flex; align-items:center; gap:4px; font-size:0.8rem; color:#555; margin-left:8px; cursor:pointer;">
+                <input type="checkbox" id="flex-prefer-green" checked> Prefer green hours
+            </label>
+            <button class="flex-cmd-btn" id="flex-cmd-deselect" onclick="flexCmdDeselect()" disabled style="margin-left:auto;">Deselect</button>
+        </div>
+        <div id="flex-ctrl-chart" class="chart-container"></div>
+        <div id="flex-ctrl-summary" class="metric-summary"></div>
+    </div>
+    {% endif %}
+
+    <!-- Energy Breakdown (Heating vs Hot Water) — shown for both aggregate and single -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Energy Breakdown (Heating vs Hot Water)</h2>
+            <div class="chart-controls">
+                <select id="separation-days-select" class="role-select" onchange="updateEnergySeparationChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Daily energy split into <strong style="color:#3498db">Space Heating</strong> and
+            <strong style="color:#e67e22">Hot Water (DHW)</strong> using the k-value calibration model.
+        </p>
+        <div id="separation-chart" class="chart-container"></div>
+        <div id="separation-summary" class="metric-summary"></div>
+    </div>
+
+    {% if not is_aggregate %}
+    <!-- Prediction Accuracy Trend Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Prediction Accuracy Trend</h2>
+            <div class="chart-controls">
+                <select id="accuracy-days-select" class="role-select" onchange="updateAccuracyChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Daily prediction accuracy: <strong>predicted heating &divide; actual heating &times; 100%</strong>.
+            Green zone (90&ndash;110%) indicates good model fit.
+            <span class="legend-inline">
+                <span class="legend-item"><span class="legend-color" style="background:#27ae60;"></span> Good (90&ndash;110%)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#f39c12;"></span> Fair (80&ndash;120%)</span>
+                <span class="legend-item"><span class="legend-color" style="background:#e74c3c;"></span> Poor</span>
+            </span>
+        </p>
+        <div id="accuracy-chart" class="chart-container"></div>
+        <div id="accuracy-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- K-Value History Chart -->
+    <div class="card">
+        <div class="card-header-flex">
+            <h2>Heat Loss Coefficient (k) History</h2>
+            <div class="chart-controls">
+                <select id="k-history-days-select" class="role-select" onchange="updateKValueChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Shows how the building's heat loss coefficient (k) converges over time.
+            When the line flattens, the calibration has stabilized.
+            <strong>k = kW per &deg;C difference</strong> between indoor and outdoor temperature.
+        </p>
+        <div id="k-value-chart" class="chart-container"></div>
+        <div id="k-value-summary" class="metric-summary"></div>
+    </div>
+
+    <!-- Cost Estimate Chart (hidden by default) -->
+    <div class="card" id="cost-chart-card" style="display:none">
+        <div class="card-header-flex">
+            <h2>Cost Estimate<span id="cost-data-source" class="data-source-badge" style="display:none;"></span></h2>
+            <div class="chart-controls">
+                <label class="price-label">
+                    Price (SEK/kWh):
+                    <input type="number" id="price-input" class="price-input" value="1.20" step="0.01" min="0" onchange="updateCostChart()">
+                </label>
+                <select id="cost-days-select" class="role-select" onchange="updateCostChart()">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </div>
+        </div>
+        <p class="card-description">
+            Estimated heating costs based on energy consumption and price per kWh.
+            Default price is typical Swedish district heating rate.
+        </p>
+        <div id="cost-chart" class="chart-container"></div>
+        <div id="cost-summary" class="cost-summary-box"></div>
+    </div>
+    {% endif %}{# not is_aggregate: remaining single-building charts #}
+
+</div>
+
+<style>
+/* Status Widgets */
+.status-widgets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.stat-widget {
+    background: var(--white, #fff);
+    border-radius: 8px;
+    padding: 16px 20px;
+    min-width: 100px;
+    flex: 1;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    position: relative;
+}
+/* Signal source tooltip */
+.stat-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e2d3d;
+    color: #e0e0e0;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.75em;
+    white-space: nowrap;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    pointer-events: none;
+    text-align: left;
+}
+.stat-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #1e2d3d;
+}
+.stat-widget:hover .stat-tooltip {
+    display: block;
+}
+.tooltip-path {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.9em;
+    color: #90caf9;
+}
+.stat-widget.wide {
+    flex: 2;
+    min-width: 200px;
+}
+.stat-value {
+    font-size: 1.8em;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.stat-value.good { color: #27ae60; }
+.stat-value.warm { color: #e67e22; }
+.stat-value.cold { color: #3498db; }
+.stat-value.mild { color: #27ae60; }
+.stat-value.cool { color: #3498db; }
+.stat-value.neutral { color: var(--text-color, #333); }
+.stat-label {
+    font-size: 0.85em;
+    color: var(--muted, #7f8c8d);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.status-timestamp {
+    font-size: 0.85em;
+    color: var(--muted);
+    text-align: right;
+    margin-bottom: 20px;
+}
+.status-timestamp.fresh { color: #27ae60; }
+.status-timestamp.stale { color: #e67e22; }
+
+.card-header-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.card-header-flex h2 {
+    margin: 0;
+}
+.chart-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.chart-container {
+    width: 100%;
+    min-height: 300px;
+}
+/* Flex control chart: ns-resize cursor for ceiling drag */
+#flex-ctrl-chart .ytitle,
+#flex-ctrl-chart .yaxislayer-above {
+    cursor: ns-resize;
+}
+#flex-ctrl-chart.ceiling-dragging,
+#flex-ctrl-chart.ceiling-dragging * {
+    cursor: ns-resize !important;
+}
+.flex-cmd-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 8px 0;
+}
+.flex-cmd-toolbar .flex-cmd-btn {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #f5f5f5;
+    color: #333;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+}
+.flex-cmd-toolbar .flex-cmd-btn:hover:not(:disabled) {
+    background: #e0e0e0;
+}
+.flex-cmd-toolbar .flex-cmd-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+#flex-ctrl-chart .nsewdrag {
+    cursor: crosshair !important;
+}
+.legend-inline {
+    display: inline-flex;
+    gap: 15px;
+    margin-left: 10px;
+}
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.85em;
+    color: var(--muted);
+}
+.legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+}
+.loading-spinner {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-style: italic;
+}
+/* Data source badges */
+.data-source-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+    text-transform: uppercase;
+}
+.data-source-badge.live {
+    background: #27ae60;
+    color: white;
+}
+.data-source-badge.imported {
+    background: #3498db;
+    color: white;
+}
+/* Temperature legend colors */
+.legend-color.dh-supply {
+    background: #e74c3c;
+}
+.legend-color.dh-return {
+    background: #c0392b;
+}
+.legend-color.house-supply {
+    background: #3498db;
+}
+.legend-color.house-return {
+    background: #2980b9;
+}
+/* Supply/Return chart colors */
+.legend-color.supply-temp {
+    background: #e74c3c;
+}
+.legend-color.return-temp {
+    background: #3498db;
+}
+.legend-color.heat-curve {
+    background: #27ae60;
+}
+/* Metric summary boxes */
+.metric-summary {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 15px;
+    padding: 15px;
+    background: var(--card-bg, #f8f9fa);
+    border-radius: 8px;
+}
+.metric-item {
+    text-align: center;
+    min-width: 100px;
+}
+.metric-value {
+    font-size: 1.5em;
+    font-weight: 600;
+    color: var(--primary, #3498db);
+}
+.metric-label {
+    font-size: 0.85em;
+    color: var(--muted);
+    margin-top: 4px;
+}
+/* Cost summary box */
+.cost-summary-box {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    margin-top: 15px;
+    padding: 20px;
+    background: linear-gradient(135deg, #e8f4fd 0%, #d4edda 100%);
+    border-radius: 8px;
+}
+.cost-item {
+    text-align: center;
+}
+.cost-item.highlight {
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.cost-value {
+    font-size: 1.8em;
+    font-weight: 700;
+    color: #27ae60;
+}
+.cost-value.projection {
+    color: #2980b9;
+}
+.cost-label {
+    font-size: 0.85em;
+    color: var(--muted);
+    margin-top: 4px;
+}
+/* Price input styling */
+.price-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+    color: var(--muted);
+}
+.price-input {
+    width: 70px;
+    padding: 4px 8px;
+    border: 1px solid var(--border, #ddd);
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+/* No data message */
+.no-data-message {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-style: italic;
+    background: var(--card-bg, #f8f9fa);
+    border-radius: 8px;
+}
+</style>
+
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script>
+    const buildingId = "{{ building_id }}";
+    const isAggregate = {{ 'true' if is_aggregate else 'false' }};
+    const FLEX_SETTINGS = {{ flex_settings | tojson }};
+    let currentChart = null;
+
+    // Initial chart data from server
+    const initialData = {{ graph_json | safe }};
+    const chartConfig = {{ config_json | safe }};
+
+    function renderChart(data) {
+        Plotly.newPlot('availability-chart', data.data, data.layout, chartConfig);
+    }
+
+    // Helper function to update data source badge
+    function updateDataSourceBadge(elementId, dataSource) {
+        const badge = document.getElementById(elementId);
+        if (!badge) return;
+
+        if (dataSource === 'live') {
+            badge.textContent = 'Live Data';
+            badge.className = 'data-source-badge live';
+            badge.style.display = 'inline-block';
+        } else if (dataSource === 'imported') {
+            badge.textContent = 'Imported Data';
+            badge.className = 'data-source-badge imported';
+            badge.style.display = 'inline-block';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    // Supply & Return Temperatures Chart
+    function updateSupplyReturnChart() {
+        const hours = document.getElementById('supply-return-days-select').value;
+        const chartDiv = document.getElementById('supply-return-chart');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading supply/return data...</div>';
+
+        fetch(`/api/building/${buildingId}/supply-return?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { history: [] })
+            .then(result => {
+                const history = result.history || [];
+
+                if (history.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No supply/return temperature data available.</div>';
+                    return;
+                }
+
+                const histTimestamps = history.map(d => d.timestamp_display);
+
+                const traces = [
+                    // Supply Temperature (solid red)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.supply_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        connectgaps: true,
+                        name: 'Supply',
+                        line: { color: '#e74c3c', width: 2 },
+                        hovertemplate: '%{x}<br>Supply: %{y}°C<extra></extra>'
+                    },
+                    // Return Temperature (solid blue)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.return_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        connectgaps: true,
+                        name: 'Return',
+                        line: { color: '#3498db', width: 2 },
+                        hovertemplate: '%{x}<br>Return: %{y}°C<extra></extra>'
+                    },
+                    // Supply Setpoint (dashed green)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.supply_setpoint),
+                        type: 'scatter',
+                        mode: 'lines',
+                        connectgaps: true,
+                        name: 'Setpoint',
+                        line: { color: '#27ae60', width: 2, dash: 'dash' },
+                        hovertemplate: '%{x}<br>Setpoint: %{y}°C<extra></extra>'
+                    },
+                    // Outdoor temp (thin gray dashed)
+                    {
+                        x: histTimestamps,
+                        y: history.map(d => d.outdoor_temp),
+                        type: 'scatter',
+                        mode: 'lines',
+                        connectgaps: true,
+                        name: 'Outdoor',
+                        line: { color: '#95a5a6', width: 1, dash: 'dash' },
+                        yaxis: 'y2',
+                        hovertemplate: '%{x}<br>Outdoor: %{y}°C<extra></extra>'
+                    }
+                ];
+
+                const layout = {
+                    xaxis: {
+                        title: 'Time',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis: {
+                        title: 'Temperature (°C)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis2: {
+                        title: 'Outdoor (°C)',
+                        overlaying: 'y',
+                        side: 'right',
+                        showgrid: false
+                    },
+                    height: 400,
+                    margin: { l: 60, r: 60, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                chartDiv.innerHTML = '';
+
+                Plotly.newPlot('supply-return-chart', traces, layout, chartConfig)
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load supply/return data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load supply/return data.</div>';
+            });
+    }
+
+    // Data Availability Chart
+    function updateChart() {
+        const days = document.getElementById('days-select').value;
+        const chartDiv = document.getElementById('availability-chart');
+
+        chartDiv.style.opacity = '0.5';
+
+        fetch(`/api/building/${buildingId}/data-availability?days=${days}`)
+            .then(response => response.json())
+            .then(availability => {
+                if (!availability.categories || availability.categories.length === 0) {
+                    chartDiv.innerHTML = '<p class="muted">No data available.</p>';
+                    chartDiv.style.opacity = '1';
+                    return;
+                }
+
+                const allDatesSet = new Set();
+                availability.categories.forEach(cat => {
+                    cat.data.forEach(d => allDatesSet.add(d.date));
+                });
+                const allDates = Array.from(allDatesSet).sort();
+
+                const categoryNames = availability.categories.map(c => c.name);
+                const zValues = availability.categories.map(cat => {
+                    const dateToCount = {};
+                    cat.data.forEach(d => { dateToCount[d.date] = d.count; });
+                    return allDates.map(date => dateToCount[date] || 0);
+                });
+
+                const traces = [{
+                    z: zValues,
+                    x: allDates,
+                    y: categoryNames,
+                    type: 'heatmap',
+                    colorscale: [
+                        [0, '#f8f9fa'],
+                        [0.01, '#e3f2fd'],
+                        [0.25, '#90caf9'],
+                        [0.5, '#42a5f5'],
+                        [1, '#1565c0']
+                    ],
+                    showscale: true,
+                    colorbar: {
+                        title: { text: 'Data points', side: 'right' }
+                    },
+                    hovertemplate: '%{x}<br>%{y}: %{z} points<extra></extra>'
+                }];
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: null,
+                        autorange: 'reversed'
+                    },
+                    height: Math.max(300, availability.categories.length * 40 + 150),
+                    margin: { l: 130, r: 80, t: 20, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: 'pan'
+                };
+
+                Plotly.react('availability-chart', traces, layout, chartConfig);
+                chartDiv.style.opacity = '1';
+            })
+            .catch(error => {
+                console.error('Failed to update chart:', error);
+                chartDiv.style.opacity = '1';
+            });
+    }
+
+    // Primary vs Secondary Temperature Chart
+    const tempHistoryState = {
+        loadedHours: 0,
+        isLoading: false,
+        data: [],
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function buildTempHistoryTraces(data) {
+        const timestamps = data.map(d => d.timestamp_display);
+        return [
+            // DH Primary Side
+            {
+                x: timestamps,
+                y: data.map(d => d.dh_supply_temp),
+                type: 'scatter',
+                mode: 'lines',
+                connectgaps: true,
+                name: 'DH Supply',
+                line: { color: '#e74c3c', width: 2 },
+                hovertemplate: '%{x}<br>DH Supply: %{y}°C<extra></extra>'
+            },
+            {
+                x: timestamps,
+                y: data.map(d => d.dh_return_temp),
+                type: 'scatter',
+                mode: 'lines',
+                connectgaps: true,
+                name: 'DH Return',
+                line: { color: '#c0392b', width: 2, dash: 'dot' },
+                hovertemplate: '%{x}<br>DH Return: %{y}°C<extra></extra>'
+            },
+            // Building Secondary Side
+            {
+                x: timestamps,
+                y: data.map(d => d.supply_temp),
+                type: 'scatter',
+                mode: 'lines',
+                connectgaps: true,
+                name: 'Bld Supply',
+                line: { color: '#3498db', width: 2 },
+                hovertemplate: '%{x}<br>Bld Supply: %{y}°C<extra></extra>'
+            },
+            {
+                x: timestamps,
+                y: data.map(d => d.return_temp),
+                type: 'scatter',
+                mode: 'lines',
+                connectgaps: true,
+                name: 'Bld Return',
+                line: { color: '#2980b9', width: 2, dash: 'dot' },
+                hovertemplate: '%{x}<br>Bld Return: %{y}°C<extra></extra>'
+            },
+            // Outdoor reference
+            {
+                x: timestamps,
+                y: data.map(d => d.outdoor_temperature),
+                type: 'scatter',
+                mode: 'lines',
+                connectgaps: true,
+                name: 'Outdoor',
+                line: { color: '#95a5a6', width: 1, dash: 'dash' },
+                hovertemplate: '%{x}<br>Outdoor: %{y}°C<extra></extra>'
+            }
+        ];
+    }
+
+    function updateTemperatureHistoryChart(extendHours = null) {
+        const selectEl = document.getElementById('temp-history-days-select');
+        const hours = extendHours || parseInt(selectEl.value);
+        const chartDiv = document.getElementById('temp-history-chart');
+
+        if (!extendHours) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading temperature data...</div>';
+            tempHistoryState.data = [];
+        }
+        tempHistoryState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/temperature-history?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                tempHistoryState.isLoading = false;
+                const data = result.data || [];
+
+                if (data.length === 0 && !extendHours) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No temperature data available.</div>';
+                    return;
+                }
+
+                tempHistoryState.loadedHours = hours;
+                tempHistoryState.data = data;
+                if (data.length > 0) {
+                    tempHistoryState.minLoadedTime = new Date(data[0].timestamp);
+                    tempHistoryState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                const traces = buildTempHistoryTraces(data);
+
+                const layout = {
+                    xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Temperature (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    height: 400,
+                    margin: { l: 60, r: 30, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                if (!extendHours) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendHours ? Plotly.react : Plotly.newPlot;
+                plotFn('temp-history-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendHours) {
+                            document.getElementById('temp-history-chart').on('plotly_relayout', (e) => handleChartPan(e, tempHistoryState, 'temp-history-days-select', updateTemperatureHistoryChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendHours) {
+                            chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                        }
+                    });
+            })
+            .catch(error => {
+                tempHistoryState.isLoading = false;
+                console.error('Failed to load temperature history:', error);
+                if (!extendHours) {
+                    chartDiv.innerHTML = '<div class="no-data-message">Failed to load temperature data.</div>';
+                }
+            });
+    }
+
+    // Parse display time format to Date
+    function parseDisplayTime(timeStr) {
+        if (!timeStr) return null;
+        try {
+            if (timeStr.includes('T')) {
+                return new Date(timeStr);
+            }
+            const [datePart, timePart] = timeStr.split(' ');
+            if (!datePart) return null;
+            const [year, month, day] = datePart.split('-').map(Number);
+            const [hour, minute] = (timePart || '00:00').split(':').map(Number);
+            return new Date(year, month - 1, day, hour, minute);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Generic pan handler for hours-based charts
+    function handleChartPan(eventData, state, selectId, updateFn, maxHours = 720) {
+        if (state.isLoading || !eventData['xaxis.range[0]']) return;
+
+        const visibleStart = parseDisplayTime(eventData['xaxis.range[0]']);
+        const visibleEnd = parseDisplayTime(eventData['xaxis.range[1]']);
+
+        if (!visibleStart || !visibleEnd || !state.minLoadedTime) return;
+
+        const loadedRange = state.maxLoadedTime - state.minLoadedTime;
+        const buffer = loadedRange * 0.1;
+
+        const needsMore = visibleStart < new Date(state.minLoadedTime.getTime() + buffer) ||
+                          visibleEnd > new Date(state.maxLoadedTime.getTime() - buffer);
+
+        if (needsMore) {
+            const newHours = Math.min(state.loadedHours * 2, maxHours);
+            if (newHours > state.loadedHours) {
+                updateFn(newHours);
+                const selectEl = document.getElementById(selectId);
+                if (selectEl) {
+                    const options = Array.from(selectEl.options).map(o => parseInt(o.value));
+                    const closest = options.reduce((p, c) => Math.abs(c - newHours) < Math.abs(p - newHours) ? c : p);
+                    selectEl.value = closest.toString();
+                }
+            }
+        }
+    }
+
+    // Generic pan handler for days-based charts
+    function handleChartPanDays(eventData, state, selectId, updateFn, maxDays = 365) {
+        if (state.isLoading || !eventData['xaxis.range[0]']) return;
+
+        const visibleStart = parseDisplayTime(eventData['xaxis.range[0]']);
+        const visibleEnd = parseDisplayTime(eventData['xaxis.range[1]']);
+
+        if (!visibleStart || !visibleEnd || !state.minLoadedTime) return;
+
+        const loadedRange = state.maxLoadedTime - state.minLoadedTime;
+        const buffer = loadedRange * 0.1;
+
+        const needsMore = visibleStart < new Date(state.minLoadedTime.getTime() + buffer) ||
+                          visibleEnd > new Date(state.maxLoadedTime.getTime() - buffer);
+
+        if (needsMore) {
+            const newDays = Math.min(state.loadedDays * 2, maxDays);
+            if (newDays > state.loadedDays) {
+                updateFn(newDays);
+                const selectEl = document.getElementById(selectId);
+                if (selectEl) {
+                    const options = Array.from(selectEl.options).map(o => parseInt(o.value));
+                    const closest = options.reduce((p, c) => Math.abs(c - newDays) < Math.abs(p - newDays) ? c : p);
+                    selectEl.value = closest.toString();
+                }
+            }
+        }
+    }
+
+    // Efficiency Metrics Chart (Delta T)
+    const efficiencyState = {
+        loadedHours: 0,
+        isLoading: false,
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function buildEfficiencyTraces(data) {
+        const timestamps = data.map(d => d.timestamp_display);
+        return [
+            {
+                x: timestamps,
+                y: data.map(d => d.dh_delta_t),
+                type: 'scatter',
+                mode: 'lines',
+                connectgaps: true,
+                name: 'DH Delta T',
+                fill: 'tozeroy',
+                line: { color: '#e74c3c', width: 2 },
+                fillcolor: 'rgba(231, 76, 60, 0.2)',
+                hovertemplate: '%{x}<br>DH \u0394T: %{y}°C<extra></extra>'
+            },
+            {
+                x: timestamps,
+                y: data.map(d => d.house_delta_t),
+                type: 'scatter',
+                mode: 'lines',
+                connectgaps: true,
+                name: 'Building Delta T',
+                fill: 'tozeroy',
+                line: { color: '#3498db', width: 2 },
+                fillcolor: 'rgba(52, 152, 219, 0.2)',
+                hovertemplate: '%{x}<br>Bld \u0394T: %{y}°C<extra></extra>'
+            }
+        ];
+    }
+
+    function updateEfficiencyChart(extendHours = null) {
+        const selectEl = document.getElementById('efficiency-days-select');
+        const hours = extendHours || parseInt(selectEl.value);
+        const chartDiv = document.getElementById('efficiency-chart');
+        const summaryDiv = document.getElementById('efficiency-summary');
+
+        if (!extendHours) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading efficiency data...</div>';
+            summaryDiv.innerHTML = '';
+        }
+        efficiencyState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/efficiency-metrics?hours=${hours}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                efficiencyState.isLoading = false;
+                const data = result.data || [];
+
+                if (data.length === 0 && !extendHours) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No efficiency data available.</div>';
+                    return;
+                }
+
+                efficiencyState.loadedHours = hours;
+                if (data.length > 0) {
+                    efficiencyState.minLoadedTime = new Date(data[0].timestamp);
+                    efficiencyState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                const traces = buildEfficiencyTraces(data);
+
+                const layout = {
+                    xaxis: { title: 'Time', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Delta T (°C)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 60 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                if (!extendHours) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendHours ? Plotly.react : Plotly.newPlot;
+                plotFn('efficiency-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendHours) {
+                            document.getElementById('efficiency-chart').on('plotly_relayout', (e) => handleChartPan(e, efficiencyState, 'efficiency-days-select', updateEfficiencyChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendHours) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Calculate and show summary
+                if (!extendHours && data.length > 0) {
+                    const dhDeltas = data.filter(d => d.dh_delta_t != null).map(d => d.dh_delta_t);
+                    const bldDeltas = data.filter(d => d.house_delta_t != null).map(d => d.house_delta_t);
+                    const avgDh = dhDeltas.length > 0 ? (dhDeltas.reduce((a, b) => a + b, 0) / dhDeltas.length).toFixed(1) : '-';
+                    const avgBld = bldDeltas.length > 0 ? (bldDeltas.reduce((a, b) => a + b, 0) / bldDeltas.length).toFixed(1) : '-';
+
+                    summaryDiv.innerHTML = `
+                        <div class="metric-item">
+                            <div class="metric-value">${avgDh}°C</div>
+                            <div class="metric-label">Avg DH Delta T</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value">${avgBld}°C</div>
+                            <div class="metric-label">Avg Bld Delta T</div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                efficiencyState.isLoading = false;
+                console.error('Failed to load efficiency data:', error);
+                if (!extendHours) chartDiv.innerHTML = '<div class="no-data-message">Failed to load efficiency data.</div>';
+            });
+    }
+
+    // Cost Estimate Chart
+    const costState = {
+        loadedDays: 0,
+        isLoading: false,
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function updateCostChart(extendDays = null) {
+        const selectEl = document.getElementById('cost-days-select');
+        const days = extendDays || parseInt(selectEl.value);
+        const price = document.getElementById('price-input').value || 1.20;
+        const chartDiv = document.getElementById('cost-chart');
+        const summaryDiv = document.getElementById('cost-summary');
+
+        if (!extendDays) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading cost data...</div>';
+            summaryDiv.innerHTML = '';
+        }
+        costState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/cost-estimate?days=${days}&price=${price}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                costState.isLoading = false;
+                const data = result.data || [];
+                const summary = result.summary || {};
+
+                // Update data source badge
+                if (!extendDays) {
+                    updateDataSourceBadge('cost-data-source', result.data_source);
+                }
+
+                if (data.length === 0 && !extendDays) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No cost data available. Import energy data first.</div>';
+                    return;
+                }
+
+                costState.loadedDays = days;
+                if (data.length > 0) {
+                    costState.minLoadedTime = new Date(data[0].timestamp);
+                    costState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                // Group by date for daily costs
+                const dailyCosts = {};
+                data.forEach(d => {
+                    const date = d.timestamp_display.split(' ')[0];
+                    if (!dailyCosts[date]) dailyCosts[date] = 0;
+                    dailyCosts[date] += d.cost;
+                });
+
+                const dates = Object.keys(dailyCosts).sort();
+                const costs = dates.map(d => Math.round(dailyCosts[d] * 100) / 100);
+
+                const traces = [{
+                    x: dates,
+                    y: costs,
+                    type: 'bar',
+                    name: 'Daily Cost',
+                    marker: {
+                        color: costs.map(c => c > summary.daily_avg_cost * 1.5 ? '#e74c3c' : '#27ae60')
+                    },
+                    hovertemplate: '%{x}<br>%{y} SEK<extra></extra>'
+                }];
+
+                // Add average line
+                if (summary.daily_avg_cost) {
+                    traces.push({
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [summary.daily_avg_cost, summary.daily_avg_cost],
+                        type: 'scatter',
+                        mode: 'lines',
+                        connectgaps: true,
+                        name: 'Daily Avg',
+                        line: { color: '#f39c12', width: 2, dash: 'dash' },
+                        hovertemplate: 'Average: %{y} SEK<extra></extra>'
+                    });
+                }
+
+                const layout = {
+                    xaxis: { title: 'Date', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)' },
+                    yaxis: { title: 'Cost (SEK)', showgrid: true, gridcolor: 'rgba(0,0,0,0.1)', rangemode: 'tozero' },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 },
+                    dragmode: 'pan'
+                };
+
+                if (!extendDays) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendDays ? Plotly.react : Plotly.newPlot;
+                plotFn('cost-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendDays) {
+                            document.getElementById('cost-chart').on('plotly_relayout', (e) => handleChartPanDays(e, costState, 'cost-days-select', updateCostChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Update summary
+                if (!extendDays) {
+                    summaryDiv.innerHTML = `
+                        <div class="cost-item">
+                            <div class="cost-value">${summary.total_kwh || 0} kWh</div>
+                            <div class="cost-label">Total Energy</div>
+                        </div>
+                        <div class="cost-item highlight">
+                            <div class="cost-value">${summary.total_cost || 0} SEK</div>
+                            <div class="cost-label">Total Cost (${days} days)</div>
+                        </div>
+                        <div class="cost-item">
+                            <div class="cost-value">${summary.daily_avg_kwh || 0} kWh</div>
+                            <div class="cost-label">Daily Avg Energy</div>
+                        </div>
+                        <div class="cost-item">
+                            <div class="cost-value">${summary.daily_avg_cost || 0} SEK</div>
+                            <div class="cost-label">Daily Avg Cost</div>
+                        </div>
+                        <div class="cost-item highlight">
+                            <div class="cost-value projection">${summary.monthly_projection || 0} SEK</div>
+                            <div class="cost-label">Monthly Projection</div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                costState.isLoading = false;
+                console.error('Failed to load cost data:', error);
+                if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to load cost data.</div>';
+            });
+    }
+
+    // Energy Separation Chart (Heating vs Hot Water)
+    const separationState = {
+        loadedDays: 0,
+        isLoading: false,
+        minLoadedTime: null,
+        maxLoadedTime: null
+    };
+
+    function updateEnergySeparationChart(extendDays = null) {
+        const selectEl = document.getElementById('separation-days-select');
+        const days = extendDays || parseInt(selectEl.value);
+        const chartDiv = document.getElementById('separation-chart');
+        const summaryDiv = document.getElementById('separation-summary');
+
+        if (!extendDays) {
+            chartDiv.innerHTML = '<div class="loading-spinner">Loading energy separation data...</div>';
+            summaryDiv.innerHTML = '';
+        }
+        separationState.isLoading = true;
+
+        fetch(`/api/building/${buildingId}/energy-separated?days=${days}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                separationState.isLoading = false;
+                const data = result.data || [];
+                const totals = result.totals || {};
+                const kValue = result.k_value;
+
+                if (data.length === 0 && !extendDays) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No energy separation data available yet. Data appears after the daily calibration runs.</div>';
+                    return;
+                }
+
+                separationState.loadedDays = days;
+                if (data.length > 0) {
+                    separationState.minLoadedTime = new Date(data[0].timestamp);
+                    separationState.maxLoadedTime = new Date(data[data.length - 1].timestamp);
+                }
+
+                const timestamps = data.map(d => d.timestamp_display);
+                const hasNoBreakdown = data.some(d => d.no_breakdown);
+                const hasBuildingCount = isAggregate && data[0] && data[0].building_count != null;
+                const countSuffix = (d) => hasBuildingCount ? `<br>Buildings: ${d.building_count}` : '';
+
+                // Stacked bar chart: Heating (bottom) + DHW (top)
+                const traces = [
+                    {
+                        x: timestamps,
+                        y: data.map(d => d.no_breakdown ? 0 : d.heating_kwh),
+                        type: 'bar',
+                        name: 'Heating',
+                        marker: { color: '#3498db' },
+                        hovertext: data.map(d => `${d.timestamp_display}<br>Heating: ${d.no_breakdown ? 0 : d.heating_kwh} kWh${countSuffix(d)}`),
+                        hoverinfo: 'text'
+                    },
+                    {
+                        x: timestamps,
+                        y: data.map(d => d.no_breakdown ? 0 : d.dhw_kwh),
+                        type: 'bar',
+                        name: 'Hot Water (DHW)',
+                        marker: { color: '#e67e22' },
+                        hovertext: data.map(d => `${d.timestamp_display}<br>Hot Water: ${d.no_breakdown ? 0 : d.dhw_kwh} kWh${countSuffix(d)}`),
+                        hoverinfo: 'text'
+                    }
+                ];
+
+                // Grey bar for days without enough temperature data for breakdown
+                if (hasNoBreakdown) {
+                    traces.push({
+                        x: timestamps,
+                        y: data.map(d => d.no_breakdown ? d.actual_kwh : 0),
+                        type: 'bar',
+                        name: 'Total (no breakdown)',
+                        marker: { color: '#bdc3c7' },
+                        hovertext: data.map(d => d.no_breakdown ? `${d.timestamp_display}<br>Total: ${d.actual_kwh} kWh<br>(insufficient temp data)` : ''),
+                        hoverinfo: 'text'
+                    });
+                }
+
+                // Actual total markers
+                traces.push({
+                    x: timestamps,
+                    y: data.map(d => d.actual_kwh),
+                    type: 'scatter',
+                    mode: 'markers',
+                    name: 'Actual Total',
+                    marker: { color: '#2c3e50', size: 8, symbol: 'diamond' },
+                    hovertext: data.map(d => `${d.timestamp_display}<br>Actual: ${d.actual_kwh} kWh`),
+                    hoverinfo: 'text'
+                });
+
+                // Add prediction line (if available from backtest)
+                const hasPredictions = data.some(d => d.predicted_kwh !== null);
+                if (hasPredictions) {
+                    traces.push({
+                        x: timestamps,
+                        y: data.map(d => d.predicted_kwh),
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        connectgaps: true,
+                        name: 'Predicted Heating',
+                        line: { color: '#9b59b6', width: 2, dash: 'dash' },
+                        marker: { color: '#9b59b6', size: 6 },
+                        hovertemplate: '%{x}<br>Predicted: %{y} kWh<br>Outdoor: %{customdata}°C<extra></extra>',
+                        customdata: data.map(d => d.avg_outdoor)
+                    });
+                }
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: 'Energy (kWh)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        rangemode: 'tozero'
+                    },
+                    barmode: 'stack',
+                    height: 400,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                if (!extendDays) {
+                    chartDiv.innerHTML = '';
+                }
+
+                const plotFn = extendDays ? Plotly.react : Plotly.newPlot;
+                plotFn('separation-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        if (!extendDays) {
+                            document.getElementById('separation-chart').on('plotly_relayout', (e) => handleChartPanDays(e, separationState, 'separation-days-select', updateEnergySeparationChart));
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Update summary
+                if (!extendDays) {
+                    let predictionHtml = '';
+                    if (totals.prediction_accuracy && totals.days_with_predictions > 0) {
+                        predictionHtml = `
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #9b59b6">${totals.prediction_accuracy}%</div>
+                            <div class="metric-label">Prediction Accuracy (${totals.days_with_predictions}d)</div>
+                        </div>`;
+                    }
+                    let lastMetricHtml = '';
+                    if (hasBuildingCount) {
+                        const maxBldCount = Math.max(...data.map(d => d.building_count || 0));
+                        lastMetricHtml = `
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #7f8c8d; font-size: 1.2em">${maxBldCount}</div>
+                            <div class="metric-label">Buildings Included</div>
+                        </div>`;
+                    } else {
+                        const kDisplay = kValue ? `${kValue} kW/°C` : 'N/A';
+                        lastMetricHtml = `
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #7f8c8d; font-size: 1.2em">${kDisplay}</div>
+                            <div class="metric-label">Heat Loss Coeff (k)</div>
+                        </div>`;
+                    }
+                    summaryDiv.innerHTML = `
+                        <div class="metric-item">
+                            <div class="metric-value">${totals.actual || 0} kWh</div>
+                            <div class="metric-label">Total Consumption</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #3498db">${totals.heating || 0} kWh</div>
+                            <div class="metric-label">Heating (${totals.heating_pct || 0}%)</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" style="color: #e67e22">${totals.dhw || 0} kWh</div>
+                            <div class="metric-label">Hot Water (${totals.dhw_pct || 0}%)</div>
+                        </div>
+                        ${predictionHtml}
+                        ${lastMetricHtml}
+                    `;
+                }
+            })
+            .catch(error => {
+                separationState.isLoading = false;
+                console.error('Failed to load energy separation:', error);
+                if (!extendDays) chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy separation data.</div>';
+            });
+    }
+
+    // Prediction Accuracy Trend Chart
+    function updateAccuracyChart() {
+        const days = parseInt(document.getElementById('accuracy-days-select').value);
+        const chartDiv = document.getElementById('accuracy-chart');
+        const summaryDiv = document.getElementById('accuracy-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading prediction accuracy data...</div>';
+        summaryDiv.innerHTML = '';
+
+        fetch(`/api/building/${buildingId}/energy-separated?days=${days}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                const data = result.data || [];
+
+                // Filter for days with both predicted and actual heating > 0
+                const valid = data.filter(d => d.predicted_kwh !== null && d.predicted_kwh > 0 && d.heating_kwh > 0);
+
+                if (valid.length < 2) {
+                    chartDiv.innerHTML = '<div class="no-data-message">Not enough prediction data yet. Need at least 2 days with both predicted and actual heating energy.</div>';
+                    summaryDiv.innerHTML = '';
+                    return;
+                }
+
+                const dates = valid.map(d => d.timestamp_display);
+                const accuracies = valid.map(d => Math.round(d.predicted_kwh / d.heating_kwh * 1000) / 10);
+
+                // Color-code each marker
+                const colors = accuracies.map(a => {
+                    if (a >= 90 && a <= 110) return '#27ae60';
+                    if (a >= 80 && a <= 120) return '#f39c12';
+                    return '#e74c3c';
+                });
+
+                const traces = [
+                    // Green "good" zone band
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [110, 110],
+                        mode: 'lines',
+                        line: { color: 'rgba(39,174,96,0)', width: 0 },
+                        showlegend: false,
+                        hoverinfo: 'skip'
+                    },
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [90, 90],
+                        mode: 'lines',
+                        line: { color: 'rgba(39,174,96,0)', width: 0 },
+                        fill: 'tonexty',
+                        fillcolor: 'rgba(39,174,96,0.1)',
+                        showlegend: false,
+                        hoverinfo: 'skip'
+                    },
+                    // 100% reference line
+                    {
+                        x: [dates[0], dates[dates.length - 1]],
+                        y: [100, 100],
+                        mode: 'lines',
+                        name: 'Perfect (100%)',
+                        line: { color: '#95a5a6', width: 1, dash: 'dash' },
+                        hoverinfo: 'skip'
+                    },
+                    // Accuracy line with colored markers
+                    {
+                        x: dates,
+                        y: accuracies,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        connectgaps: true,
+                        name: 'Accuracy',
+                        line: { color: '#3498db', width: 2 },
+                        marker: { color: colors, size: 9, line: { color: '#fff', width: 1 } },
+                        hovertemplate: '%{x}<br>Accuracy: %{y}%<extra></extra>'
+                    }
+                ];
+
+                const layout = {
+                    xaxis: {
+                        title: 'Date',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        tickangle: -45
+                    },
+                    yaxis: {
+                        title: 'Accuracy (%)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        zeroline: false
+                    },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('accuracy-chart', traces, layout, chartConfig)
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+
+                // Summary stats
+                const avgAcc = Math.round(accuracies.reduce((s, v) => s + v, 0) / accuracies.length * 10) / 10;
+                const bestDay = valid[accuracies.indexOf(accuracies.reduce((best, v) => Math.abs(v - 100) < Math.abs(best - 100) ? v : best))];
+                const worstDay = valid[accuracies.indexOf(accuracies.reduce((worst, v) => Math.abs(v - 100) > Math.abs(worst - 100) ? v : worst))];
+
+                // Trend: compare first half average to second half average
+                const half = Math.floor(accuracies.length / 2);
+                const firstHalf = accuracies.slice(0, half);
+                const secondHalf = accuracies.slice(half);
+                const firstAvgDev = firstHalf.reduce((s, v) => s + Math.abs(v - 100), 0) / firstHalf.length;
+                const secondAvgDev = secondHalf.reduce((s, v) => s + Math.abs(v - 100), 0) / secondHalf.length;
+                const trendDiff = firstAvgDev - secondAvgDev;
+                let trend, trendColor;
+                if (trendDiff > 2) { trend = 'Improving'; trendColor = '#27ae60'; }
+                else if (trendDiff < -2) { trend = 'Declining'; trendColor = '#e74c3c'; }
+                else { trend = 'Stable'; trendColor = '#7f8c8d'; }
+
+                const avgColor = avgAcc >= 90 && avgAcc <= 110 ? '#27ae60' : (avgAcc >= 80 && avgAcc <= 120 ? '#f39c12' : '#e74c3c');
+
+                summaryDiv.innerHTML = `
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: ${avgColor}">${avgAcc}%</div>
+                        <div class="metric-label">Avg Accuracy (${valid.length} days)</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #27ae60">${Math.round(bestDay.predicted_kwh / bestDay.heating_kwh * 1000) / 10}%</div>
+                        <div class="metric-label">Best (${bestDay.timestamp_display})</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: #e74c3c">${Math.round(worstDay.predicted_kwh / worstDay.heating_kwh * 1000) / 10}%</div>
+                        <div class="metric-label">Worst (${worstDay.timestamp_display})</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-value" style="color: ${trendColor}">${trend}</div>
+                        <div class="metric-label">Trend</div>
+                    </div>
+                `;
+            })
+            .catch(error => {
+                console.error('Failed to load accuracy data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load prediction accuracy data.</div>';
+            });
+    }
+
+    // Energy Forecast Chart (Next 24h using k-value + SMHI weather)
+    function updateEnergyForecastChart() {
+        const hours = parseInt(document.getElementById('energy-forecast-hours-select').value);
+        const chartDiv = document.getElementById('energy-forecast-chart');
+        const summaryDiv = document.getElementById('energy-forecast-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading energy forecast...</div>';
+        summaryDiv.innerHTML = '';
+
+        // Always fetch 48h so panning reveals more data
+        const fetchHours = 48;
+        fetch(`/api/building/${buildingId}/energy-forecast?hours=${fetchHours}`)
+            .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
+            .then(result => {
+                const forecast = result.forecast || [];
+
+                if (forecast.length === 0) {
+                    const errMsg = result.error || 'No forecast available. Requires calibrated k-value and building location.';
+                    chartDiv.innerHTML = `<div class="no-data-message">${errMsg}</div>`;
+                    return;
+                }
+
+                // Use full ISO timestamps so bars stay unique beyond 24h
+                const timestamps = forecast.map(d => d.timestamp);
+                const energyKwh = forecast.map(d => d.heating_energy_kwh);
+                const outdoorTemp = forecast.map(d => d.outdoor_temp);
+
+                const hasBuildingCount = isAggregate && forecast[0] && forecast[0].building_count != null;
+
+                const hoverText = forecast.map(d => {
+                    let text = `${d.timestamp_display}<br>` +
+                        `Energy: ${d.heating_energy_kwh.toFixed(2)} kWh<br>` +
+                        `Power: ${d.heating_power_kw.toFixed(2)} kW<br>` +
+                        `Outdoor: ${d.outdoor_temp?.toFixed(1) || '-'}°C`;
+                    if (hasBuildingCount) {
+                        text += `<br>Buildings: ${d.building_count}`;
+                    }
+                    return text;
+                });
+
+                const energyTrace = {
+                    x: timestamps,
+                    y: energyKwh,
+                    type: 'bar',
+                    name: 'Energy (kWh)',
+                    marker: { color: '#FF6B6B' },
+                    text: hoverText,
+                    hoverinfo: 'text'
+                };
+
+                const tempTrace = {
+                    x: timestamps,
+                    y: outdoorTemp,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    connectgaps: true,
+                    name: 'Outdoor Temp (°C)',
+                    yaxis: 'y2',
+                    line: { color: '#4ECDC4', width: 2 },
+                    marker: { size: 4 }
+                };
+
+                const layout = {
+                    height: 350,
+                    margin: { l: 60, r: 60, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: 'pan',
+                    hovermode: 'x unified',
+                    xaxis: {
+                        title: 'Hour',
+                        tickangle: -45,
+                        gridcolor: '#e8e8e8',
+                        type: 'date',
+                        tickformat: '%a %H:%M',
+                        dtick: 3600000,
+                        range: hours < timestamps.length
+                            ? [timestamps[0], timestamps[hours]]
+                            : undefined
+                    },
+                    yaxis: {
+                        title: 'Energy (kWh)',
+                        titlefont: { color: '#FF6B6B' },
+                        tickfont: { color: '#FF6B6B' },
+                        gridcolor: '#e8e8e8',
+                        rangemode: 'tozero',
+                        fixedrange: true
+                    },
+                    yaxis2: {
+                        title: 'Temp (°C)',
+                        titlefont: { color: '#4ECDC4' },
+                        tickfont: { color: '#4ECDC4' },
+                        overlaying: 'y',
+                        side: 'right',
+                        fixedrange: true
+                    },
+                    legend: {
+                        orientation: 'h',
+                        y: -0.2
+                    },
+                    bargap: 0.1
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('energy-forecast-chart', [energyTrace, tempTrace], layout, chartConfig)
+                    .then(() => {
+                        const summary = result.summary || {};
+                        let summaryHtml = `
+                            <div class="metric-item">
+                                <div class="metric-value">${summary.total_energy_kwh?.toFixed(1) || '-'} kWh</div>
+                                <div class="metric-label">Total (${hours}h)</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${summary.avg_power_kw?.toFixed(2) || '-'} kW</div>
+                                <div class="metric-label">Avg Power</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${summary.peak_power_kw?.toFixed(2) || '-'} kW</div>
+                                <div class="metric-label">Peak Power</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${summary.peak_hour || '-'}</div>
+                                <div class="metric-label">Peak Hour</div>
+                            </div>
+                        `;
+                        if (result.generated_at) {
+                            summaryHtml += `
+                                <div class="metric-item" style="opacity: 0.7;">
+                                    <div class="metric-value" style="font-size: 0.9em;">${result.generated_at}</div>
+                                    <div class="metric-label">Generated</div>
+                                </div>
+                            `;
+                        }
+                        if (hasBuildingCount) {
+                            const maxCount = Math.max(...forecast.map(d => d.building_count || 0));
+                            summaryHtml += `
+                                <div class="metric-item">
+                                    <div class="metric-value">${maxCount}</div>
+                                    <div class="metric-label">Buildings Included</div>
+                                </div>
+                            `;
+                        }
+                        if (result.model) {
+                            summaryHtml += `
+                                <div class="metric-item" style="opacity: 0.7;">
+                                    <div class="metric-value" style="font-size: 0.9em;">${result.model}</div>
+                                    <div class="metric-label">Model</div>
+                                </div>
+                            `;
+                        }
+                        summaryDiv.innerHTML = summaryHtml;
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load energy forecast:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load energy forecast.</div>';
+            });
+    }
+
+    // Flexibility Chart (aggregate only — colored by temperature trend)
+    function updateFlexibilityChart() {
+        const selectEl = document.getElementById('flexibility-hours-select');
+        if (!selectEl) return;
+        const hours = parseInt(selectEl.value);
+        const chartDiv = document.getElementById('flexibility-chart');
+        const summaryDiv = document.getElementById('flexibility-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading flexibility data...</div>';
+        summaryDiv.innerHTML = '';
+
+        // Always fetch 48h so panning reveals more data
+        const fetchHours = 48;
+        fetch(`/api/building/${buildingId}/energy-forecast?hours=${fetchHours}`)
+            .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
+            .then(result => {
+                const forecast = result.forecast || [];
+
+                if (forecast.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No forecast data available for flexibility analysis.</div>';
+                    return;
+                }
+
+                // Calculate hourly temperature change rate
+                const tempRates = forecast.map((d, i) => {
+                    if (i === 0) {
+                        if (forecast.length > 1 && forecast[1].outdoor_temp != null && d.outdoor_temp != null) {
+                            return forecast[1].outdoor_temp - d.outdoor_temp;
+                        }
+                        return 0;
+                    }
+                    if (d.outdoor_temp != null && forecast[i - 1].outdoor_temp != null) {
+                        return d.outdoor_temp - forecast[i - 1].outdoor_temp;
+                    }
+                    return 0;
+                });
+
+                // Color mapping: -2°C/h = red, 0 = yellow, +2°C/h = green
+                function rateToColor(rate) {
+                    const clamped = Math.max(-2, Math.min(2, rate));
+                    const t = (clamped + 2) / 4;
+                    let r, g, b;
+                    if (t <= 0.5) {
+                        const s = t / 0.5;
+                        r = 231;
+                        g = Math.round(76 + (196 - 76) * s);
+                        b = Math.round(60 + (15 - 60) * s);
+                    } else {
+                        const s = (t - 0.5) / 0.5;
+                        r = Math.round(241 + (39 - 241) * s);
+                        g = Math.round(196 + (174 - 196) * s);
+                        b = Math.round(15 + (96 - 15) * s);
+                    }
+                    return `rgb(${r},${g},${b})`;
+                }
+
+                // Use full ISO timestamps so bars stay unique beyond 24h
+                const timestamps = forecast.map(d => d.timestamp);
+                const energyKwh = forecast.map(d => d.heating_energy_kwh);
+                const barColors = tempRates.map(r => rateToColor(r));
+
+                const hoverText = forecast.map((d, i) => {
+                    const rate = tempRates[i];
+                    const rateStr = rate >= 0 ? `+${rate.toFixed(1)}` : rate.toFixed(1);
+                    let flexibility = 'Moderate';
+                    if (rate >= 1.5) flexibility = 'High - safe to reduce';
+                    else if (rate >= 0.5) flexibility = 'Good';
+                    else if (rate <= -1.5) flexibility = 'Low - avoid reducing';
+                    else if (rate <= -0.5) flexibility = 'Limited';
+                    return `${d.timestamp_display}<br>` +
+                        `Energy: ${d.heating_energy_kwh.toFixed(2)} kWh<br>` +
+                        `Outdoor: ${d.outdoor_temp?.toFixed(1) || '-'}°C<br>` +
+                        `Trend: ${rateStr}°C/h<br>` +
+                        `Flexibility: ${flexibility}`;
+                });
+
+                const energyTrace = {
+                    x: timestamps,
+                    y: energyKwh,
+                    type: 'bar',
+                    name: 'Energy (kWh)',
+                    marker: { color: barColors },
+                    text: hoverText,
+                    hoverinfo: 'text'
+                };
+
+                const rateTrace = {
+                    x: timestamps,
+                    y: tempRates,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Temp trend (\u00B0C/h)',
+                    yaxis: 'y2',
+                    line: { color: '#555', width: 2 },
+                    marker: { size: 4 },
+                    hoverinfo: 'skip'
+                };
+
+                const zeroTrace = {
+                    x: [timestamps[0], timestamps[timestamps.length - 1]],
+                    y: [0, 0],
+                    type: 'scatter',
+                    mode: 'lines',
+                    yaxis: 'y2',
+                    line: { color: '#aaa', width: 1, dash: 'dot' },
+                    showlegend: false,
+                    hoverinfo: 'skip'
+                };
+
+                const layout = {
+                    height: 350,
+                    margin: { l: 60, r: 60, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: 'pan',
+                    hovermode: 'x unified',
+                    xaxis: {
+                        title: 'Hour',
+                        tickangle: -45,
+                        gridcolor: '#e8e8e8',
+                        type: 'date',
+                        tickformat: '%a %H:%M',
+                        dtick: 3600000,
+                        range: hours < timestamps.length
+                            ? [timestamps[0], timestamps[hours]]
+                            : undefined
+                    },
+                    yaxis: {
+                        title: 'Energy (kWh)',
+                        gridcolor: '#e8e8e8',
+                        rangemode: 'tozero',
+                        fixedrange: true
+                    },
+                    yaxis2: {
+                        title: 'Temp trend (\u00B0C/h)',
+                        titlefont: { color: '#555' },
+                        tickfont: { color: '#555' },
+                        overlaying: 'y',
+                        side: 'right',
+                        zeroline: false,
+                        fixedrange: true
+                    },
+                    legend: {
+                        orientation: 'h',
+                        y: -0.2
+                    },
+                    bargap: 0.1
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('flexibility-chart', [energyTrace, rateTrace, zeroTrace], layout, chartConfig)
+                    .then(() => {
+                        const greenHours = tempRates.filter(r => r >= 1.0).length;
+                        const yellowHours = tempRates.filter(r => r > -0.5 && r < 1.0).length;
+                        const redHours = tempRates.filter(r => r <= -0.5).length;
+                        const totalSaveable = forecast
+                            .filter((d, i) => tempRates[i] >= 0.5)
+                            .reduce((sum, d) => sum + d.heating_energy_kwh, 0);
+
+                        summaryDiv.innerHTML = `
+                            <div class="metric-item">
+                                <div class="metric-value" style="color:#27ae60">${greenHours}</div>
+                                <div class="metric-label">Good hours</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value" style="color:#f1c40f">${yellowHours}</div>
+                                <div class="metric-label">Neutral hours</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value" style="color:#e74c3c">${redHours}</div>
+                                <div class="metric-label">Avoid cutting</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${totalSaveable.toFixed(1)}</div>
+                                <div class="metric-label">kWh in green window</div>
+                            </div>
+                        `;
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load flexibility data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load flexibility data.</div>';
+            });
+    }
+
+    // =========================================================================
+    // Flexibility Control Chart (interactive demand shifting)
+    // =========================================================================
+    let flexCtrlState = {
+        originalForecast: null,   // immutable: original predicted kWh per bar
+        adjustedEnergy: null,     // mutable: current display values
+        timestamps: null,
+        tempRates: null,
+        barColors: null,
+        ceiling: null,            // current ceiling kWh (null = no ceiling active)
+        ceilingDragging: false,   // is the ceiling line being dragged?
+        yMax: 0,                  // fixed Y-axis max (set once on load)
+        selectedBars: new Set(),  // indices of selected bars
+        selectionStart: null,     // bar index where drag-select started
+        isSelecting: false,       // is the user currently drag-selecting?
+    };
+
+    // Smart rounding to 2 significant figures: 310.15→310, 7.79→7.8, 0.54→0.54
+    function flexRound(val) {
+        if (val === 0) return 0;
+        const abs = Math.abs(val);
+        const digits = Math.floor(Math.log10(abs)) + 1;
+        const sigfigs = 2;
+        if (digits >= sigfigs) {
+            const factor = Math.pow(10, digits - sigfigs);
+            return Math.round(val / factor) * factor;
+        } else {
+            const decimals = sigfigs - digits;
+            return parseFloat(val.toFixed(decimals));
+        }
+    }
+
+    // Format energy with unit: kWh or MWh
+    function flexFmtEnergy(val) {
+        const rounded = flexRound(Math.abs(val));
+        if (rounded >= 1000) return (rounded / 1000).toFixed(1) + ' MWh';
+        return rounded + ' kWh';
+    }
+
+    // Format energy with sign for deltas
+    function flexFmtDelta(val) {
+        const sign = val >= 0 ? '+' : '-';
+        return sign + flexFmtEnergy(Math.abs(val));
+    }
+
+    // Color for unchanged bars based on temp rate
+    function flexRateToColor(rate) {
+        const clamped = Math.max(-2, Math.min(2, rate));
+        const t = (clamped + 2) / 4;
+        let r, g, b;
+        if (t <= 0.5) {
+            const s = t / 0.5;
+            r = 231; g = Math.round(76 + (196 - 76) * s); b = Math.round(60 + (15 - 60) * s);
+        } else {
+            const s = (t - 0.5) / 0.5;
+            r = Math.round(241 + (39 - 241) * s); g = Math.round(196 + (174 - 196) * s); b = Math.round(15 + (96 - 15) * s);
+        }
+        return `rgb(${r},${g},${b})`;
+    }
+
+    // Max window hours from settings (total span: compensation + peaks)
+    const flexRoofMaxWindow = {{ flex_settings.get('flex_roof_max_window_hours', 8) }};
+
+    // Distribute energy to up to `count` non-skipped bars, each capped at ceiling
+    function distributeToN(adj, fromIdx, direction, count, energy, ceiling, skip) {
+        let remaining = energy;
+        let found = 0;
+        for (let step = 1; found < count && remaining > 0.001; step++) {
+            const i = fromIdx + direction * step;
+            if (i < 0 || i >= adj.length) break;
+            if (skip.has(i)) continue;
+            found++;
+            const capacity = Math.max(0, ceiling - adj[i]);
+            const add = Math.min(remaining, capacity);
+            adj[i] += add;
+            remaining -= add;
+        }
+        return remaining;
+    }
+
+    // Green-aware round-robin distribution: spreads energy fairly across candidates
+    function distributeEnergy(adj, energy, candidates, tempRates, preferGreen, ceiling) {
+        if (candidates.length === 0 || energy <= 0.001) return energy;
+        const sorted = [...candidates];
+        if (preferGreen && tempRates) {
+            sorted.sort((a, b) => (tempRates[b] || 0) - (tempRates[a] || 0));
+        }
+        let remaining = energy;
+        let lastRemaining = remaining + 1;
+        while (remaining > 0.001 && remaining < lastRemaining - 0.001) {
+            lastRemaining = remaining;
+            const perBar = remaining / sorted.length;
+            for (const i of sorted) {
+                if (remaining <= 0.001) break;
+                const capacity = Math.max(0, ceiling - adj[i]);
+                const add = Math.min(perBar, capacity, remaining);
+                if (add > 0.001) {
+                    adj[i] += add;
+                    remaining -= add;
+                }
+            }
+        }
+        return remaining;
+    }
+
+    // Apply ceiling: cap bars above it, redistribute removed energy.
+    // Selection-aware: if bars selected, only caps selected; redistributes to non-selected.
+    // Green-aware: if preferGreen, sorts recipients by temp rate.
+    // Returns leftover energy that couldn't be placed.
+    function applyCeiling(ceilingValue) {
+        const orig = flexCtrlState.originalForecast;
+        if (!orig) return 0;
+
+        const adj = flexCtrlState.adjustedEnergy;
+        const ceiling = Math.max(0, ceilingValue);
+        flexCtrlState.ceiling = ceiling;
+
+        // Reset all bars to original
+        for (let i = 0; i < adj.length; i++) adj[i] = orig[i];
+
+        const selected = flexCtrlState.selectedBars;
+        const hasSelection = selected.size > 0;
+        const preferGreen = document.getElementById('flex-prefer-green')?.checked ?? true;
+        const tempRates = flexCtrlState.tempRates;
+        let totalLeftover = 0;
+
+        if (hasSelection) {
+            // Only cap selected bars; redistribute to non-selected
+            let totalRemoved = 0;
+            for (const i of selected) {
+                if (orig[i] > ceiling) {
+                    totalRemoved += orig[i] - ceiling;
+                    adj[i] = ceiling;
+                }
+            }
+            if (totalRemoved > 0) {
+                const recipients = [];
+                for (let i = 0; i < orig.length; i++) {
+                    if (!selected.has(i)) recipients.push(i);
+                }
+                totalLeftover = distributeEnergy(adj, totalRemoved, recipients, tempRates, preferGreen, ceiling);
+            }
+        } else if (preferGreen) {
+            // Green-aware global: collect removed energy, distribute sorted by greenness
+            let totalRemoved = 0;
+            const capped = new Set();
+            for (let i = 0; i < orig.length; i++) {
+                if (orig[i] > ceiling) {
+                    totalRemoved += orig[i] - ceiling;
+                    adj[i] = ceiling;
+                    capped.add(i);
+                }
+            }
+            if (totalRemoved > 0) {
+                const recipients = [];
+                for (let i = 0; i < orig.length; i++) {
+                    if (!capped.has(i)) recipients.push(i);
+                }
+                totalLeftover = distributeEnergy(adj, totalRemoved, recipients, tempRates, true, ceiling);
+            }
+        } else {
+            // Directional behavior with before/after split
+            const capped = new Set();
+            const cappedBars = [];
+            for (let i = 0; i < orig.length; i++) {
+                if (orig[i] > ceiling) {
+                    const removed = orig[i] - ceiling;
+                    adj[i] = ceiling;
+                    capped.add(i);
+                    cappedBars.push({ index: i, removed });
+                }
+            }
+            if (cappedBars.length > 0) {
+                const sliderEl = document.getElementById('flex-split-slider');
+                const beforePct = sliderEl ? (100 - parseInt(sliderEl.value)) / 100 : 0.5;
+                const compPerBar = Math.max(0, flexRoofMaxWindow - 1);
+                const maxBefore = Math.round(compPerBar * beforePct);
+                const maxAfter = compPerBar - maxBefore;
+
+                for (const bar of cappedBars) {
+                    const beforeEnergy = bar.removed * beforePct;
+                    const afterEnergy = bar.removed * (1 - beforePct);
+
+                    let ovBefore = maxBefore > 0
+                        ? distributeToN(adj, bar.index, -1, maxBefore, beforeEnergy, ceiling, capped)
+                        : beforeEnergy;
+                    let ovAfter = maxAfter > 0
+                        ? distributeToN(adj, bar.index, +1, maxAfter, afterEnergy, ceiling, capped)
+                        : afterEnergy;
+
+                    if (ovBefore > 0.001 && maxAfter > 0) {
+                        ovBefore = distributeToN(adj, bar.index, +1, maxAfter, ovBefore, ceiling, capped);
+                    }
+                    if (ovAfter > 0.001 && maxBefore > 0) {
+                        ovAfter = distributeToN(adj, bar.index, -1, maxBefore, ovAfter, ceiling, capped);
+                    }
+                    totalLeftover += ovBefore + ovAfter;
+                }
+            }
+        }
+
+        flexCtrlReact();
+        return totalLeftover;
+    }
+
+    function getFlexBarColors() {
+        const orig = flexCtrlState.originalForecast;
+        const tempRates = flexCtrlState.tempRates;
+        const selected = flexCtrlState.selectedBars;
+        const colors = [];
+        const borders = [];
+        const borderWidths = [];
+        for (let i = 0; i < orig.length; i++) {
+            colors.push(flexRateToColor(tempRates[i]));
+            if (selected.has(i)) {
+                borders.push('#F7A800');
+                borderWidths.push(2.5);
+            } else {
+                borders.push('rgba(0,0,0,0.2)');
+                borderWidths.push(1);
+            }
+        }
+        return { colors, borders, borderWidths };
+    }
+
+    function flexCtrlReact() {
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (!gd || !gd.data) return;
+
+        const { colors, borders, borderWidths } = getFlexBarColors();
+        const orig = flexCtrlState.originalForecast;
+        const adj = flexCtrlState.adjustedEnergy;
+
+        // Compute per-bar values for 3 bar traces
+        const mainY = [], deltaUpY = [], deltaUpBase = [], deltaDownY = [], deltaDownBase = [];
+        for (let i = 0; i < orig.length; i++) {
+            mainY.push(Math.min(adj[i], orig[i]));
+            if (adj[i] > orig[i] + 0.001) {
+                deltaUpY.push(adj[i] - orig[i]);
+                deltaUpBase.push(orig[i]);
+            } else {
+                deltaUpY.push(0);
+                deltaUpBase.push(0);
+            }
+            if (adj[i] < orig[i] - 0.001) {
+                deltaDownY.push(orig[i] - adj[i]);
+                deltaDownBase.push(adj[i]);
+            } else {
+                deltaDownY.push(0);
+                deltaDownBase.push(0);
+            }
+        }
+
+        // [1] mainBars: temp-rate colored, height = min(adj, orig)
+        gd.data[1].y = mainY;
+        gd.data[1].marker.color = colors;
+        gd.data[1].marker.line.color = borders;
+        gd.data[1].marker.line.width = borderWidths;
+
+        // [2] deltaUp: green gain bars
+        gd.data[2].y = deltaUpY;
+        gd.data[2].base = deltaUpBase;
+
+        // [3] deltaDown: orange loss bars
+        gd.data[3].y = deltaDownY;
+        gd.data[3].base = deltaDownBase;
+
+        // Hover text on mainBars
+        gd.data[1].hovertext = adj.map((val, i) => {
+            const diff = val - orig[i];
+            if (Math.abs(diff) < 0.001) return flexFmtEnergy(val);
+            return `${flexFmtEnergy(val)} (${flexFmtDelta(diff)})`;
+        });
+
+        // Bar text labels showing delta
+        gd.data[1].text = adj.map((val, i) => {
+            const diff = val - orig[i];
+            if (Math.abs(diff) < 0.001) return '';
+            return flexFmtDelta(diff);
+        });
+
+        // [6] ceiling line
+        if (gd.data[6]) {
+            gd.data[6].y = [flexCtrlState.ceiling, flexCtrlState.ceiling];
+        }
+
+        Plotly.react(gd, gd.data, gd.layout, chartConfig);
+        updateFlexCtrlSummary();
+        updateFlexCmdStates();
+    }
+
+    // --- Ceiling drag handlers ---
+    function onCeilingDragStart(e) {
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (!gd || !gd._fullLayout) return;
+
+        // Only start ceiling drag if click is on the Y-axis gutter (left margin)
+        const rect = gd.getBoundingClientRect();
+        const clickX = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+        const marginLeft = gd._fullLayout.margin.l;
+
+        if (clickX > marginLeft) return;  // Click is in plot area — let Plotly handle pan
+
+        flexCtrlState.ceilingDragging = true;
+        gd.classList.add('ceiling-dragging');
+        e.stopPropagation();
+        e.preventDefault();
+
+        // Apply ceiling at current Y position immediately
+        onCeilingDragMove(e);
+    }
+
+    function onCeilingDragMove(e) {
+        if (!flexCtrlState.ceilingDragging) return;
+        e.preventDefault();
+
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (!gd || !gd._fullLayout) return;
+
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+        const yaxis = gd._fullLayout.yaxis;
+        const rect = gd.getBoundingClientRect();
+        const plotTop = rect.top + gd._fullLayout.margin.t;
+        const pixelInPlot = clientY - plotTop;
+        const dataY = yaxis.p2d(pixelInPlot);
+
+        // Snap to nice round values
+        const maxOrig = Math.max(...flexCtrlState.originalForecast);
+        const step = maxOrig * 0.02;  // 2% steps
+        let ceiling = Math.round(dataY / step) * step;
+        ceiling = Math.max(0, Math.min(flexCtrlState.yMax, ceiling));
+
+        const prevCeiling = flexCtrlState.ceiling;
+        const leftover = applyCeiling(ceiling);
+
+        // If energy couldn't be placed, the window is maxed out — revert
+        if (leftover > 0.1 && prevCeiling !== null && ceiling < prevCeiling) {
+            applyCeiling(prevCeiling);
+        }
+    }
+
+    function onCeilingDragEnd(e) {
+        if (!flexCtrlState.ceilingDragging) return;
+        flexCtrlState.ceilingDragging = false;
+
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (gd) gd.classList.remove('ceiling-dragging');
+
+        updateFlexCmdStates();
+    }
+
+    // --- Bar selection handlers ---
+    function findNearestBarIndex(dataX) {
+        const timestamps = flexCtrlState.timestamps;
+        if (!timestamps || timestamps.length === 0) return -1;
+        const targetMs = new Date(dataX).getTime();
+        let bestIdx = 0, bestDist = Infinity;
+        for (let i = 0; i < timestamps.length; i++) {
+            const dist = Math.abs(new Date(timestamps[i]).getTime() - targetMs);
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+        return bestDist < 45 * 60 * 1000 ? bestIdx : -1;
+    }
+
+    function onBarSelectStart(e) {
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (!gd || !gd._fullLayout || flexCtrlState.ceilingDragging) return;
+        const rect = gd.getBoundingClientRect();
+        const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+        const clickX = clientX - rect.left;
+        const marginLeft = gd._fullLayout.margin.l;
+        if (clickX <= marginLeft) return;  // Y-axis gutter — ceiling drag
+
+        const xaxis = gd._fullLayout.xaxis;
+        const pixelInPlot = clickX - marginLeft;
+        const dataX = xaxis.p2d(pixelInPlot);
+        const barIdx = findNearestBarIndex(dataX);
+        if (barIdx < 0) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        flexCtrlState.isSelecting = true;
+        flexCtrlState.selectionStart = barIdx;
+        flexCtrlState.selectedBars = new Set([barIdx]);
+        flexCtrlReact();
+    }
+
+    function onBarSelectMove(e) {
+        if (!flexCtrlState.isSelecting) return;
+        e.preventDefault();
+        const gd = document.getElementById('flex-ctrl-chart');
+        if (!gd || !gd._fullLayout) return;
+
+        const rect = gd.getBoundingClientRect();
+        const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+        const clickX = clientX - rect.left;
+        const xaxis = gd._fullLayout.xaxis;
+        const pixelInPlot = clickX - gd._fullLayout.margin.l;
+        const dataX = xaxis.p2d(pixelInPlot);
+        const barIdx = findNearestBarIndex(dataX);
+        if (barIdx < 0) return;
+
+        const start = flexCtrlState.selectionStart;
+        const minIdx = Math.min(start, barIdx);
+        const maxIdx = Math.max(start, barIdx);
+        flexCtrlState.selectedBars = new Set();
+        for (let i = minIdx; i <= maxIdx; i++) flexCtrlState.selectedBars.add(i);
+        flexCtrlReact();
+    }
+
+    function onBarSelectEnd(e) {
+        if (!flexCtrlState.isSelecting) return;
+        flexCtrlState.isSelecting = false;
+        updateFlexCmdStates();
+    }
+
+    function clearSelection() {
+        flexCtrlState.selectedBars = new Set();
+        flexCtrlState.selectionStart = null;
+        flexCtrlState.isSelecting = false;
+        if (document.getElementById('flex-ctrl-chart')?.data) flexCtrlReact();
+        updateFlexCmdStates();
+    }
+
+    function updateFlexCmdStates() {
+        const hasSelection = flexCtrlState.selectedBars.size > 0;
+        const el = id => document.getElementById(id);
+        if (el('flex-cmd-flatten')) el('flex-cmd-flatten').disabled = !hasSelection;
+        if (el('flex-cmd-cut')) el('flex-cmd-cut').disabled = !hasSelection;
+        if (el('flex-cmd-deselect')) el('flex-cmd-deselect').disabled = !hasSelection;
+
+        const resetBtn = el('flex-ctrl-reset-btn');
+        if (resetBtn) {
+            const orig = flexCtrlState.originalForecast;
+            const adj = flexCtrlState.adjustedEnergy;
+            let changed = false;
+            if (orig && adj) {
+                for (let i = 0; i < orig.length; i++) {
+                    if (Math.abs(adj[i] - orig[i]) > 0.001) { changed = true; break; }
+                }
+            }
+            resetBtn.disabled = !changed;
+        }
+    }
+
+    // --- Quick command functions ---
+    function flexCmdFlatten() {
+        const selected = flexCtrlState.selectedBars;
+        if (selected.size === 0) return;
+        const adj = flexCtrlState.adjustedEnergy;
+        let total = 0;
+        for (const i of selected) total += adj[i];
+        const avg = total / selected.size;
+        for (const i of selected) adj[i] = avg;
+        flexCtrlReact();
+    }
+
+    function flexCmdReduceNext() {
+        const hoursInput = document.getElementById('flex-cmd-reduce-hours');
+        const hours = hoursInput ? parseInt(hoursInput.value) || 3 : 3;
+        const adj = flexCtrlState.adjustedEnergy;
+        const timestamps = flexCtrlState.timestamps;
+        if (!adj || !timestamps) return;
+
+        const now = Date.now();
+        let startIdx = 0;
+        for (let i = 0; i < timestamps.length; i++) {
+            if (new Date(timestamps[i]).getTime() >= now) { startIdx = i; break; }
+        }
+        const endIdx = Math.min(startIdx + hours, adj.length);
+
+        let removed = 0;
+        for (let i = startIdx; i < endIdx; i++) {
+            const reduction = adj[i] * 0.3;
+            adj[i] -= reduction;
+            removed += reduction;
+        }
+        if (removed > 0) {
+            const recipients = [];
+            for (let i = endIdx; i < adj.length; i++) recipients.push(i);
+            const preferGreen = document.getElementById('flex-prefer-green')?.checked ?? true;
+            const ceiling = flexCtrlState.ceiling || flexCtrlState.yMax;
+            distributeEnergy(adj, removed, recipients, flexCtrlState.tempRates, preferGreen, ceiling);
+        }
+        flexCtrlReact();
+    }
+
+    function flexCmdCutRange() {
+        const selected = flexCtrlState.selectedBars;
+        if (selected.size === 0) return;
+        const adj = flexCtrlState.adjustedEnergy;
+        let removed = 0;
+        for (const i of selected) { removed += adj[i]; adj[i] = 0; }
+        if (removed > 0) {
+            const recipients = [];
+            for (let i = 0; i < adj.length; i++) {
+                if (!selected.has(i)) recipients.push(i);
+            }
+            const preferGreen = document.getElementById('flex-prefer-green')?.checked ?? true;
+            const ceiling = flexCtrlState.ceiling || flexCtrlState.yMax;
+            distributeEnergy(adj, removed, recipients, flexCtrlState.tempRates, preferGreen, ceiling);
+        }
+        flexCtrlReact();
+    }
+
+    function flexCmdShiftToGreen() {
+        const adj = flexCtrlState.adjustedEnergy;
+        const tempRates = flexCtrlState.tempRates;
+        if (!adj || !tempRates) return;
+
+        let removed = 0;
+        const greenBars = [];
+        for (let i = 0; i < adj.length; i++) {
+            if (tempRates[i] <= -0.5) {
+                const reduction = adj[i] * 0.3;
+                adj[i] -= reduction;
+                removed += reduction;
+            }
+            if (tempRates[i] >= 0.5) greenBars.push(i);
+        }
+        if (removed > 0 && greenBars.length > 0) {
+            const ceiling = flexCtrlState.ceiling || flexCtrlState.yMax;
+            distributeEnergy(adj, removed, greenBars, tempRates, true, ceiling);
+        }
+        flexCtrlReact();
+    }
+
+    function flexCmdDeselect() { clearSelection(); }
+
+    function updateFlexControlChart() {
+        console.log('FlexCtrl: updateFlexControlChart called');
+        const selectEl = document.getElementById('flex-ctrl-hours-select');
+        if (!selectEl) { console.log('FlexCtrl: no select element found'); return; }
+        const hours = parseInt(selectEl.value);
+        const chartDiv = document.getElementById('flex-ctrl-chart');
+        const summaryDiv = document.getElementById('flex-ctrl-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading flexibility control data...</div>';
+        summaryDiv.innerHTML = '';
+
+        // Clean up old event listeners
+        document.removeEventListener('mousemove', onCeilingDragMove);
+        document.removeEventListener('mouseup', onCeilingDragEnd);
+        document.removeEventListener('touchmove', onCeilingDragMove);
+        document.removeEventListener('touchend', onCeilingDragEnd);
+        document.removeEventListener('mousemove', onBarSelectMove);
+        document.removeEventListener('mouseup', onBarSelectEnd);
+        document.removeEventListener('touchmove', onBarSelectMove);
+        document.removeEventListener('touchend', onBarSelectEnd);
+        flexCtrlState.selectedBars = new Set();
+        flexCtrlState.selectionStart = null;
+        flexCtrlState.isSelecting = false;
+
+        // Always fetch 48h so there is data to pan into; initial view = selected hours
+        const fetchHours = 48;
+        fetch(`/api/building/${buildingId}/energy-forecast?hours=${fetchHours}`)
+            .then(r => r.ok ? r.json() : { forecast: [], error: 'Failed to fetch' })
+            .then(result => {
+                const forecast = result.forecast || [];
+
+                if (forecast.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No forecast data available.</div>';
+                    return;
+                }
+
+                // Calculate hourly temperature change rate
+                const tempRates = forecast.map((d, i) => {
+                    if (i === 0) {
+                        if (forecast.length > 1 && forecast[1].outdoor_temp != null && d.outdoor_temp != null) {
+                            return forecast[1].outdoor_temp - d.outdoor_temp;
+                        }
+                        return 0;
+                    }
+                    if (d.outdoor_temp != null && forecast[i - 1].outdoor_temp != null) {
+                        return d.outdoor_temp - forecast[i - 1].outdoor_temp;
+                    }
+                    return 0;
+                });
+
+                // Use full ISO timestamps so each bar is unique (HH:MM would repeat after 24h)
+                const timestamps = forecast.map(d => d.timestamp);
+                const energyKwh = forecast.map(d => d.heating_energy_kwh);
+                const barColors = tempRates.map(r => flexRateToColor(r));
+
+                // Store state
+                flexCtrlState.originalForecast = forecast.map(d => d.heating_energy_kwh);
+                flexCtrlState.adjustedEnergy = [...energyKwh];
+                flexCtrlState.timestamps = timestamps;
+                flexCtrlState.tempRates = tempRates;
+                flexCtrlState.barColors = barColors;
+                flexCtrlState.ceiling = null;
+                flexCtrlState.ceilingDragging = false;
+
+                // Fixed Y-axis: max of original data + 25% margin
+                const maxOrig = Math.max(...energyKwh);
+                flexCtrlState.yMax = maxOrig * 1.25;
+
+                // [0] Ghost trace: semi-transparent original forecast (always behind)
+                const ghostTrace = {
+                    x: timestamps,
+                    y: [...flexCtrlState.originalForecast],
+                    type: 'bar',
+                    name: 'Predicted',
+                    marker: {
+                        color: 'rgba(180,180,180,0.3)',
+                        line: { width: 1, color: 'rgba(150,150,150,0.5)' }
+                    },
+                    hoverinfo: 'skip'
+                };
+
+                // [1] Main bars: temp-rate colored, height = min(adj, orig)
+                const hoverText = energyKwh.map(val => flexFmtEnergy(val));
+                const mainBarsTrace = {
+                    x: timestamps,
+                    y: [...energyKwh],
+                    type: 'bar',
+                    name: 'Adjusted (kWh)',
+                    marker: {
+                        color: barColors,
+                        line: { width: 1, color: barColors.map(() => 'rgba(0,0,0,0.2)') }
+                    },
+                    text: energyKwh.map(() => ''),
+                    textposition: 'inside',
+                    textangle: 0,
+                    textfont: { size: 10, color: '#fff', family: 'system-ui, sans-serif' },
+                    insidetextanchor: 'start',
+                    hovertext: hoverText,
+                    hoverinfo: 'text'
+                };
+
+                // [2] Delta up: green gain bars (where adj > orig after modifications)
+                const deltaUpTrace = {
+                    x: timestamps,
+                    y: energyKwh.map(() => 0),
+                    base: energyKwh.map(() => 0),
+                    type: 'bar',
+                    name: 'Energy gained',
+                    marker: { color: 'rgba(39,174,96,0.7)', line: { width: 0 } },
+                    hoverinfo: 'skip',
+                    showlegend: true
+                };
+
+                // [3] Delta down: orange loss bars (where adj < orig after modifications)
+                const deltaDownTrace = {
+                    x: timestamps,
+                    y: energyKwh.map(() => 0),
+                    base: energyKwh.map(() => 0),
+                    type: 'bar',
+                    name: 'Energy shaved',
+                    marker: { color: 'rgba(230,126,34,0.35)', line: { width: 0 } },
+                    hoverinfo: 'skip',
+                    showlegend: true
+                };
+
+                const rateTrace = {
+                    x: timestamps,
+                    y: tempRates,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Temp trend (\u00B0C/h)',
+                    yaxis: 'y2',
+                    line: { color: '#555', width: 2 },
+                    marker: { size: 4 },
+                    hoverinfo: 'skip'
+                };
+
+                const zeroTrace = {
+                    x: [timestamps[0], timestamps[timestamps.length - 1]],
+                    y: [0, 0],
+                    type: 'scatter',
+                    mode: 'lines',
+                    yaxis: 'y2',
+                    line: { color: '#aaa', width: 1, dash: 'dot' },
+                    showlegend: false,
+                    hoverinfo: 'skip'
+                };
+
+                // [6] Ceiling line trace (visible from start at yMax)
+                flexCtrlState.ceiling = flexCtrlState.yMax;
+                const ceilingTrace = {
+                    x: [timestamps[0], timestamps[timestamps.length - 1]],
+                    y: [flexCtrlState.yMax, flexCtrlState.yMax],
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Power ceiling',
+                    line: { color: '#e74c3c', width: 1.5, dash: 'dash' },
+                    hoverinfo: 'skip',
+                    visible: true
+                };
+
+                const layout = {
+                    height: 350,
+                    margin: { l: 60, r: 60, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    dragmode: false,
+                    hovermode: 'closest',
+                    xaxis: {
+                        title: 'Hour',
+                        tickangle: -45,
+                        gridcolor: '#e8e8e8',
+                        fixedrange: false,
+                        type: 'date',
+                        tickformat: '%a %H:%M',
+                        dtick: 3600000,
+                        range: hours < timestamps.length
+                            ? [timestamps[0], timestamps[hours]]
+                            : undefined
+                    },
+                    yaxis: {
+                        title: 'Energy (kWh) \u2014 drag here to set ceiling',
+                        gridcolor: '#e8e8e8',
+                        range: [0, flexCtrlState.yMax],
+                        fixedrange: true
+                    },
+                    yaxis2: {
+                        title: 'Temp trend (\u00B0C/h)',
+                        titlefont: { color: '#555' },
+                        tickfont: { color: '#555' },
+                        overlaying: 'y',
+                        side: 'right',
+                        zeroline: false,
+                        fixedrange: true
+                    },
+                    legend: {
+                        orientation: 'h',
+                        y: -0.2
+                    },
+                    bargap: 0.1,
+                    barmode: 'overlay'
+                };
+
+                chartDiv.innerHTML = '';
+                // Traces: [0]=ghost, [1]=mainBars, [2]=deltaUp, [3]=deltaDown, [4]=rate, [5]=zero, [6]=ceiling
+                console.log('FlexCtrl: rendering', {traces: 7, bars: timestamps.length, yMax: flexCtrlState.yMax});
+                Plotly.newPlot('flex-ctrl-chart', [ghostTrace, mainBarsTrace, deltaUpTrace, deltaDownTrace, rateTrace, zeroTrace, ceilingTrace], layout, chartConfig)
+                    .then(() => {
+                        console.log('FlexCtrl: rendered OK');
+                        updateFlexCtrlSummary();
+                        updateFlexCmdStates();
+                        document.getElementById('flex-ctrl-reset-btn').disabled = true;
+
+                        const gd = document.getElementById('flex-ctrl-chart');
+                        // Ceiling drag: mousedown on Y-axis gutter (capture phase)
+                        gd.addEventListener('mousedown', onCeilingDragStart, { capture: true });
+                        gd.addEventListener('touchstart', onCeilingDragStart, { capture: true, passive: false });
+                        document.addEventListener('mousemove', onCeilingDragMove);
+                        document.addEventListener('mouseup', onCeilingDragEnd);
+                        document.addEventListener('touchmove', onCeilingDragMove, { passive: false });
+                        document.addEventListener('touchend', onCeilingDragEnd);
+
+                        // Bar selection: mousedown in plot area (capture phase)
+                        gd.addEventListener('mousedown', onBarSelectStart, { capture: true });
+                        gd.addEventListener('touchstart', onBarSelectStart, { capture: true, passive: false });
+                        document.addEventListener('mousemove', onBarSelectMove);
+                        document.addEventListener('mouseup', onBarSelectEnd);
+                        document.addEventListener('touchmove', onBarSelectMove, { passive: false });
+                        document.addEventListener('touchend', onBarSelectEnd);
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load flexibility control data:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load flexibility control data.</div>';
+            });
+    }
+
+    function updateFlexCtrlSummary() {
+        const summaryDiv = document.getElementById('flex-ctrl-summary');
+        if (!flexCtrlState.originalForecast || !flexCtrlState.adjustedEnergy) return;
+
+        const orig = flexCtrlState.originalForecast;
+        const adj = flexCtrlState.adjustedEnergy;
+        const tempRates = flexCtrlState.tempRates;
+        const peakOrig = Math.max(...orig);
+        const peakAdj = Math.max(...adj);
+        const ceiling = flexCtrlState.ceiling;
+        const selected = flexCtrlState.selectedBars;
+
+        let cappedCount = 0, gainCount = 0, shiftedKwh = 0, greenGain = 0;
+        for (let i = 0; i < orig.length; i++) {
+            const diff = adj[i] - orig[i];
+            if (diff < -0.001) {
+                cappedCount++;
+                shiftedKwh += orig[i] - adj[i];
+            } else if (diff > 0.001) {
+                gainCount++;
+                if (tempRates && tempRates[i] >= 0.5) greenGain += diff;
+            }
+        }
+
+        let html = '';
+        if (selected.size > 0) {
+            html += `<div class="metric-item">
+                <div class="metric-value" style="color:#F7A800">${selected.size}h</div>
+                <div class="metric-label">Selected</div>
+            </div>`;
+        }
+        html += `
+            <div class="metric-item">
+                <div class="metric-value">${ceiling !== null && ceiling < flexCtrlState.yMax - 0.1 ? flexFmtEnergy(ceiling) : '-'}</div>
+                <div class="metric-label">Ceiling</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color:#e67e22">${cappedCount}h</div>
+                <div class="metric-label">Hours Reduced</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color:#27ae60">${flexFmtEnergy(peakOrig - peakAdj)}</div>
+                <div class="metric-label">Peak Reduction</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-value" style="color:#3498db">${flexFmtEnergy(shiftedKwh)}</div>
+                <div class="metric-label">Energy Shifted</div>
+            </div>`;
+        if (greenGain > 0.001) {
+            html += `<div class="metric-item">
+                <div class="metric-value" style="color:#27ae60">${flexFmtEnergy(greenGain)}</div>
+                <div class="metric-label">Green Gain</div>
+            </div>`;
+        }
+        summaryDiv.innerHTML = html;
+    }
+
+    function resetFlexControl() {
+        if (!flexCtrlState.originalForecast) return;
+        flexCtrlState.adjustedEnergy = [...flexCtrlState.originalForecast];
+        flexCtrlState.ceiling = flexCtrlState.yMax;
+        flexCtrlState.ceilingDragging = false;
+        flexCtrlState.selectedBars = new Set();
+        flexCtrlState.selectionStart = null;
+        flexCtrlState.isSelecting = false;
+
+        const preferGreenEl = document.getElementById('flex-prefer-green');
+        if (preferGreenEl) preferGreenEl.checked = true;
+
+        const resetBtn = document.getElementById('flex-ctrl-reset-btn');
+        if (resetBtn) resetBtn.disabled = true;
+
+        flexCtrlReact();
+    }
+
+    function onFlexSplitChange(val) {
+        const after = parseInt(val);
+        const before = 100 - after;
+        const label = document.getElementById('flex-split-label');
+        if (label) label.textContent = `${before}/${after}`;
+
+        // Manual slider use unchecks prefer-green (uses directional split)
+        const preferGreenEl = document.getElementById('flex-prefer-green');
+        if (preferGreenEl) preferGreenEl.checked = false;
+
+        // Recalculate redistribution with new split
+        if (flexCtrlState.originalForecast && flexCtrlState.ceiling !== null) {
+            applyCeiling(flexCtrlState.ceiling);
+        }
+    }
+
+    // K-Value History Chart
+    function updateKValueChart() {
+        const days = parseInt(document.getElementById('k-history-days-select').value);
+        const chartDiv = document.getElementById('k-value-chart');
+        const summaryDiv = document.getElementById('k-value-summary');
+
+        chartDiv.innerHTML = '<div class="loading-spinner">Loading k-value history...</div>';
+        summaryDiv.innerHTML = '';
+
+        fetch(`/api/building/${buildingId}/k-value-history?days=${days}`)
+            .then(r => r.ok ? r.json() : { data: [], error: 'Failed to fetch' })
+            .then(result => {
+                const data = result.data || [];
+
+                if (data.length === 0) {
+                    chartDiv.innerHTML = '<div class="no-data-message">No k-value history yet. Recalibration runs every 72 hours.</div>';
+                    return;
+                }
+
+                const timestamps = data.map(d => d.timestamp_display);
+                const kValues = data.map(d => d.k_value);
+                const kMedians = data.map(d => d.k_median);
+                const kStddevUpper = data.map(d => d.k_median + d.k_stddev);
+                const kStddevLower = data.map(d => d.k_median - d.k_stddev);
+
+                const traces = [
+                    // Stddev band (shaded area)
+                    {
+                        x: timestamps.concat(timestamps.slice().reverse()),
+                        y: kStddevUpper.concat(kStddevLower.slice().reverse()),
+                        fill: 'toself',
+                        fillcolor: 'rgba(52, 152, 219, 0.15)',
+                        line: { color: 'transparent' },
+                        name: '±1 Std Dev',
+                        showlegend: true,
+                        hoverinfo: 'skip'
+                    },
+                    // K-value (15th percentile) - main line
+                    {
+                        x: timestamps,
+                        y: kValues,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        connectgaps: true,
+                        name: 'k (15th pct)',
+                        line: { color: '#e74c3c', width: 3 },
+                        marker: {
+                            size: data.map((_, i) => i === data.length - 1 ? 12 : 6),
+                            color: '#e74c3c'
+                        },
+                        hovertemplate: '%{x}<br>k: %{y:.4f} kW/°C<extra></extra>'
+                    },
+                    // K-median line
+                    {
+                        x: timestamps,
+                        y: kMedians,
+                        type: 'scatter',
+                        mode: 'lines',
+                        connectgaps: true,
+                        name: 'k (median)',
+                        line: { color: '#3498db', width: 2, dash: 'dash' },
+                        hovertemplate: '%{x}<br>Median: %{y:.4f} kW/°C<extra></extra>'
+                    }
+                ];
+
+                const layout = {
+                    xaxis: {
+                        title: '',
+                        tickangle: -45,
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)'
+                    },
+                    yaxis: {
+                        title: 'k (kW/°C)',
+                        showgrid: true,
+                        gridcolor: 'rgba(0,0,0,0.1)',
+                        rangemode: 'tozero'
+                    },
+                    height: 350,
+                    margin: { l: 60, r: 30, t: 30, b: 80 },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: '#ffffff',
+                    font: { family: 'system-ui, -apple-system, sans-serif' },
+                    legend: {
+                        orientation: 'h',
+                        yanchor: 'bottom',
+                        y: 1.02,
+                        xanchor: 'right',
+                        x: 1
+                    },
+                    dragmode: 'pan',
+                    hovermode: 'x unified'
+                };
+
+                chartDiv.innerHTML = '';
+                Plotly.newPlot('k-value-chart', traces, layout, chartConfig)
+                    .then(() => {
+                        const latest = data[data.length - 1];
+                        const change = data.length > 1 ? (latest.k_value - data[0].k_value) : 0;
+                        const changeStr = change >= 0 ? `+${(change * 1000).toFixed(2)}` : `${(change * 1000).toFixed(2)}`;
+                        const changeColor = Math.abs(change) < 0.005 ? '#27ae60' : '#e67e22';
+
+                        summaryDiv.innerHTML = `
+                            <div class="metric-item">
+                                <div class="metric-value" style="color: #e74c3c">${latest.k_value.toFixed(4)} kW/°C</div>
+                                <div class="metric-label">Current k (15th pct)</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value" style="color: #3498db">${latest.k_median.toFixed(4)} kW/°C</div>
+                                <div class="metric-label">Median k</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value" style="color: ${changeColor}">${changeStr}</div>
+                                <div class="metric-label">Change (×10⁻³)</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${(latest.confidence * 100).toFixed(0)}%</div>
+                                <div class="metric-label">Confidence</div>
+                            </div>
+                            <div class="metric-item">
+                                <div class="metric-value">${latest.days_used} days</div>
+                                <div class="metric-label">Data Points</div>
+                            </div>
+                        `;
+                    })
+                    .catch(err => {
+                        console.error('Plotly render error:', err);
+                        chartDiv.innerHTML = '<div class="no-data-message">Failed to render chart.</div>';
+                    });
+            })
+            .catch(error => {
+                console.error('Failed to load k-value history:', error);
+                chartDiv.innerHTML = '<div class="no-data-message">Failed to load k-value history.</div>';
+            });
+    }
+
+    // Initialize charts on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        if (isAggregate) {
+            // Aggregate view: Energy Forecast, Flexibility, Energy Breakdown
+            updateEnergyForecastChart();
+            setTimeout(() => updateFlexibilityChart(), 100);
+            setTimeout(() => updateFlexControlChart(), 200);
+            setTimeout(() => updateEnergySeparationChart(), 300);
+        } else {
+            // Supply & Return chart (top priority)
+            updateSupplyReturnChart();
+
+            // Data availability heatmap
+            if (document.getElementById('availability-chart')) {
+                renderChart(initialData);
+            }
+
+            // Other charts - stagger loading
+            setTimeout(() => updateTemperatureHistoryChart(), 100);
+            setTimeout(() => updateEfficiencyChart(), 200);
+            setTimeout(() => updateCostChart(), 300);
+            setTimeout(() => updateEnergySeparationChart(), 400);
+            setTimeout(() => updateAccuracyChart(), 500);
+            setTimeout(() => updateEnergyForecastChart(), 600);
+            setTimeout(() => updateKValueChart(), 700);
+        }
+    });
+</script>
+{% endblock %}

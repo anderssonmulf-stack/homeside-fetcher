@@ -139,8 +139,12 @@ def print_schedule_summary(schedule, signal_name, building_id, force_duration, d
     print(f"\n{'='*60}\n")
 
 
-def wait_until(target_dt):
-    """Wait until the target datetime, showing countdown updates."""
+def wait_until(target_dt, api=None):
+    """Wait until the target datetime, showing countdown updates.
+
+    Sends keepalive pings to the EBO API every 30s to prevent session timeout.
+    """
+    last_keepalive = time.monotonic()
     while True:
         now = datetime.now(SWEDISH_TZ)
         remaining = (target_dt - now).total_seconds()
@@ -148,13 +152,21 @@ def wait_until(target_dt):
         if remaining <= 0:
             return
 
+        # Keepalive ping every 30s to prevent EBO session timeout
+        if api and (time.monotonic() - last_keepalive) >= 30:
+            try:
+                api.client_refresh(bookmark=0)
+            except Exception:
+                pass  # Best-effort keepalive
+            last_keepalive = time.monotonic()
+
         # Update countdown display
         countdown = format_countdown(remaining)
         print(f"\r  Waiting... {countdown} until {target_dt.strftime('%H:%M')}  ", end='', flush=True)
 
         # Sleep interval: shorter as we approach the target
         if remaining > 60:
-            time.sleep(30)
+            time.sleep(10)
         elif remaining > 5:
             time.sleep(1)
         else:
@@ -177,9 +189,12 @@ def execute_schedule(ctrl, signal_name, schedule, force_duration):
     print(f"Initial value: {initial.get('value')} {initial.get('unit', '')}")
     print()
 
+    # Get API reference for keepalive during waits
+    api = getattr(ctrl, 'api', None)
+
     for i, (dt, value) in enumerate(schedule, 1):
-        # Wait for scheduled time
-        wait_until(dt)
+        # Wait for scheduled time (with keepalive pings)
+        wait_until(dt, api=api)
         print(f"\r  [{dt.strftime('%H:%M:%S')}] Event {i}/{len(schedule)}" + " " * 30)
 
         now = datetime.now(SWEDISH_TZ)
