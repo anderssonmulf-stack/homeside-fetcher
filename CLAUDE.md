@@ -68,6 +68,8 @@ Shared: energy separation (`heating_energy_calibrator.py`), k-value recalibratio
 | `add_ebo_building.py` | Add EBO buildings (browses tree, discovers signals, creates config) |
 | `remove_customer.py` | Remove houses/buildings: hard or soft (30-day grace) |
 | `gap_filler.py` | Unified 7-phase bootstrap for houses and buildings |
+| `control_EBO.py` | EBO write controller: read, force, unforce signals with safety checks |
+| `schedule_force.py` | Scheduled force: timed force overrides for flexibility control |
 | `import_historical_data.py` | Legacy house bootstrap (superseded by gap_filler) |
 
 ## Data Flow
@@ -141,6 +143,36 @@ bash backup_scripts/git_commit.sh -p "message"    # commit + push
 ```
 
 Edit `backup_scripts/backup_include.conf` to modify what gets backed up/committed.
+
+## EBO Signal Control
+
+Read, force, and unforce EBO building signals via `control_EBO.py`. Scheduled overrides via `schedule_force.py`.
+
+```bash
+# Read a signal
+python control_EBO.py --building-id HK_Kattegatt_20942 --read vs1_curve_parallel_shift
+
+# Read heat curve
+python control_EBO.py --building-id HK_Kattegatt_20942 --read-curve VS1
+
+# Force a signal (dry-run default, --live to execute)
+python control_EBO.py --building-id HK_Kattegatt_20942 --force vs1_curve_parallel_shift --value 1.5 --duration 7200 --live
+
+# Unforce (release to automatic)
+python control_EBO.py --building-id HK_Kattegatt_20942 --unforce vs1_curve_parallel_shift --live
+
+# List writable signals
+python control_EBO.py --building-id HK_Kattegatt_20942 --list-writable
+
+# Scheduled force (flexibility control foundation)
+python schedule_force.py \
+  --building-id HK_Kattegatt_20942 \
+  --signal vs1_curve_parallel_shift \
+  --schedule "08:30=-0.5, 08:35=-1.0, 08:40=-0.5, 08:45=0" \
+  --force-duration 3600 --live
+```
+
+**Safety model:** Force + timeout = fail-safe. If BVPro goes down, the force expires and the building returns to its normal heat curve. Value 0.0 in schedule triggers unforce (release). `--live` required for actual writes; dry-run by default.
 
 ## Key Variables
 

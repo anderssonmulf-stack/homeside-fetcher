@@ -143,6 +143,9 @@ class EnergyImporter:
         self.influx_org = influx_org
         self.influx_bucket = influx_bucket
 
+        # Track per-building import stats for auto-calibration
+        self.building_import_stats = {}
+
         # Initialize EnergyWriter for dedup + write
         if not dry_run:
             self.energy_writer = EnergyWriter(
@@ -360,6 +363,24 @@ class EnergyImporter:
         elif skipped > 0:
             self._log(f"No records to write for meter {meter_id} -> {entity_type} {entity_id} (all {len(records)} identical)")
 
+        # Track per-building import stats for auto-calibration
+        if entity_type == "building" and written > 0:
+            timestamps = [r['timestamp'] for r in records if 'timestamp' in r]
+            if timestamps:
+                min_ts = min(timestamps)
+                max_ts = max(timestamps)
+                if entity_id in self.building_import_stats:
+                    stats = self.building_import_stats[entity_id]
+                    stats['records'] += written
+                    stats['min_date'] = min(stats['min_date'], min_ts)
+                    stats['max_date'] = max(stats['max_date'], max_ts)
+                else:
+                    self.building_import_stats[entity_id] = {
+                        'records': written,
+                        'min_date': min_ts,
+                        'max_date': max_ts,
+                    }
+
         return written, []
 
     def archive_file(self, path: str):
@@ -494,11 +515,138 @@ class EnergyImporter:
             except Exception as e:
                 self._log_warning(f"Failed to sync meters to Dropbox: {e}")
 
+        # Auto-calibrate buildings with large bulk imports
+        if not self.dry_run:
+            try:
+                self._run_auto_calibration()
+            except Exception as e:
+                self._log_error(f"Auto-calibration error: {e}", properties={'Error': str(e)})
+
         return {
             'files': len(files),
             'records': total_records,
             'errors': all_errors
         }
+
+    def _run_auto_calibration(self):
+        """
+        Auto-calibrate buildings that received a large bulk energy import.
+
+        Checks building_import_stats for imports spanning >= auto_calibration_min_days,
+        then runs energy separation and k-recalibration for qualifying buildings.
+        Also enables energy_separation in the building config if it was disabled.
+        """
+        if not self.building_import_stats:
+            return
+
+        # Load threshold from settings
+        try:
+            import json
+            with open('settings.json', 'r') as f:
+                settings = json.load(f)
+            min_days = settings.get('calibration', {}).get('auto_calibration_min_days', 28)
+        except Exception:
+            min_days = 28
+
+        for building_id, stats in self.building_import_stats.items():
+            days_spanned = (stats['max_date'] - stats['min_date']).days
+            self._log(
+                f"Auto-calibration check: {building_id} imported {stats['records']} records spanning {days_spanned} days (threshold: {min_days})",
+                properties={'BuildingId': building_id, 'DaysSpanned': days_spanned, 'Records': stats['records']}
+            )
+
+            if days_spanned < min_days:
+                continue
+
+            self._log(
+                f"Auto-calibration triggered for {building_id}: {days_spanned} days >= {min_days} threshold",
+                level='Information',
+                properties={'BuildingId': building_id, 'DaysSpanned': days_spanned, 'Threshold': min_days}
+            )
+
+            try:
+                from arrigo_api import load_building_config, save_building_config
+
+                # Load building config
+                config = load_building_config(building_id)
+                if not config:
+                    self._log_warning(f"Auto-calibration: config not found for {building_id}")
+                    continue
+
+                # Enable energy_separation if disabled
+                es = config.get('energy_separation', {})
+                if not es.get('enabled', False):
+                    config.setdefault('energy_separation', {})['enabled'] = True
+                    save_building_config(config)
+                    self._log(
+                        f"Auto-calibration: enabled energy_separation for {building_id}",
+                        level='Information',
+                        properties={'BuildingId': building_id}
+                    )
+                    # Reload config after save
+                    config = load_building_config(building_id)
+
+                # Run energy separation
+                from heating_energy_calibrator import run_energy_separation
+                self._log(f"Auto-calibration: running energy separation for {building_id}",
+                          properties={'BuildingId': building_id})
+
+                es_result = run_energy_separation(
+                    entity_id=building_id,
+                    entity_type="building",
+                    influx_url=self.influx_url,
+                    influx_token=self.influx_token,
+                    influx_org=self.influx_org,
+                    influx_bucket=self.influx_bucket,
+                    config=config,
+                    seq=self.seq,
+                )
+
+                if es_result:
+                    days_written, k_value = es_result
+                    self._log(
+                        f"Auto-calibration: energy separation complete for {building_id} — {days_written} days, k={k_value:.4f}",
+                        level='Information',
+                        properties={'BuildingId': building_id, 'DaysWritten': days_written, 'KValue': k_value}
+                    )
+                else:
+                    self._log_warning(f"Auto-calibration: energy separation returned no result for {building_id}")
+
+                # Run k-recalibration
+                from k_recalibrator import recalibrate_entity
+                self._log(f"Auto-calibration: running k-recalibration for {building_id}",
+                          properties={'BuildingId': building_id})
+
+                cal_result = recalibrate_entity(
+                    entity_id=building_id,
+                    entity_type="building",
+                    influx_url=self.influx_url,
+                    influx_token=self.influx_token,
+                    influx_org=self.influx_org,
+                    influx_bucket=self.influx_bucket,
+                    days=days_spanned,
+                    update_config=True,
+                )
+
+                if cal_result:
+                    self._log(
+                        f"Auto-calibration complete for {building_id}: k={cal_result.k_value:.4f}, confidence={cal_result.confidence:.0%}, {cal_result.days_used} days used",
+                        level='Information',
+                        properties={
+                            'BuildingId': building_id,
+                            'KValue': cal_result.k_value,
+                            'Confidence': cal_result.confidence,
+                            'DaysUsed': cal_result.days_used,
+                        }
+                    )
+                else:
+                    self._log_warning(f"Auto-calibration: k-recalibration returned no result for {building_id}")
+
+            except Exception as e:
+                self._log_error(
+                    f"Auto-calibration failed for {building_id}: {e}",
+                    properties={'BuildingId': building_id, 'Error': str(e)}
+                )
 
     def close(self):
         """Close connections."""
