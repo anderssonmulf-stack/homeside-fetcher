@@ -1042,6 +1042,9 @@ def monitor_heating_system(config):
     # Track ML curve control timing
     last_ml_curve_update = None
 
+    # Cache energy forecast points for preemptive heating reduction
+    cached_energy_forecast_points = None
+
     # Weather model (created when ML curve control is active)
     weather_model = None
 
@@ -1323,6 +1326,7 @@ def monitor_heating_system(config):
                                             weather_model, conditions,
                                             indoor_temp=room_temp,
                                             setpoint=extracted_data.get('target_temp_setpoint'),
+                                            energy_forecast_points=cached_energy_forecast_points,
                                         ):
                                             last_ml_curve_update = now
 
@@ -1403,6 +1407,7 @@ def monitor_heating_system(config):
                                         weather_model, conditions,
                                         indoor_temp=room_temp,
                                         setpoint=extracted_data.get('target_temp_setpoint'),
+                                        energy_forecast_points=cached_energy_forecast_points,
                                     )
                                 thermal_inertia_test = None
 
@@ -1639,6 +1644,7 @@ def monitor_heating_system(config):
                                                 current_indoor_temp=extracted_data.get('room_temperature')
                                             )
                                             if energy_points:
+                                                cached_energy_forecast_points = energy_points
                                                 influx.write_energy_forecast(energy_points)
                                                 # Display summary
                                                 summary_24h = energy_forecaster.get_summary(energy_points, hours=24)
@@ -1701,6 +1707,7 @@ def monitor_heating_system(config):
                                                 current_indoor_temp=extracted_data.get('room_temperature')
                                             )
                                             if energy_points:
+                                                cached_energy_forecast_points = energy_points
                                                 influx.write_energy_forecast(energy_points)
                                                 summary_24h = energy_forecaster.get_summary(energy_points, hours=24)
                                                 summary_72h = energy_forecaster.get_summary(energy_points, hours=72)

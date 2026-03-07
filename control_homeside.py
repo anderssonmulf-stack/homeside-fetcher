@@ -18,7 +18,7 @@ Each building system type gets its own control script.
 """
 
 from datetime import datetime, timezone
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 import logging
 
 
@@ -27,6 +27,11 @@ CURVE_OUTDOOR_TEMPS = {
     1: -30, 2: -25, 3: -20, 4: -15, 5: -10,
     6: -5,  7: 0,   8: 5,   9: 10,  10: 15,
 }
+
+# Default thermal time constant for houses without a measured value.
+# Conservative (high) — longer lead times, gentler interventions.
+# Real Nordic residential typically 40-100h.
+DEFAULT_TAU = 80.0
 
 # NOTE: Cwl.Advise.A[] indices differ between HomeSide installations.
 # They must be discovered dynamically from the API response.
@@ -68,6 +73,8 @@ class HomeSideControl:
         self._yref_advise_indices: Dict[int, int] = {}  # point_num -> Cwl.Advise.A index for Yref
         self._adaption_advise_idx: Optional[int] = None  # Cwl.Advise.A index for Adaption toggle
         self._setpoint_advise_idx: Optional[int] = None  # Cwl.Advise.A index for SetPoint
+        # Preemptive reduction tracking for tau estimation
+        self._preemptive_tracking: Optional[Dict[str, Any]] = None  # {start_time, start_indoor, start_eff}
 
     def _parse_variables(self, raw_data):
         """Parse get_heating_data() response into lookups by short name and path."""
@@ -421,22 +428,99 @@ class HomeSideControl:
 
         return None
 
+    def _try_estimate_tau(self, indoor_temp, current_eff, free_heat_info):
+        """
+        Estimate thermal time constant from observed indoor temp decay during
+        preemptive reduction. Only saves to profile if no measured tau exists.
+
+        Uses simplified model: during supply reduction, indoor temp decays towards
+        effective outdoor temp. tau ≈ elapsed_hours * avg_delta_T / temp_drop
+
+        Requires ≥30 min of preemptive reduction and ≥0.15°C indoor temp drop.
+        """
+        if (self._preemptive_tracking is None or indoor_temp is None):
+            return
+
+        tracking = self._preemptive_tracking
+        elapsed = (datetime.now(timezone.utc) - tracking['start_time']).total_seconds() / 3600.0
+
+        # Need at least 30 minutes of data
+        if elapsed < 0.5:
+            return
+
+        temp_drop = tracking['start_indoor'] - indoor_temp
+        if temp_drop < 0.15:
+            return  # Not enough drop to estimate reliably
+
+        # Average temp difference between indoor and effective outdoor
+        avg_indoor = (tracking['start_indoor'] + indoor_temp) / 2.0
+        avg_eff = (tracking['start_eff'] + current_eff) / 2.0
+        avg_delta = avg_indoor - avg_eff
+
+        if avg_delta <= 0:
+            return  # Indoor below effective — model doesn't apply
+
+        # tau ≈ elapsed * avg_delta_T / temp_drop
+        # This is a linearized approximation of the exponential decay
+        tau_estimate = elapsed * avg_delta / temp_drop
+
+        # Sanity check: tau should be 15-250h for residential buildings
+        if tau_estimate < 15 or tau_estimate > 250:
+            return
+
+        free_heat_info['tau_estimate'] = round(tau_estimate, 1)
+        free_heat_info['tau_estimate_elapsed_h'] = round(elapsed, 2)
+        free_heat_info['tau_estimate_drop'] = round(temp_drop, 2)
+
+        # Save to profile if no measured tau exists and estimate is reasonable
+        learned = self.profile.learned
+        if learned.thermal_time_constant is None or learned.thermal_time_constant_source == 'estimated_from_preemptive':
+            # Only update if estimate differs significantly or is first estimate
+            if (learned.thermal_time_constant is None or
+                    abs(tau_estimate - learned.thermal_time_constant) > 5.0):
+                learned.thermal_time_constant = round(tau_estimate, 1)
+                learned.thermal_time_constant_measured_at = datetime.now(timezone.utc).isoformat()
+                learned.thermal_time_constant_source = 'estimated_from_preemptive'
+                self.profile.save()
+                self.logger.info(
+                    f"Estimated tau={tau_estimate:.1f}h from preemptive reduction "
+                    f"(elapsed={elapsed:.1f}h, drop={temp_drop:.2f}°C)"
+                )
+
+                if self.seq_logger:
+                    self.seq_logger.log(
+                        "Tau estimated from preemptive reduction for {HouseId}: {TauEstimate}h",
+                        level='Information',
+                        properties={
+                            'EventType': 'TauEstimatedFromPreemptive',
+                            'HouseId': self.profile.customer_id,
+                            'TauEstimate': round(tau_estimate, 1),
+                            'ElapsedHours': round(elapsed, 2),
+                            'TempDrop': round(temp_drop, 2),
+                            'AvgDeltaT': round(avg_delta, 1),
+                        },
+                    )
+
     def compute_ml_curve(self, weather_model, conditions,
                          indoor_temp: Optional[float] = None,
-                         setpoint: Optional[float] = None) -> Optional[tuple]:
+                         setpoint: Optional[float] = None,
+                         energy_forecast_points=None) -> Optional[tuple]:
         """
         Compute ML-adjusted curve as a parallel shift of the baseline Yref.
 
-        Two components:
+        Three components:
         1. Weather shift: accounts for wind chill and solar gain
         2. Indoor correction: PI feedback when indoor temp drifts
            from setpoint beyond the acceptable deviation (dead band)
+        3. Preemptive shift: reduces supply ahead of detected free heat windows
+           (only for houses with measured thermal_time_constant)
 
         Args:
             weather_model: SimpleWeatherModel instance
             conditions: WeatherConditions for current weather
             indoor_temp: Current indoor temperature (from HomeSide)
             setpoint: Current indoor setpoint (from HomeSide)
+            energy_forecast_points: List of EnergyForecastPoint for free heat detection
 
         Returns:
             Tuple of (curve_dict, parallel_shift, diagnostics_dict) or None
@@ -539,7 +623,118 @@ class HomeSideControl:
 
             ctrl.pi_integral = round(ctrl.pi_integral, 3)
 
-        parallel_shift = round(weather_shift + indoor_correction, 1)
+        # --- Component 3: Preemptive heating reduction ---
+        # Activates for all smart-controlled houses. Uses measured tau if available,
+        # otherwise a conservative default. Houses with default tau get a lower
+        # max_shift cap as a safety margin.
+        preemptive_shift = 0.0
+        free_heat_info = None
+        measured_tau = self.profile.learned.thermal_time_constant
+        tau = measured_tau if measured_tau is not None else DEFAULT_TAU
+        tau_source = self.profile.learned.thermal_time_constant_source or (
+            'measured' if measured_tau is not None else 'default'
+        )
+
+        if (energy_forecast_points and
+                target is not None and tolerance is not None):
+            from energy_forecaster import _detect_free_heat_windows
+
+            windows = _detect_free_heat_windows(
+                energy_forecast_points, target, min_duration_hours=2.0
+            )
+
+            if windows:
+                # Use the nearest upcoming window
+                nearest = windows[0]
+
+                # Hard floor: if indoor is already too cold, skip preemptive reduction
+                hard_floor_ok = (
+                    indoor_temp is None or
+                    indoor_temp >= target - 2 * tolerance
+                )
+
+                if nearest.lead_time_hours > 0 and hard_floor_ok:
+                    # Calculate lead time needed to coast from target to target-deviation
+                    # lead_time = tau * deviation / (target - current_effective) + cool_down_lag
+                    current_eff = eff_result.effective_temp
+                    delta_T = target - current_eff
+
+                    if delta_T > 0:
+                        cool_down_lag_minutes = 90.0  # minutes for system inertia
+                        lead_time_needed = (
+                            tau * tolerance / delta_T +
+                            cool_down_lag_minutes / 60.0
+                        )
+
+                        if nearest.lead_time_hours <= lead_time_needed:
+                            # We're in the preemptive phase — compute ramp progress
+                            progress = 1.0 - (nearest.lead_time_hours / lead_time_needed)
+                            progress = max(0.0, min(1.0, progress))
+
+                            # Max shift derived from curve slope: how much supply reduction
+                            # corresponds to `tolerance` degrees of indoor undershoot
+                            # Use curve slope at 0°C reference
+                            ref_0 = self._interpolate_yref(0.0)
+                            ref_1 = self._interpolate_yref(1.0)
+                            if ref_0 is not None and ref_1 is not None:
+                                curve_slope = abs(ref_0 - ref_1)  # supply drop per °C outdoor rise
+                            else:
+                                curve_slope = 1.0  # fallback
+
+                            max_shift = -tolerance * curve_slope
+                            # Conservative cap: -1.5°C for default tau, -3.0°C for measured
+                            shift_cap = -3.0 if measured_tau is not None else -1.5
+                            max_shift = max(max_shift, shift_cap)
+
+                            preemptive_shift = round(max_shift * progress, 1)
+
+                            # Track start of preemptive reduction for tau estimation
+                            if self._preemptive_tracking is None and indoor_temp is not None:
+                                self._preemptive_tracking = {
+                                    'start_time': datetime.now(timezone.utc),
+                                    'start_indoor': indoor_temp,
+                                    'start_eff': current_eff,
+                                }
+
+                            free_heat_info = {
+                                'window_start': nearest.start.isoformat(),
+                                'window_end': nearest.end.isoformat(),
+                                'window_duration_hours': nearest.duration_hours,
+                                'window_avg_eff_temp': nearest.avg_effective_temp,
+                                'lead_time_hours': round(nearest.lead_time_hours, 1),
+                                'lead_time_needed': round(lead_time_needed, 1),
+                                'progress': round(progress, 2),
+                                'max_shift': round(max_shift, 1),
+                                'preemptive_shift': preemptive_shift,
+                                'tau': tau,
+                                'tau_source': tau_source,
+                            }
+
+                            # Tau estimation from observed decay
+                            self._try_estimate_tau(indoor_temp, current_eff, free_heat_info)
+                        else:
+                            # Not yet in preemptive phase — reset tracking
+                            self._preemptive_tracking = None
+                    else:
+                        self._preemptive_tracking = None
+                elif nearest.lead_time_hours <= 0:
+                    # Currently inside a free heat window — no preemptive shift needed,
+                    # weather_shift already handles this naturally
+                    self._preemptive_tracking = None
+                    free_heat_info = {
+                        'window_start': nearest.start.isoformat(),
+                        'window_end': nearest.end.isoformat(),
+                        'window_duration_hours': nearest.duration_hours,
+                        'inside_window': True,
+                        'preemptive_shift': 0.0,
+                    }
+                else:
+                    # Hard floor tripped or other condition — reset tracking
+                    self._preemptive_tracking = None
+            else:
+                self._preemptive_tracking = None
+
+        parallel_shift = round(weather_shift + indoor_correction + preemptive_shift, 1)
 
         # Apply uniform shift to all Yref points
         yref = ctrl.baseline['yref']
@@ -551,12 +746,15 @@ class HomeSideControl:
         diagnostics = {
             'weather_shift': weather_shift,
             'indoor_correction': indoor_correction,
+            'preemptive_shift': preemptive_shift,
             'p_correction': round(p_correction, 2),
             'i_correction': round(i_correction, 2),
             'pi_integral': ctrl.pi_integral,
             'error_beyond': round(error_beyond, 2),
             'tolerance': tolerance,
         }
+        if free_heat_info:
+            diagnostics['free_heat_info'] = free_heat_info
 
         return ml_curve, parallel_shift, diagnostics
 
@@ -758,7 +956,8 @@ class HomeSideControl:
 
     def update_ml_curve(self, weather_model, conditions,
                         indoor_temp: Optional[float] = None,
-                        setpoint: Optional[float] = None) -> bool:
+                        setpoint: Optional[float] = None,
+                        energy_forecast_points=None) -> bool:
         """
         Compute and write ML-adjusted curve to HomeSide Yref.
 
@@ -771,12 +970,14 @@ class HomeSideControl:
             conditions: WeatherConditions for current weather
             indoor_temp: Current indoor temperature (from HomeSide)
             setpoint: Current indoor setpoint (from HomeSide)
+            energy_forecast_points: List of EnergyForecastPoint for free heat detection
 
         Returns:
             True if curve was written (or skipped due to small change)
         """
         result = self.compute_ml_curve(weather_model, conditions,
-                                       indoor_temp=indoor_temp, setpoint=setpoint)
+                                       indoor_temp=indoor_temp, setpoint=setpoint,
+                                       energy_forecast_points=energy_forecast_points)
         if result is None:
             return False
 
@@ -784,10 +985,11 @@ class HomeSideControl:
         ctrl = self.profile.heat_curve_control
 
         # Check if shift changed enough to justify a write
-        # Bypass when indoor correction or integral is active (PI needs every update)
+        # Bypass when indoor correction, integral, or preemptive shift is active
         pi_active = (diagnostics.get('indoor_correction', 0) != 0 or
                      diagnostics.get('pi_integral', 0) != 0)
-        if ctrl.ml_last_offset is not None and not pi_active:
+        preemptive_active = diagnostics.get('preemptive_shift', 0) != 0
+        if ctrl.ml_last_offset is not None and not pi_active and not preemptive_active:
             if abs(parallel_shift - ctrl.ml_last_offset) < 0.3:
                 self.logger.debug(
                     f"ML curve shift {parallel_shift:+.1f}°C unchanged from last "
@@ -858,12 +1060,33 @@ class HomeSideControl:
             props['ErrorBeyond'] = diagnostics.get('error_beyond', 0)
             props['WeatherShift'] = diagnostics.get('weather_shift', 0)
             props['IndoorCorrection'] = diagnostics.get('indoor_correction', 0)
+            # Preemptive shift diagnostics
+            props['PreemptiveShift'] = diagnostics.get('preemptive_shift', 0)
+            free_heat_info = diagnostics.get('free_heat_info')
+            if free_heat_info:
+                props['FreeHeatWindow'] = free_heat_info
 
             self.seq_logger.log(
-                "ML curve update for {HouseId}: shift {ParallelShift:+.1f}°C supply ({PreviousShift} -> {ParallelShift}), {PointsWritten}/10 points, P={P_Correction:+.1f} I={I_Correction:+.1f}",
+                "ML curve update for {HouseId}: shift {ParallelShift:+.1f}°C supply ({PreviousShift} -> {ParallelShift}), {PointsWritten}/10 points, P={P_Correction:+.1f} I={I_Correction:+.1f} Pre={PreemptiveShift:+.1f}",
                 level='Information',
                 properties=props,
             )
+
+            # Log state transitions for preemptive mode
+            if free_heat_info and diagnostics.get('preemptive_shift', 0) != 0:
+                if previous_shift is None or diagnostics.get('preemptive_shift', 0) != 0:
+                    self.seq_logger.log(
+                        "Preemptive heating reduction active for {HouseId}: shift {PreemptiveShift:+.1f}°C, window at {WindowStart}, lead {LeadTimeHours}h",
+                        level='Information',
+                        properties={
+                            'EventType': 'PreemptiveReductionActive',
+                            'HouseId': self.profile.customer_id,
+                            'PreemptiveShift': diagnostics.get('preemptive_shift', 0),
+                            'WindowStart': free_heat_info.get('window_start'),
+                            'LeadTimeHours': free_heat_info.get('lead_time_hours'),
+                            'Progress': free_heat_info.get('progress'),
+                        },
+                    )
 
         return True
 

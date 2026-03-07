@@ -13,7 +13,9 @@ A Python application that optimizes district heating by learning your building's
 ## Features
 
 - Thermal coefficient learning (building heat response analysis)
-- Weather-based heat curve optimization
+- Weather-based heat curve optimization (ML curve with 3 components)
+- Preemptive heating reduction — detects upcoming warm periods and reduces supply ahead of time
+- Energy forecasting with free heat window detection
 - SMHI weather integration (observations and forecasts)
 - InfluxDB time-series storage
 - Seq structured logging for monitoring
@@ -139,8 +141,11 @@ Check logs: `docker compose logs homeside-fetcher`
 homeside-fetcher/
 ├── HSF_Fetcher.py           # Main application entry point
 ├── homeside_api.py          # HomeSide API client
+├── control_homeside.py      # ML curve control (weather + PI + preemptive)
 ├── thermal_analyzer.py      # Thermal dynamics learning
 ├── heat_curve_controller.py # Heat curve adjustments
+├── energy_forecaster.py     # Energy forecast & free heat window detection
+├── thermal_inertia_test.py  # Building tau measurement via heat/cooldown test
 ├── smhi_weather.py          # SMHI weather integration
 ├── influx_writer.py         # InfluxDB client
 ├── seq_logger.py            # Seq logging
@@ -176,6 +181,8 @@ homeside-fetcher/
 - [x] Settings GUI with user management (bvpro.hem.se)
 - [x] Automatic token refresh (HomeSide API and Dropbox OAuth)
 - [x] Energy data import from Dropbox with daily scheduling
+- [x] Preemptive heating reduction via effective temperature forecast
+- [x] Tau estimation from preemptive reduction observations
 
 ### Potential Future Features
 

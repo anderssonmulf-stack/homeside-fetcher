@@ -33,7 +33,7 @@ Shared across both: energy separation (`heating_energy_calibrator.py`), k-value 
 | `homeside_api.py` | HomeSide API client (session token, BMS token, read/write variables) |
 | `thermal_analyzer.py` | Learns building thermal dynamics. Requires 24 data points (6 hours) minimum |
 | `heat_curve_controller.py` | Dynamic heat curve adjustments based on weather forecasts |
-| `control_homeside.py` | Takes/releases control of a HomeSide house's heat curve via Cwl.Advise writes |
+| `control_homeside.py` | Takes/releases control of a HomeSide house's heat curve via Cwl.Advise writes. Includes ML curve with 3 components: weather shift, PI feedback, preemptive heating reduction |
 | `smhi_weather.py` | SMHI weather client for observations and forecasts |
 | `influx_writer.py` | InfluxDB write client for all time-series data |
 | `seq_logger.py` | Structured Seq logging with automatic site tagging |
@@ -41,10 +41,12 @@ Shared across both: energy separation (`heating_energy_calibrator.py`), k-value 
 | `temperature_forecaster.py` | Model C hybrid forecaster (physics + historical learning) |
 | `dropbox_client.py` | Dropbox OAuth client with automatic token refresh |
 | `dropbox_sync.py` | Syncs meter request file to Dropbox |
+| `energy_forecaster.py` | Predicts heating energy from weather forecast + k-value. Detects "free heat windows" for preemptive reduction |
 | `energy_importer.py` | Imports energy data files from Dropbox into InfluxDB |
 | `heating_energy_calibrator.py` | Energy separation: splits total energy into heating vs DHW |
 | `k_recalibrator.py` | K-value (heat loss coefficient) recalibration |
 | `gap_filler.py` | Fills gaps in weather observation and heating_system data |
+| `thermal_inertia_test.py` | Active thermal test: measures building time constant (tau) via controlled heat/cooldown cycle |
 
 ### Configuration
 
@@ -74,8 +76,9 @@ Shared across both: energy separation (`heating_energy_calibrator.py`), k-value 
 1. `HSF_Fetcher.py` polls HomeSide API every 5 minutes via `homeside_api.py`
 2. Heating data passed to `thermal_analyzer.py` for learning
 3. Weather forecasts fetched via `smhi_weather.py`
-4. `heat_curve_controller.py` evaluates if heating should be reduced
-5. All data written to InfluxDB via `influx_writer.py`
+4. Energy forecast generated via `energy_forecaster.py` (cached for preemptive reduction)
+5. `control_homeside.py` computes ML curve: weather shift + PI feedback + preemptive reduction
+6. All data written to InfluxDB via `influx_writer.py`
 
 ### Buildings
 
@@ -204,6 +207,27 @@ Hybrid physics + learning approach:
 - **Learning**: tracks prediction errors by hour, applies corrections weighted by confidence
 - **Key insight**: thermostat is dominant factor; setpoint determines where temp ends up
 - **Schedule**: first update at 24 samples (~6h), then daily at 96 samples
+
+## ML Curve Control — 3 Components
+
+`compute_ml_curve()` in `control_homeside.py` produces a parallel shift of the baseline Yref curve from three additive components:
+
+1. **Weather shift**: adjusts for wind chill and solar gain using effective temperature offset at 0°C reference point
+2. **PI feedback**: proportional-integral controller corrects when indoor temp drifts beyond `acceptable_deviation` dead band (K_BASE=1.25, TI=90min)
+3. **Preemptive heating reduction**: detects upcoming "free heat windows" from the energy forecast and ramps down supply before the window starts, so indoor coasts to `target - deviation` rather than overshooting
+
+### Preemptive Heating Reduction (Component 3)
+
+Scans `EnergyForecastPoint` list for consecutive hours where `effective_temp >= target_indoor_temp` (free heat windows, ≥2h). When a window is approaching:
+
+- **Lead time**: `tau * deviation / (target - current_eff) + 90min` determines when to start reducing
+- **Ramp**: linear from 0 to `max_shift` as window approaches
+- **Max shift**: derived from Yref curve slope × tolerance, capped at -3.0°C (measured tau) or -1.5°C (default tau)
+- **Default tau**: `DEFAULT_TAU = 80.0` hours used for houses without measured `thermal_time_constant`
+- **Safety**: hard floor zeroes shift if indoor < `target - 2 × tolerance`; PI controller corrects any overshoot
+- **Tau estimation**: during preemptive reduction, observed indoor decay rate estimates tau (`source="estimated_from_preemptive"`). Never overwrites a `"measured"` tau from thermal inertia test.
+
+Key types: `FreeHeatWindow` dataclass and `_detect_free_heat_windows()` in `energy_forecaster.py`.
 
 ## Dropbox Energy Data Exchange
 

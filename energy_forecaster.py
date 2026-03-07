@@ -56,6 +56,16 @@ class EnergyForecastPoint:
 
 
 @dataclass
+class FreeHeatWindow:
+    """A period where effective temperature >= target indoor temp (no heating needed)."""
+    start: datetime
+    end: datetime
+    duration_hours: float
+    avg_effective_temp: float
+    lead_time_hours: float  # hours from now until window starts
+
+
+@dataclass
 class EnergyForecastSummary:
     """Summary of energy forecast for a period."""
     total_energy_kwh: float
@@ -322,3 +332,65 @@ def format_energy_forecast(
         lines.append(f"⚡ Energy Forecast (72h): {summary_72h.total_energy_kwh:.1f} kWh")
 
     return '\n'.join(lines)
+
+
+def _detect_free_heat_windows(
+    points: List[EnergyForecastPoint],
+    target_indoor_temp: float,
+    min_duration_hours: float = 2.0
+) -> List[FreeHeatWindow]:
+    """
+    Detect continuous periods where effective_temp >= target_indoor_temp.
+
+    These are "free heat windows" where outdoor conditions provide enough warmth
+    that no heating is needed (heating_power = k * max(0, T_indoor - T_effective) = 0).
+
+    Args:
+        points: Hourly energy forecast points (from EnergyForecaster.generate_forecast)
+        target_indoor_temp: Target indoor temperature (°C)
+        min_duration_hours: Minimum window duration to include (hours)
+
+    Returns:
+        List of FreeHeatWindow, sorted by start time
+    """
+    if not points:
+        return []
+
+    now = datetime.now(timezone.utc)
+
+    # Group consecutive points where effective_temp >= target
+    windows = []
+    current_group = []
+
+    for point in points:
+        if point.effective_temp >= target_indoor_temp:
+            current_group.append(point)
+        else:
+            if current_group:
+                windows.append(current_group)
+                current_group = []
+    if current_group:
+        windows.append(current_group)
+
+    # Convert groups to FreeHeatWindow objects, filtering by min duration
+    result = []
+    for group in windows:
+        start = group[0].timestamp
+        end = group[-1].timestamp + timedelta(hours=1)  # each point covers 1 hour
+        duration = (end - start).total_seconds() / 3600.0
+
+        if duration < min_duration_hours:
+            continue
+
+        avg_eff = sum(p.effective_temp for p in group) / len(group)
+        lead_time = max(0.0, (start - now).total_seconds() / 3600.0)
+
+        result.append(FreeHeatWindow(
+            start=start,
+            end=end,
+            duration_hours=round(duration, 1),
+            avg_effective_temp=round(avg_eff, 1),
+            lead_time_hours=round(lead_time, 1),
+        ))
+
+    return result
