@@ -1084,7 +1084,8 @@ def monitor_heating_system(config):
         print("Daily tasks configured:")
         for task_name, task_config in daily_tasks.items():
             status = "enabled" if task_config.get('enabled') else "disabled"
-            print(f"  - {task_name}: {task_config.get('time', '08:00')} ({status})")
+            times = task_config.get('times', [task_config.get('time', '08:00')])
+            print(f"  - {task_name}: {', '.join(times)} ({status})")
         print()
 
     iteration = 0
