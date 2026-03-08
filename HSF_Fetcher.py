@@ -1114,6 +1114,13 @@ def monitor_heating_system(config):
                                 extracted_data = api.extract_key_values(raw_data)
 
                 if extracted_data:
+                    # Sync HomeSide setpoint → profile (single source of truth)
+                    live_setpoint = extracted_data.get('target_temp_setpoint')
+                    if live_setpoint is not None and live_setpoint != customer_profile.comfort.target_indoor_temp:
+                        customer_profile.comfort.target_indoor_temp = live_setpoint
+                        customer_profile.save()
+                        logger.info(f"Synced setpoint {live_setpoint}°C from HomeSide to profile")
+
                     # Display data
                     api.display_data(extracted_data)
 

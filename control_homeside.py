@@ -513,7 +513,6 @@ class HomeSideControl:
         2. Indoor correction: PI feedback when indoor temp drifts
            from setpoint beyond the acceptable deviation (dead band)
         3. Preemptive shift: reduces supply ahead of detected free heat windows
-           (only for houses with measured thermal_time_constant)
 
         Args:
             weather_model: SimpleWeatherModel instance
@@ -549,17 +548,16 @@ class HomeSideControl:
         weather_shift = round(shifted_supply - reference_supply, 1)
 
         # --- Component 2: Indoor temp PI feedback ---
-        # Use profile target (not HomeSide setpoint, which may differ)
+        # Use setpoint (synced from HomeSide to profile each poll cycle)
         indoor_correction = 0.0
         p_correction = 0.0
         i_correction = 0.0
         error_beyond = 0.0
-        target = self.profile.comfort.target_indoor_temp
-        reference_temp = target if target else setpoint
+        target = setpoint  # HomeSide setpoint is single source of truth
         tolerance = self.profile.comfort.acceptable_deviation
 
-        if indoor_temp is not None and reference_temp is not None:
-            deviation = indoor_temp - reference_temp  # positive = too warm
+        if indoor_temp is not None and target is not None:
+            deviation = indoor_temp - target  # positive = too warm
 
             # PI constants
             K_BASE = 1.25  # Base gain (K_BASE / tolerance gives Kp)
