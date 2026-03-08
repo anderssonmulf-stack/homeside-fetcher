@@ -97,7 +97,8 @@ class EnergyForecaster:
         logger = None,
         solar_coefficient_ml2: Optional[float] = None,
         wind_coefficient_ml2: Optional[float] = None,
-        solar_confidence_ml2: float = 0.0
+        solar_confidence_ml2: float = 0.0,
+        thermal_time_constant: Optional[float] = None
     ):
         """
         Initialize energy forecaster.
@@ -111,12 +112,18 @@ class EnergyForecaster:
             solar_coefficient_ml2: Learned solar coefficient (ML2 model)
             wind_coefficient_ml2: Learned wind coefficient (ML2 model)
             solar_confidence_ml2: Confidence in learned ML2 coefficients (0-1)
+            thermal_time_constant: Building tau in hours (None = 80h default)
         """
         self.heat_loss_k = heat_loss_k
         self.target_indoor_temp = target_indoor_temp
         self.latitude = latitude
         self.longitude = longitude
         self.logger = logger
+
+        # Thermal mass: C = k × tau (kWh/°C)
+        DEFAULT_TAU = 80.0
+        self.tau = thermal_time_constant if thermal_time_constant else DEFAULT_TAU
+        self.thermal_capacity = heat_loss_k * self.tau  # kWh/°C
 
         # ML2 learned coefficients
         self.solar_coefficient_ml2 = solar_coefficient_ml2
@@ -166,7 +173,8 @@ class EnergyForecaster:
             logger=logger,
             solar_coefficient_ml2=weather_coeffs.solar_coefficient_ml2,
             wind_coefficient_ml2=weather_coeffs.wind_coefficient_ml2,
-            solar_confidence_ml2=weather_coeffs.solar_confidence_ml2
+            solar_confidence_ml2=weather_coeffs.solar_confidence_ml2,
+            thermal_time_constant=profile.learned.thermal_time_constant
         )
 
     def generate_forecast(
@@ -189,8 +197,10 @@ class EnergyForecaster:
         if not weather_forecast:
             return []
 
-        indoor_temp = current_indoor_temp or self.target_indoor_temp
+        T_indoor = current_indoor_temp or self.target_indoor_temp
+        target = self.target_indoor_temp
         forecast_points = []
+        dt = 1.0  # hours per step
 
         for wp in weather_forecast:
             try:
@@ -225,17 +235,36 @@ class EnergyForecaster:
                 eff_result = self.weather_model.effective_temperature(conditions)
                 effective_temp = eff_result.effective_temp
 
-                # Calculate heating power: P = k × ΔT
-                temp_diff = indoor_temp - effective_temp
+                # Thermal mass simulation:
+                # Heat loss to outdoors: Q_loss = k × (T_indoor - T_eff) × dt
+                # Thermostat heating: compensates loss to maintain target,
+                # but can't remove heat (no cooling)
+                heat_loss = self.heat_loss_k * (T_indoor - effective_temp) * dt  # kWh
 
-                # Only positive heating (no cooling)
-                if temp_diff > 0:
-                    heating_power = self.heat_loss_k * temp_diff
+                if heat_loss > 0 and T_indoor <= target:
+                    # Below or at target: heating system compensates all losses
+                    heating_energy = heat_loss
+                    # T_indoor stays at target (thermostat maintains it)
+                    T_indoor = target
+                elif heat_loss > 0 and T_indoor > target:
+                    # Above target: thermostat off, building cools naturally
+                    heating_energy = 0.0
+                    T_indoor -= heat_loss / self.thermal_capacity
+                    # If cooling brings us below target, partial heating kicks in
+                    if T_indoor < target:
+                        # Heating covers the deficit below target
+                        deficit = (target - T_indoor) * self.thermal_capacity  # kWh
+                        heating_energy = deficit
+                        T_indoor = target
                 else:
-                    heating_power = 0.0
+                    # Effective temp >= indoor: building gains heat, no heating needed
+                    heating_energy = 0.0
+                    # Building warms from environment (capped: won't exceed eff temp)
+                    heat_gain = -heat_loss  # positive kWh
+                    T_indoor += heat_gain / self.thermal_capacity
+                    T_indoor = min(T_indoor, effective_temp)
 
-                # Energy for 1 hour = power (kW) × 1 (h) = kWh
-                heating_energy = heating_power
+                heating_power = heating_energy / dt
 
                 forecast_points.append(EnergyForecastPoint(
                     timestamp=timestamp,
