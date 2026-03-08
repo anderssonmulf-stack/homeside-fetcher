@@ -26,6 +26,11 @@
     "circuit_breaker_cooldown_seconds": 60
   },
   "daily_tasks": {
+    "gap_fill": {
+      "times": ["07:30", "12:00"],
+      "enabled": true,
+      "description": "Fill weather observation gaps and backfill effective_temp"
+    },
     "energy_pipeline": {
       "time": "08:00",
       "enabled": true,

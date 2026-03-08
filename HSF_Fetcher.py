@@ -294,6 +294,39 @@ def generate_forecast_points(
     return forecast_points
 
 
+def run_gap_fill_task(config: dict, customer_profile, logger, hours_back: int = 48) -> dict:
+    """
+    Standalone gap fill task: fill weather observation gaps and backfill effective_temp.
+
+    Returns:
+        Dict with weather_written and effective_temp_written counts
+    """
+    print("\n🌤 Gap fill: Filling weather + effective_temp gaps...")
+    try:
+        result = run_daily_gap_fill(
+            influx_url=config.get('influxdb_url'),
+            influx_token=config.get('influxdb_token'),
+            influx_org=config.get('influxdb_org'),
+            influx_bucket=config.get('influxdb_bucket'),
+            house_id=customer_profile.customer_id if customer_profile else None,
+            latitude=config.get('latitude'),
+            longitude=config.get('longitude'),
+            profile=customer_profile,
+            logger=logger,
+            hours_back=hours_back
+        )
+        total = result.get('weather_written', 0) + result.get('effective_temp_written', 0)
+        if total > 0:
+            print(f"✓ Gap fill: {result['weather_written']} weather + {result['effective_temp_written']} effective_temp")
+        else:
+            print("ℹ No data gaps to fill")
+        return result
+    except Exception as e:
+        logger.error(f"Gap fill failed: {e}")
+        print(f"❌ Gap fill failed: {e}")
+        return {'weather_written': 0, 'effective_temp_written': 0}
+
+
 def run_energy_pipeline(
     config: dict,
     customer_profile,
@@ -385,33 +418,12 @@ def run_energy_pipeline(
 
     # Step 2: Fill weather gaps + backfill effective_temp
     print("\n🌤 Step 2: Filling data gaps...")
-    try:
-        gap_result = run_daily_gap_fill(
-            influx_url=config.get('influxdb_url'),
-            influx_token=config.get('influxdb_token'),
-            influx_org=config.get('influxdb_org'),
-            influx_bucket=config.get('influxdb_bucket'),
-            house_id=customer_profile.customer_id if customer_profile else None,
-            latitude=config.get('latitude'),
-            longitude=config.get('longitude'),
-            profile=customer_profile,
-            logger=logger,
-            hours_back=48
-        )
-        results['gap_fill'] = {
-            'success': True,
-            'weather_written': gap_result.get('weather_written', 0),
-            'effective_temp_written': gap_result.get('effective_temp_written', 0)
-        }
-        total_gap = gap_result.get('weather_written', 0) + gap_result.get('effective_temp_written', 0)
-        if total_gap > 0:
-            print(f"✓ Gap fill: {gap_result['weather_written']} weather + {gap_result['effective_temp_written']} effective_temp")
-        else:
-            print("ℹ No data gaps to fill")
-    except Exception as e:
-        logger.error(f"Gap fill failed: {e}")
-        print(f"❌ Gap fill failed: {e}")
-        results['gap_fill'] = {'success': False, 'weather_written': 0, 'effective_temp_written': 0}
+    gap_result = run_gap_fill_task(config, customer_profile, logger, hours_back=48)
+    results['gap_fill'] = {
+        'success': True,
+        'weather_written': gap_result.get('weather_written', 0),
+        'effective_temp_written': gap_result.get('effective_temp_written', 0)
+    }
 
     # Step 3: Update energy separation (heating vs DHW breakdown) — own house only
     print("\n⚡ Step 3: Updating energy separation...")
@@ -695,39 +707,46 @@ def check_daily_tasks(
         if not task_config.get('enabled', False):
             continue
 
-        # Check if already run today
-        last_run = last_run_dates.get(task_name)
-        if last_run == today:
-            continue
+        # Support both single "time" and multiple "times"
+        times = task_config.get('times', [])
+        if not times:
+            single = task_config.get('time', '08:00')
+            times = [single]
 
-        # Parse scheduled time
-        scheduled_time_str = task_config.get('time', '08:00')
-        try:
-            hour, minute = map(int, scheduled_time_str.split(':'))
-            scheduled_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        except ValueError:
-            logger.warning(f"Invalid time format for task {task_name}: {scheduled_time_str}")
-            continue
+        for scheduled_time_str in times:
+            # Track each time slot separately: "task_name@HH:MM"
+            run_key = f"{task_name}@{scheduled_time_str}"
 
-        # Check if it's time to run
-        if now >= scheduled_time:
-            logger.info(f"Running daily task: {task_name}")
-            print(f"\n⏰ Daily task due: {task_name} (scheduled {scheduled_time_str})")
+            last_run = last_run_dates.get(run_key)
+            if last_run == today:
+                continue
 
-            if task_name == 'energy_pipeline':
-                calibration_days = settings.get('calibration', {}).get('k_calibration_days', 30)
-                run_energy_pipeline(
-                    config=config,
-                    customer_profile=customer_profile,
-                    seq_logger=seq_logger,
-                    logger=logger,
-                    profiles_dir="profiles",
-                    calibration_days=calibration_days
-                )
+            try:
+                hour, minute = map(int, scheduled_time_str.split(':'))
+                scheduled_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            except ValueError:
+                logger.warning(f"Invalid time format for task {task_name}: {scheduled_time_str}")
+                continue
 
-            # Mark as run for today
-            last_run_dates[task_name] = today
-            logger.info(f"Completed daily task: {task_name}")
+            if now >= scheduled_time:
+                logger.info(f"Running scheduled task: {task_name} ({scheduled_time_str})")
+                print(f"\n⏰ Task due: {task_name} (scheduled {scheduled_time_str})")
+
+                if task_name == 'energy_pipeline':
+                    calibration_days = settings.get('calibration', {}).get('k_calibration_days', 30)
+                    run_energy_pipeline(
+                        config=config,
+                        customer_profile=customer_profile,
+                        seq_logger=seq_logger,
+                        logger=logger,
+                        profiles_dir="profiles",
+                        calibration_days=calibration_days
+                    )
+                elif task_name == 'gap_fill':
+                    run_gap_fill_task(config, customer_profile, logger, hours_back=48)
+
+                last_run_dates[run_key] = today
+                logger.info(f"Completed task: {task_name} ({scheduled_time_str})")
 
     return last_run_dates
 
